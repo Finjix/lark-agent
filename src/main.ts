@@ -40,7 +40,7 @@ async function main(){
   }
   if(action!=='start')throw Error('支持命令：start、doctor、stop、backup、retry-delivery');
   let stopping=false;let poll:NodeJS.Timeout|undefined,refresh:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
-  let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0;
+  let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0,lastNameSync=0,nameSync:Promise<void>|undefined;
   const token=randomBytes(32).toString('hex');
   const feishu=new FeishuClient(),service=new TaskService(store,desktop,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
   const server=http.createServer((request,response)=>{
@@ -58,7 +58,7 @@ async function main(){
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(refresh);clearInterval(maintain);server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
-    desktop.close();await scheduler.stop();await delivery.stop();feishu.close();store.close();
+    desktop.close();await scheduler.stop();await delivery.stop();await nameSync;feishu.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
   };
   try{await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.HEALTH_PORT,'127.0.0.1',resolve);});}
@@ -77,6 +77,9 @@ async function main(){
       if(!feishuStarted&&Date.now()-lastFeishuAttempt>15000){lastFeishuAttempt=Date.now();
         try{await feishu.start(message=>service.receive(message));feishuStarted=true;log.info('飞书长连接已启动');}
         catch(e){feishu.close();feishu.lastError=safeError(e);log.warn({error:feishu.lastError},'等待飞书配置或连接');}}
+      if(!nameSync&&desktop.ready&&feishu.connected&&Date.now()-lastNameSync>60000){
+        lastNameSync=Date.now();nameSync=service.syncSessionNames().catch(e=>log.warn({error:safeError(e)},'会话命名检查失败')).finally(()=>{nameSync=undefined;});
+      }
     }finally{polling=false;}
   };
   poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);

@@ -7,6 +7,7 @@ import type {IncomingAttachment,Task} from '../types.js';
 
 export interface ResourceDownloader {
   downloadResource(messageId:string,attachment:IncomingAttachment,destination:string):Promise<{size:number;contentType:string}>;
+  getUserName?(userId:string):Promise<string|undefined>;
 }
 export const inputRoot=path.join(config.data,'inputs');
 export function inputDirectory(taskId:string,root=inputRoot){

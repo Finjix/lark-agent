@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {Store} from '../storage/database.js';
 import {NativeDesktop,taskWorkspace} from '../desktop/adapter.js';
 import {config} from '../config.js';
-import {terminal,type Task,type TaskView,type IncomingMessage} from '../types.js';
+import {terminal,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
 import {OutcomeUnknown} from '../desktop/transport.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
@@ -18,15 +18,27 @@ export class TaskService {
   }
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
   authorized(message:IncomingMessage){return authorized(message);}
+  private async refreshSessionName(session:UserSession){
+    if(!this.downloader?.getUserName)return;
+    try{const name=await this.downloader.getUserName(session.user_id);if(name)this.store.nameSession(session.id,name);}
+    catch(e){log.warn({error:safeError(e)},'用户名称查询失败，会话和任务继续使用现有名称');}
+  }
+  async syncSessionNames(){
+    for(const session of this.store.sessions()){
+      if(!this.desktop.ready)break;
+      await this.refreshSessionName(session);
+      await this.desktop.syncSessionTitle?.(session.id);
+    }
+  }
   async receive(message:IncomingMessage){
     if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(!this.authorized(message)){this.notice(message,config.tenants.length?'当前企业或会话尚未开放机器人使用权限，请联系管理员。':`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
     if(message.error){this.notice(message,message.error);return;}
-    if(message.text.startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
+    if(message.text.trimStart().startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
     const resources=config.resources.filter(r=>r.regex.test(message.text)).map(r=>r.key);
     const result=this.store.create({tenant_key:message.tenant,user_id:message.user,chat_id:message.chat,source_message_id:message.message,
-      instruction:message.text||'请查看用户发送的附件，说明内容并根据附件提供帮助。'},resources,message.attachments);
+      instruction:message.text},resources,message.attachments);
     if(result.created)log.info({taskId:result.task.id},'任务已入队');
   }
   private owned(message:IncomingMessage,id:string){
@@ -84,6 +96,7 @@ export class TaskService {
       const current=this.store.get(task.id)!;
       if(current.cancel_requested||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,'CANCELLED');return;}
       const session=this.store.sessionFor(task);
+      await this.refreshSessionName(session);
       if(session.thread_id&&session.workspace_path)this.store.update(task.id,{thread_id:session.thread_id,workspace_path:taskWorkspace(session.workspace_path,task.id)});
       this.store.event(task.id,'DESKTOP_SUBMITTING',{});submitting=true;
       const created=await this.desktop.startTask(this.store.get(task.id)!);
@@ -95,7 +108,8 @@ export class TaskService {
   onState(threadId:string){
     const task=this.store.byThread(threadId);if(!task||terminal(task.status))return;
     const cached=this.desktop.stream.states.get(threadId);
-    const view=this.desktop.stream.view(threadId,task.turn_id,`[LARK_TASK_ID:${task.submission_key}]`);
+    const submission=this.store.submission(task.id);
+    const view=this.desktop.stream.view(threadId,task.turn_id,submission?undefined:`[LARK_TASK_ID:${task.submission_key}]`,submission?.clientUserMessageId);
     if(!view)return;
     if(!task.turn_id){
       const session=task.session_id?this.store.session(task.session_id):undefined;
@@ -128,6 +142,13 @@ export class TaskService {
         if(task.thread_id)await this.desktop.follow(task.thread_id);
         else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))this.store.transition(task.id,'QUEUED',{error:'',progress:'等待恢复附件接收',started_at:null});
         else{this.store.transition(task.id,'UNKNOWN',{error:'服务重启或提交结果不明，正在核对'});await this.desktop.recoverUnbound(task);}
+        // Initialization is separate from the business turn. Only preparation with no
+        // persisted send attempt can be queued again; uncertain raw writes stay UNKNOWN.
+        const current=this.store.get(task.id)!;
+        if(!terminal(current.status)&&this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST')&&!this.store.submission(task.id)&&
+          current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path){
+          this.store.transition(task.id,'QUEUED',{error:'',progress:'等待提交用户原文',started_at:null});
+        }
       }catch(e){this.store.transition(task.id,'UNKNOWN',{error:safeError(e)});}
     }
   }

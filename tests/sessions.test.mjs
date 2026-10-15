@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {Store} from '../dist/storage/database.js';
-import {NativeDesktop,taskPrompt,taskWorkspace} from '../dist/desktop/adapter.js';
+import {NativeDesktop,taskPrompt,taskWorkspace,SESSION_INIT_PROMPT} from '../dist/desktop/adapter.js';
 import {TaskService} from '../dist/tasks/service.js';
 import {StreamState} from '../dist/desktop/stream.js';
 import {cleanup} from '../dist/maintenance.js';
@@ -25,12 +25,18 @@ test('session ownership survives restart and is isolated by tenant and user',asy
 
 test('Desktop creates one user thread and sends subsequent messages to that same thread with separate output directories',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-native-')),s=new Store(':memory:'),desktop=new NativeDesktop(s),calls=[];
-  desktop.ready=true;desktop.follow=async()=>{};desktop.tools={call:async(name,args)=>{calls.push({name,args});return name==='create_thread'?{threadId:'same-thread',projectlessOutputDirectory:root}:{threadId:'same-thread'};}};
+  desktop.ready=true;desktop.follow=async()=>{};desktop.waitForIdle=async()=>{};
+  desktop.tools={call:async(name,args)=>{calls.push({name,args});return {threadId:'same-thread',projectlessOutputDirectory:root};}};
+  desktop.ipc={request:async(name,args)=>{calls.push({name,args});return {result:{result:{turn:{id:`turn-${calls.length}`}}}};}};
   const a=s.create(input()).task;s.sessionFor(a);const first=await desktop.startTask(s.get(a.id));
   const b=s.create(input('two')).task;s.sessionFor(b);const second=await desktop.startTask(s.get(b.id));
   assert.equal(first.threadId,second.threadId);assert.notEqual(first.workspace,second.workspace);
-  assert.deepEqual(calls.map(c=>c.name),['create_thread','send_message_to_thread']);assert.equal(calls[1].args.threadId,'same-thread');
-  assert(calls[1].args.prompt.includes('[LARK_TASK_ID:'+b.id+']'));assert(calls[1].args.prompt.includes(second.workspace));
+  assert.deepEqual(calls.map(c=>c.name),['create_thread','thread-follower-start-turn','thread-follower-start-turn']);
+  assert.equal(calls[0].args.prompt,SESSION_INIT_PROMPT);
+  assert.equal(calls[1].args.turnStart.request.input[0].text,'one');
+  const request=calls[2].args.turnStart.request;
+  assert.equal(request.threadId,'same-thread');assert.equal(request.input[0].text,'two');
+  assert.equal(request.clientUserMessageId,b.id);assert(request.additionalContext.lark_delivery_instructions.value.includes(second.workspace));
   assert.equal(s.get(b.id).thread_id,'same-thread');assert.equal(s.get(b.id).workspace_path,second.workspace);
   s.close();await fs.rm(root,{recursive:true});
 });
@@ -51,7 +57,8 @@ test('stream updates route to the active message and never reuse the previous tu
 test('an uncertain continuation retains the known thread and never sends the message twice during reconciliation',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-unknown-')),s=new Store(':memory:'),d=new NativeDesktop(s);let sent=0;
   const first=s.create(input()).task,session=s.sessionFor(first);s.bindSession(session.id,'thread',root);s.transition(first.id,'COMPLETED');
-  const next=s.create(input('next')).task;d.ready=true;d.follow=async()=>{};d.tools={call:async()=>{sent++;throw new OutcomeUnknown('lost response');}};
+  const next=s.create(input('next')).task;d.ready=true;d.follow=async()=>{};d.waitForIdle=async()=>{};d.tools={};
+  d.ipc={request:async()=>{sent++;throw new OutcomeUnknown('lost response');}};
   const service=new TaskService(s,d);s.transition(next.id,'STARTING');await service.start(s.get(next.id));
   assert.equal(s.get(next.id).status,'UNKNOWN');assert.equal(s.get(next.id).thread_id,'thread');await service.reconcile();assert.equal(sent,1);
   s.close();await fs.rm(root,{recursive:true});
@@ -66,5 +73,5 @@ test('expiring a completed message removes only its output directory and keeps t
   const later=s.create(input('later')).task;s.sessionFor(later);const laterDir=taskWorkspace(root,later.id);await fs.mkdir(laterDir,{recursive:true});await fs.writeFile(path.join(laterDir,'later.txt'),'keep');
   let archived=false;await cleanup(s,{archive:async()=>{archived=true;}});
   assert.equal(archived,false);assert(s.get(old.id).cleaned_at);assert.equal(await fs.readFile(path.join(laterDir,'later.txt'),'utf8'),'keep');assert.equal(s.session(session.id).thread_id,'thread');
-  await assert.rejects(fs.stat(oldDir),{code:'ENOENT'});assert(taskPrompt(s.get(later.id),s).includes(laterDir));s.close();await fs.rm(root,{recursive:true});
+  await assert.rejects(fs.stat(oldDir),{code:'ENOENT'});assert.equal(taskPrompt(s.get(later.id),s),'later');s.close();await fs.rm(root,{recursive:true});
 });

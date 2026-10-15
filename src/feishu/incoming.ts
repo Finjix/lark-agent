@@ -23,7 +23,7 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
       // Receive events normally omit the locale wrapper; accept both API representations.
       const post=Array.isArray(content.content)?content:content.zh_cn??content.en_us??Object.values(content).find((v:any)=>Array.isArray(v?.content));
       if(!post||!Array.isArray(post.content))throw Error('无法读取图文消息，请重新发送');
-      const lines:string[]=[];if(typeof post.title==='string')lines.push(post.title);
+      const lines:string[]=[];if(typeof post.title==='string'&&post.title)lines.push(post.title);
       for(const row of post.content){
         if(!Array.isArray(row))throw Error('无法读取图文消息，请重新发送');
         const parts:string[]=[];
@@ -38,12 +38,11 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
           else if(typeof node.text==='string')parts.push(node.text);
           else if(node.tag!=='emotion')throw Error('图文消息包含暂不支持的内容，请改为文字、图片或文件');
         }
-        lines.push(parts.join(''));
+        if(parts.length)lines.push(parts.join(''));
       }
-      message.text=lines.filter(Boolean).join('\n');
+      message.text=lines.join('\n');
     }else message.error='暂不支持此消息类型，请发送文字、图片、文件或图文消息。';
     for(const mention of mentions)if(mention.id?.open_id===botId&&typeof mention.key==='string')message.text=message.text.replaceAll(mention.key,'');
-    message.text=message.text.trim();
     if(attachments.length>MAX_INPUT_FILES)throw Error(`每条消息最多接收 ${MAX_INPUT_FILES} 个附件，请分批发送`);
   }catch(e){message.error=e instanceof SyntaxError?'无法解析消息，请重新发送。':(e as Error).message;}
   if(!message.text&&!attachments.length&&!message.error)return;

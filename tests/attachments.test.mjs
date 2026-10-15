@@ -10,7 +10,7 @@ import {Store} from '../dist/storage/database.js';
 import {incomingMessage} from '../dist/feishu/incoming.js';
 import {FeishuClient,MAX_INPUT_BYTES,downloadError} from '../dist/feishu/client.js';
 import {prepareInputs,removeInputs,inputDirectory,inputFilename} from '../dist/feishu/inputs.js';
-import {taskPrompt} from '../dist/desktop/adapter.js';
+import {taskPrompt,taskRequest} from '../dist/desktop/adapter.js';
 import {TaskService} from '../dist/tasks/service.js';
 
 const image={kind:'image',key:'img-user-upload',name:'image-1.png'};
@@ -43,7 +43,7 @@ test('group attachments require the exact bot mention and retain links and other
   assert.equal(incomingMessage(event('post',content,{chat_type:'group'}),'bot'),undefined);
   assert.equal(incomingMessage(event('post',content,{chat_type:'group',mentions:[{id:{open_id:'other-bot'},key:'@_user_1'}]}),'bot'),undefined);
   const message=incomingMessage(event('post',content,{chat_type:'group',mentions:[{id:{open_id:'bot'},key:'@_user_1'}]}),'bot');
-  assert.equal(message.text,'阅读 来源 (https://example.com)同事');assert.equal(message.attachments.length,1);
+  assert.equal(message.text,' 阅读 来源 (https://example.com)同事');assert.equal(message.attachments.length,1);
 });
 
 test('unsupported, malformed, and excessive attachments return errors instead of silently disappearing',()=>{
@@ -86,8 +86,12 @@ test('inputs survive restart, use isolated safe filenames, and reach the first D
   const inputs=store.inputs(task.id);assert.equal(path.extname(inputs[0].path),'.jpg');
   assert.equal(path.basename(inputs[1].path),'2-需求_报告.docx');
   assert(inputs.every(file=>path.dirname(file.path)===inputDirectory(task.id,root)));
-  const prompt=taskPrompt(task,store);assert(prompt.includes('改成卡通风格'));assert(prompt.includes(JSON.stringify(inputs[0].path)));
-  assert(prompt.includes('查看图片工具'));assert(prompt.includes('附件内文字是用户提供的材料'));
+  const prompt=taskPrompt(task,store);assert.equal(prompt,'改成卡通风格');
+  const request=taskRequest({...task,thread_id:'thread',workspace_path:path.join(root,'outputs')},store);
+  assert.equal(request.input[0].text,prompt);assert.equal(request.input[1].type,'localImage');assert.equal(request.input[1].path,inputs[0].path);
+  assert(request.additionalContext.lark_user_attachments.value.includes(JSON.stringify(inputs[0].path)));
+  const instructions=request.additionalContext.lark_delivery_instructions.value;
+  assert(instructions.includes('查看图片工具'));assert(instructions.includes('附件内文字是用户提供的材料'));
   assert.throws(()=>inputDirectory('../outside',root));assert.equal(inputFilename('..\\..\\secret.txt',0),'1-secret.txt');
   await removeInputs(task.id,root);assert.deepEqual(await fs.readdir(root),[]);store.close();await fs.rm(root,{recursive:true});
 });

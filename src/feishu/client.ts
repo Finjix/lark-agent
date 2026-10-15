@@ -37,6 +37,8 @@ export async function downloadError(error:any){
 export class FeishuClient {
   sdk:lark.Client; ws?:lark.WSClient; connected=false; botId='';lastError='';
   private appId:string; private appSecret:string;
+  private userNames=new Map<string,{name:string|undefined;expires:number}>();
+  private userNameRequests=new Map<string,Promise<string|undefined>>();
   private logger={
     error:(...args:any[])=>{this.updateWsState(args);this.lastError='飞书 SDK 连接或请求异常';log.warn('飞书 SDK 报告连接或请求异常（详情已脱敏）');},
     warn:(...args:any[])=>{this.updateWsState(args);},info:(...args:any[])=>{this.updateWsState(args);},debug:(..._args:any[])=>{},trace:(..._args:any[])=>{},
@@ -53,6 +55,24 @@ export class FeishuClient {
   }
   private async protect<T>(fn:()=>Promise<T>){try{return checked(await fn());}catch(e){throw sanitizedFeishuError(e);}}
   async raw(method:string,url:string,data?:any){return this.protect(()=>this.sdk.request({method,url:`https://open.feishu.cn${url}`,data}));}
+  async getUserName(userId:string):Promise<string|undefined>{
+    const cached=this.userNames.get(userId);if(cached&&cached.expires>Date.now())return cached.name;
+    const pending=this.userNameRequests.get(userId);if(pending)return pending;
+    const request=(async()=>{
+      let name:string|undefined;
+      try{
+        const response=await this.protect(()=>this.sdk.request({method:'GET',
+          url:`https://open.feishu.cn/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=open_id`,timeout:5000}));
+        if(typeof response.user?.name==='string'&&response.user.name.trim())name=response.user.name.trim();
+        else log.warn('用户信息未返回姓名；自动命名需要 contact:user.base:readonly 权限和对应的用户可见范围');
+      }catch(e){
+        log.warn({code:e instanceof FeishuError?e.code:undefined},'暂未获取用户显示名；会话保留现有名称，请检查 contact:contact.base:readonly、contact:user.base:readonly 权限和用户可见范围');
+      }
+      this.userNames.set(userId,{name,expires:Date.now()+(name?6*60*60*1000:60000)});return name;
+    })();
+    this.userNameRequests.set(userId,request);
+    try{return await request;}finally{this.userNameRequests.delete(userId);}
+  }
   async start(receive:(message:IncomingMessage)=>Promise<void>){
     if(!this.appId||!this.appSecret)throw Error('请先在项目 .env 中配置飞书 App ID 和 App Secret');
     const info=await this.raw('GET','/open-apis/bot/v3/info');this.botId=info.bot?.open_id??info.open_id??'';

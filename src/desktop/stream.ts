@@ -47,10 +47,11 @@ export class StreamState extends EventEmitter {
     }else return;
     this.emit('state',id);
   }
-  view(threadId:string,turnId?:string|null,marker?:string):TaskView|undefined {
+  view(threadId:string,turnId?:string|null,marker?:string,clientUserMessageId?:string):TaskView|undefined {
     const cached=this.states.get(threadId);if(!cached)return;
     const turns=turnsOf(cached.state);
-    const turn=turnId?turns.find(t=>t.turnId===turnId):turns.find(t=>
+    const matching=clientUserMessageId?turns.filter(t=>t.params?.clientUserMessageId===clientUserMessageId):[];
+    const turn=turnId?turns.find(t=>t.turnId===turnId):clientUserMessageId?(matching.length===1?matching[0]:undefined):turns.find(t=>
       JSON.stringify(t.params?.input??[]).includes(marker??'__never__')||
       (typeof t.params?.toolOutput?.output==='string'&&t.params.toolOutput.output.includes(marker??'__never__'))||
       (t.items??[]).some((i:any)=>i.type==='userMessage'&&JSON.stringify(i.content??i.text??'').includes(marker??'__never__')));

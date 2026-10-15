@@ -10,7 +10,10 @@ export interface Task {
   cancel_requested: number; resources: string; cleaned_at: number|null;
   session_id:string|null;
 }
-export interface UserSession {id:string;tenant_key:string;user_id:string;thread_id:string|null;workspace_path:string|null;created_at:number;}
+export interface UserSession {
+  id:string;tenant_key:string;user_id:string;thread_id:string|null;workspace_path:string|null;created_at:number;
+  display_name:string|null;title:string|null;applied_title:string|null;
+}
 export interface TaskView {
   threadId: string; turnId: string; revision: number; status: string;
   commentary: string; answer: string; progress: {type: string; status: string}[];

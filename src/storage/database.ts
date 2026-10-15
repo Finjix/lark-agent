@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import {randomUUID} from 'node:crypto';
 import {terminal, type Task, type TaskStatus, type PendingInteraction,type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
+import {displayName,sessionTitle} from '../sessions/naming.js';
 
 export class Store {
   db: Database.Database;
@@ -34,6 +35,7 @@ export class Store {
         CREATE INDEX IF NOT EXISTS outbox_due ON delivery_outbox(status,next_attempt_at);
         CREATE TABLE IF NOT EXISTS task_events (id INTEGER PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),
           kind TEXT NOT NULL, payload TEXT NOT NULL,created_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS task_event_lookup ON task_events(task_id,kind,id);
         CREATE TABLE IF NOT EXISTS task_artifacts (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),
           path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,UNIQUE(task_id,path));
         CREATE TABLE IF NOT EXISTS task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,
@@ -50,11 +52,24 @@ export class Store {
       `);
       if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
       if(!(this.db.prepare('PRAGMA table_info(task_artifacts)').all() as any[]).some(c=>c.name==='kind'))this.db.exec("ALTER TABLE task_artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'");
+      const sessionColumns=new Set((this.db.prepare('PRAGMA table_info(user_sessions)').all() as any[]).map(c=>c.name));
+      for(const column of ['display_name','title','applied_title'])if(!sessionColumns.has(column))this.db.exec(`ALTER TABLE user_sessions ADD COLUMN ${column} TEXT`);
     })();
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
+  sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions ORDER BY created_at,rowid').all() as UserSession[];}
+  nameSession(id:string,name:string){
+    const session=this.session(id);if(!session)throw Error('用户会话不存在');
+    const normalized=displayName(name);if(!normalized)return session;
+    const title=sessionTitle(normalized,session.created_at);
+    this.db.prepare('UPDATE user_sessions SET display_name=?,title=? WHERE id=?').run(normalized,title,id);
+    return this.session(id)!;
+  }
+  sessionTitleApplied(id:string,title:string){
+    this.db.prepare('UPDATE user_sessions SET applied_title=? WHERE id=? AND title=?').run(title,id,title);
+  }
   sessionFor(task:Task):UserSession{
     return this.db.transaction(()=>{
       let session=this.db.prepare('SELECT * FROM user_sessions WHERE tenant_key=? AND user_id=?').get(task.tenant_key,task.user_id) as UserSession|undefined;
@@ -108,6 +123,11 @@ export class Store {
     })();
   }
   event(id:string,kind:string,payload:unknown){this.db.prepare('INSERT INTO task_events(task_id,kind,payload,created_at) VALUES(?,?,?,?)').run(id,kind,JSON.stringify(payload),Date.now());}
+  eventPayload(id:string,kind:string):any{
+    const row=this.db.prepare('SELECT payload FROM task_events WHERE task_id=? AND kind=? ORDER BY id DESC LIMIT 1').get(id,kind) as {payload:string}|undefined;
+    return row?JSON.parse(row.payload):undefined;
+  }
+  submission(id:string):{clientUserMessageId:string}|undefined{return this.eventPayload(id,'DESKTOP_TURN_SUBMITTING');}
   enqueue(id:string,taskId:string|null,kind:string,payload:unknown){
     this.db.prepare(`INSERT INTO delivery_outbox(id,task_id,kind,payload) VALUES(?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,status='PENDING',next_attempt_at=0,
