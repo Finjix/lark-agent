@@ -24,7 +24,7 @@ test('session ownership survives restart and is isolated by tenant and user',asy
 });
 
 test('Desktop creates one user thread and sends subsequent messages to that same thread with separate output directories',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-native-')),s=new Store(':memory:'),desktop=new NativeDesktop(s),calls=[];
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-native-')),s=new Store(':memory:'),desktop=new NativeDesktop(s,()=> 'active'),calls=[];
   desktop.ready=true;desktop.follow=async()=>{};desktop.waitForIdle=async()=>{};
   desktop.tools={call:async(name,args)=>{calls.push({name,args});return {threadId:'same-thread',projectlessOutputDirectory:root};}};
   desktop.ipc={request:async(name,args)=>{calls.push({name,args});return {result:{result:{turn:{id:`turn-${calls.length}`}}}};}};
@@ -55,7 +55,7 @@ test('stream updates route to the active message and never reuse the previous tu
 });
 
 test('an uncertain continuation retains the known thread and never sends the message twice during reconciliation',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-unknown-')),s=new Store(':memory:'),d=new NativeDesktop(s);let sent=0;
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-unknown-')),s=new Store(':memory:'),d=new NativeDesktop(s,()=> 'active');let sent=0;
   const first=s.create(input()).task,session=s.sessionFor(first);s.bindSession(session.id,'thread',root);s.transition(first.id,'COMPLETED');
   const next=s.create(input('next')).task;d.ready=true;d.follow=async()=>{};d.waitForIdle=async()=>{};d.tools={};
   d.ipc={request:async()=>{sent++;throw new OutcomeUnknown('lost response');}};

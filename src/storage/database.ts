@@ -9,8 +9,9 @@ export class Store {
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
     const version = this.db.pragma('user_version',{simple:true}) as number;
-    if(version>4) throw Error('数据库版本高于当前程序支持版本');
-    this.db.transaction(()=>{
+    if(version>5) throw Error('数据库版本高于当前程序支持版本');
+    this.db.pragma('foreign_keys = OFF');
+    try{this.db.transaction(()=>{
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS tasks (
           id TEXT PRIMARY KEY, tenant_key TEXT NOT NULL, user_id TEXT NOT NULL, chat_id TEXT NOT NULL,
@@ -54,12 +55,23 @@ export class Store {
       if(!(this.db.prepare('PRAGMA table_info(task_artifacts)').all() as any[]).some(c=>c.name==='kind'))this.db.exec("ALTER TABLE task_artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'");
       const sessionColumns=new Set((this.db.prepare('PRAGMA table_info(user_sessions)').all() as any[]).map(c=>c.name));
       for(const column of ['display_name','title','applied_title'])if(!sessionColumns.has(column))this.db.exec(`ALTER TABLE user_sessions ADD COLUMN ${column} TEXT`);
-    })();
+      if(!sessionColumns.has('retired_at'))this.db.exec(`
+        CREATE TABLE user_sessions_next (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
+          thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,
+          display_name TEXT,title TEXT,applied_title TEXT,retired_at INTEGER);
+        INSERT INTO user_sessions_next(id,tenant_key,user_id,thread_id,workspace_path,created_at,display_name,title,applied_title)
+          SELECT id,tenant_key,user_id,thread_id,workspace_path,created_at,display_name,title,applied_title FROM user_sessions;
+        DROP TABLE user_sessions;
+        ALTER TABLE user_sessions_next RENAME TO user_sessions;
+      `);
+      this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS current_user_session ON user_sessions(tenant_key,user_id) WHERE retired_at IS NULL;
+        PRAGMA user_version = 5;`);
+    })();}finally{this.db.pragma('foreign_keys = ON');}
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
-  sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions ORDER BY created_at,rowid').all() as UserSession[];}
+  sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as UserSession[];}
   nameSession(id:string,name:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
     const normalized=displayName(name);if(!normalized)return session;
@@ -72,9 +84,21 @@ export class Store {
   }
   sessionFor(task:Task):UserSession{
     return this.db.transaction(()=>{
-      let session=this.db.prepare('SELECT * FROM user_sessions WHERE tenant_key=? AND user_id=?').get(task.tenant_key,task.user_id) as UserSession|undefined;
+      let session=this.db.prepare('SELECT * FROM user_sessions WHERE tenant_key=? AND user_id=? AND retired_at IS NULL').get(task.tenant_key,task.user_id) as UserSession|undefined;
       if(!session){this.db.prepare('INSERT INTO user_sessions(id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(task.id,task.tenant_key,task.user_id,Date.now());session=this.session(task.id)!;}
       this.update(task.id,{session_id:session.id});return session;
+    })();
+  }
+  renewSession(task:Task,reason:'archived'|'missing'):UserSession{
+    return this.db.transaction(()=>{
+      const current=this.get(task.id);if(!current||current.turn_id||this.submission(task.id))throw Error('任务已尝试提交，不能切换会话或重复执行');
+      const previous=this.sessionFor(current),id=randomUUID(),createdAt=Date.now();
+      this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE id=?').run(createdAt,previous.id);
+      this.db.prepare('INSERT INTO user_sessions(id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(id,task.tenant_key,task.user_id,createdAt);
+      if(previous.display_name)this.nameSession(id,previous.display_name);
+      this.update(task.id,{session_id:id,thread_id:null,turn_id:null,workspace_path:null,last_revision:-1});
+      this.event(task.id,'DESKTOP_SESSION_REPLACED',{reason,previousSessionId:previous.id,previousThreadId:previous.thread_id,sessionId:id});
+      return this.session(id)!;
     })();
   }
   bindSession(id:string,threadId:string,workspace?:string){

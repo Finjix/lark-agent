@@ -12,7 +12,7 @@ export interface Task {
 }
 export interface UserSession {
   id:string;tenant_key:string;user_id:string;thread_id:string|null;workspace_path:string|null;created_at:number;
-  display_name:string|null;title:string|null;applied_title:string|null;
+  display_name:string|null;title:string|null;applied_title:string|null;retired_at:number|null;
 }
 export interface TaskView {
   threadId: string; turnId: string; revision: number; status: string;

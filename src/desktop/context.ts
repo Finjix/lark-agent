@@ -6,6 +6,16 @@ import Database from 'better-sqlite3';
 import {FramedPipe,RpcRejected} from './transport.js';
 import {config} from '../config.js';
 export interface CallerContext {threadId:string;turnId:string;}
+export type DesktopThreadStatus='active'|'archived'|'missing';
+export function desktopThreadStatus(threadId:string,home=config.codexHome):DesktopThreadStatus{
+  const files=fs.readdirSync(home).filter(x=>/^state_\d+\.sqlite$/.test(x)).sort((a,b)=>Number(b.match(/\d+/)![0])-Number(a.match(/\d+/)![0]));
+  if(!files.length)throw Error('未找到 Desktop 本地聊天索引，暂不能确认会话状态');
+  const db=new Database(path.join(home,files[0]),{readonly:true,fileMustExist:true});
+  try{
+    const thread=db.prepare('SELECT archived FROM threads WHERE id=?').get(threadId) as {archived:number}|undefined;
+    return !thread?'missing':thread.archived?'archived':'active';
+  }finally{db.close();}
+}
 export function desktopVersion(){
   if(process.platform!=='win32')throw Error('Only Windows x64 is supported');
   return execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"(Get-AppxPackage OpenAI.Codex | Select-Object -First 1).Version"],{encoding:'utf8',windowsHide:true,timeout:10000}).trim();

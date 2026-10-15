@@ -62,7 +62,7 @@ test('v1 migration preserves existing tasks and stores attachment metadata atomi
   const task=store.create(input,[],[image]).task;
   assert.equal(store.create(input,[],[{...image,key:'different'}]).created,false);
   store.close();store=new Store(file);assert.equal(store.inputs(task.id)[0].key,image.key);
-  assert.equal(store.db.pragma('user_version',{simple:true}),4);store.close();await fs.rm(root,{recursive:true});
+  assert.equal(store.db.pragma('user_version',{simple:true}),5);store.close();await fs.rm(root,{recursive:true});
 });
 
 test('unauthorized and unsupported attachment messages never create a task or download files',async()=>{

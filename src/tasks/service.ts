@@ -139,6 +139,13 @@ export class TaskService {
     for(const task of this.store.active()){
       if(this.starting.has(task.id))continue;
       try{
+        // Preparation never sent the business input. Requeue before following an old
+        // thread so startTask can replace an archived or missing session safely.
+        if(this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST')&&!this.store.submission(task.id)&&!task.turn_id&&
+          task.session_id&&this.store.session(task.session_id)?.thread_id&&this.store.session(task.session_id)?.workspace_path){
+          this.store.transition(task.id,'QUEUED',{error:'',progress:'等待提交用户原文',started_at:null});
+          continue;
+        }
         if(task.thread_id)await this.desktop.follow(task.thread_id);
         else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))this.store.transition(task.id,'QUEUED',{error:'',progress:'等待恢复附件接收',started_at:null});
         else{this.store.transition(task.id,'UNKNOWN',{error:'服务重启或提交结果不明，正在核对'});await this.desktop.recoverUnbound(task);}

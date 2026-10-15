@@ -5,7 +5,7 @@ import {config} from '../config.js';
 import {Store} from '../storage/database.js';
 import type {Task,PendingInteraction,DesktopAdapter} from '../types.js';
 import {DesktopIPC,OutcomeUnknown} from './transport.js';
-import {AppTools,callerCandidates,desktopVersion,discoverToolEndpoint, type CallerContext} from './context.js';
+import {AppTools,callerCandidates,desktopVersion,desktopThreadStatus,discoverToolEndpoint, type CallerContext} from './context.js';
 import {StreamState,turnsOf} from './stream.js';
 import {log,safeError} from '../log.js';
 
@@ -15,7 +15,7 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
   ready=false; version=''; error=''; stream=new StreamState(); private ipc?:DesktopIPC; private tools?:AppTools;
   private owners=new Map<string,string>(); private connecting?:Promise<Record<string,unknown>>;
   private resyncing=new Set<string>(); private versionChecked=0;
-  constructor(private store:Store){super();this.stream.on('state',id=>this.emit('state',id));this.stream.on('resync',id=>{
+  constructor(private store:Store,private threadStatus=desktopThreadStatus){super();this.stream.on('state',id=>this.emit('state',id));this.stream.on('resync',id=>{
     if(!this.resyncing.has(id)){this.resyncing.add(id);void this.readTask(id).catch(()=>{}).finally(()=>this.resyncing.delete(id));}
   });}
   async probe(){if(this.ready){if(Date.now()-this.versionChecked>60000){this.versionChecked=Date.now();if(desktopVersion()!==this.version)this.close();}if(this.ready)return {ready:true,version:this.version};}if(this.connecting)return this.connecting;
@@ -41,10 +41,18 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
   }
   async startTask(task:Task){
     if(!this.ready||!this.tools||!this.ipc)throw Error('Desktop 尚未就绪');
-    const session=this.store.sessionFor(task);
+    let session=this.store.sessionFor(task);
     taskPrompt(task,this.store); // Validate downloaded inputs before creating or submitting anything.
     if(this.store.submission(task.id))throw new OutcomeUnknown('用户原文已尝试提交，必须核对原轮次，不能重复发送');
     if(!this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST'))this.store.event(task.id,'DESKTOP_RAW_REQUEST',{});
+    if(session.thread_id){
+      const status=this.threadStatus(session.thread_id);
+      if(status!=='active'){
+        this.unfollow(session.thread_id);
+        session=this.store.renewSession(task,status);
+        log.info({taskId:task.id,reason:status},'原会话已归档或不存在，正在新建用户会话');
+      }
+    }
     if(!session.thread_id){
       // The app tool creates and starts a turn together. Bootstrap the session once so every
       // business request, including the first one, can use native input and separate context.
@@ -80,8 +88,9 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
   }
   async syncSessionTitle(sessionId:string){
     const session=this.store.session(sessionId);
-    if(!this.ready||!this.tools||!session?.thread_id||!session.title||session.applied_title===session.title)return;
+    if(!this.ready||!this.tools||!session?.thread_id||session.retired_at!==null||!session.title||session.applied_title===session.title)return;
     try{
+      if(this.threadStatus(session.thread_id)!=='active')return;
       await this.tools.call('set_thread_title',{threadId:session.thread_id,title:session.title});
       this.store.sessionTitleApplied(session.id,session.title);
     }catch(e){log.warn({sessionId,error:safeError(e)},'会话名称暂未同步，将在后续重试');}

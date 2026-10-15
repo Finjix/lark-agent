@@ -23,9 +23,9 @@ test('existing sessions gain naming metadata without changing owner, thread, dir
   const task=store.create(input()).task,session=store.sessionFor(task);store.bindSession(session.id,'existing-thread',root);store.close();
   const legacy=new Database(file);for(const column of ['display_name','title','applied_title'])legacy.exec(`ALTER TABLE user_sessions DROP COLUMN ${column}`);legacy.close();
   store=new Store(file);const named=store.nameSession(session.id,'薯薯');assert.equal(named.created_at,session.created_at);assert.equal(named.thread_id,'existing-thread');assert.equal(named.workspace_path,root);assert.equal(named.applied_title,null);
-  const d=new NativeDesktop(store),calls=[];d.ready=true;d.tools={call:async(tool,args)=>{calls.push({tool,args});throw Error('temporary failure');}};
+  const d=new NativeDesktop(store,()=> 'active'),calls=[];d.ready=true;d.tools={call:async(tool,args)=>{calls.push({tool,args});throw Error('temporary failure');}};
   await d.syncSessionTitle(session.id);assert.equal(store.session(session.id).applied_title,null);store.close();
-  store=new Store(file);const resumed=new NativeDesktop(store);resumed.ready=true;resumed.tools={call:async(tool,args)=>{calls.push({tool,args});return {};}};
+  store=new Store(file);const resumed=new NativeDesktop(store,()=> 'active');resumed.ready=true;resumed.tools={call:async(tool,args)=>{calls.push({tool,args});return {};}};
   await resumed.syncSessionTitle(session.id);await resumed.syncSessionTitle(session.id);
   assert.equal(calls.length,2);assert.equal(calls[1].tool,'set_thread_title');assert.equal(calls[1].args.threadId,'existing-thread');assert.equal(calls[1].args.title,named.title);assert.equal(store.session(session.id).applied_title,named.title);
   const renamed=store.nameSession(session.id,'新名字');assert.equal(renamed.title.replace('新名字','薯薯'),named.title);assert.notEqual(renamed.applied_title,renamed.title);store.close();await fs.rm(root,{recursive:true});
