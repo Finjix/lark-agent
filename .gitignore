@@ -1,0 +1,10 @@
+runtime/
+node_modules/
+dist/
+data/
+releases/
+.env
+.env.*
+!.env.example
+*.log
+output/
