@@ -6,6 +6,7 @@ import {terminal,type Task,type TaskView,type IncomingMessage} from '../types.js
 import {safeError,log} from '../log.js';
 import {OutcomeUnknown} from '../desktop/transport.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
+import {authorized} from '../access.js';
 
 export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
 export class TaskService {
@@ -16,10 +17,10 @@ export class TaskService {
     desktop.on('online',()=>this.interruptSent.clear());
   }
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
-  authorized(message:IncomingMessage){return (config.users.includes(message.user)||config.admins.includes(message.user))&&(!config.chats.length||config.chats.includes(message.chat));}
+  authorized(message:IncomingMessage){return authorized(message);}
   async receive(message:IncomingMessage){
     if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
-    if(!this.authorized(message)){this.notice(message,`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
+    if(!this.authorized(message)){this.notice(message,config.tenants.length?'当前企业或会话尚未开放机器人使用权限，请联系管理员。':`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
     if(message.error){this.notice(message,message.error);return;}
     if(message.text.startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
@@ -102,14 +103,16 @@ export class TaskService {
       if(session&&root)this.store.bindSession(session.id,threadId,root);
       this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root,task.id):root)});
     }
-    const progress=[view.commentary,...view.progress.slice(-12).map(p=>`${p.type}：${p.status}`)].filter(Boolean).join('\n').slice(-18000);
+    const progress=view.commentary;
+    // Persist images before the terminal transition can release the Desktop subscription.
+    const imagesChanged=this.store.recordImages(task.id,view.images);
     const patch={result:view.answer,error:view.error,progress,last_revision:view.revision};
     const completed=({completed:'COMPLETED',failed:'FAILED',interrupted:'INTERRUPTED'} as const)[view.status as 'completed'];
     if(completed){this.store.transition(task.id,completed,patch);this.store.meta('desktop_caller',{threadId,turnId:view.turnId});setImmediate(()=>{if(!this.store.byThread(threadId))this.desktop.unfollow(threadId);});log.info({taskId:task.id,status:completed},'任务结束');return;}
     const previousRequests=JSON.stringify(this.store.pending(task.id));this.store.setRequests(task.id,view.requests);
     const status=view.requests.length?'WAITING_APPROVAL':'RUNNING';
     if(task.status!==status)this.store.transition(task.id,status,patch);
-    else if(task.result!==view.answer||task.progress!==progress||task.error!==view.error||previousRequests!==JSON.stringify(this.store.pending(task.id))){this.store.update(task.id,patch);this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});}
+    else if(imagesChanged||task.result!==view.answer||task.progress!==progress||task.error!==view.error||previousRequests!==JSON.stringify(this.store.pending(task.id))){this.store.update(task.id,patch);this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});}
     else if(task.last_revision!==view.revision)this.store.update(task.id,{last_revision:view.revision});
     if(task.cancel_requested)void this.interrupt(this.store.get(task.id)!).catch(e=>log.warn({taskId:task.id,error:safeError(e)},'中断尚未确认'));
   }

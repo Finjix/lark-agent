@@ -15,7 +15,9 @@ export interface TaskView {
   threadId: string; turnId: string; revision: number; status: string;
   commentary: string; answer: string; progress: {type: string; status: string}[];
   error: string; requests: PendingInteraction[];
+  images: GeneratedImage[];
 }
+export interface GeneratedImage {id:string;savedPath:string|null;base64:string|null;}
 export interface PendingInteraction {
   id: string; kind: 'command'|'file'|'permissions'|'input'|'elicitation';
   summary: string; payload: Record<string, any>;

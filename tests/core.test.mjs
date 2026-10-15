@@ -82,13 +82,12 @@ test('terminal transition and final outbox are atomic on database failure',()=>{
   s.db.exec("CREATE TRIGGER fail_outbox BEFORE UPDATE ON delivery_outbox BEGIN SELECT RAISE(ABORT,'disk failure'); END;");
   assert.throws(()=>s.transition(t.id,'COMPLETED',{result:'ok'}));assert.equal(s.get(t.id).status,'QUEUED');s.close();
 });
-test('global, per-user, per-thread and resource locks count UNKNOWN and waiting tasks',()=>{
+test('session and resource conflicts still block UNKNOWN and waiting tasks without a global task cap',()=>{
   const s=memory(),a=s.create(input('a')).task,b=s.create(input('b')).task,c=s.create(input('c')).task,d=s.create(input('d','u2')).task;
   a.status='UNKNOWN';b.status='WAITING_APPROVAL';
-  assert.equal(canSchedule(c,[a,b],4,2),false);assert.equal(canSchedule(d,[a,b],4,2),true);
-  assert.equal(canSchedule(d,[a,b],2,2),false);
-  c.thread_id='same';d.thread_id='same';assert.equal(canSchedule(c,[d],4,2),false);
-  c.thread_id=null;c.resources='["shared"]';d.resources='["shared"]';assert.equal(canSchedule(c,[d],4,2),false);s.close();
+  assert.equal(canSchedule(c,[a,b]),false);assert.equal(canSchedule(d,[a,b]),true);
+  c.thread_id='same';d.thread_id='same';assert.equal(canSchedule(c,[d]),false);
+  c.thread_id=null;c.resources='["shared"]';d.resources='["shared"]';assert.equal(canSchedule(c,[d]),false);s.close();
 });
 test('equal-timestamp messages serialize per user and a blocked user does not block other users',async()=>{
   const s=memory(),d=new EventEmitter(),releases=[];d.ready=true;d.startTask=task=>new Promise(resolve=>releases.push(()=>resolve({threadId:task.id,workspace:'test'})));d.follow=async()=>{};
@@ -98,6 +97,19 @@ test('equal-timestamp messages serialize per user and a blocked user does not bl
   const scheduler=new Scheduler(new TaskService(s,d));scheduler.tick();
   assert.deepEqual(s.active().map(t=>t.id),[tasks[0].id,tasks[3].id,tasks[4].id]);
   await new Promise(r=>setImmediate(r));for(const release of releases)release();await scheduler.stop();s.close();
+});
+
+test('scheduler launches every independent user without a numeric cap and stop awaits all submissions',async()=>{
+  const s=memory(),releases=[],started=[];
+  const tasks=Array.from({length:24},(_,i)=>s.create(input(`parallel-${i}`,`user-${i}`)).task);
+  const next=s.create(input('same-user-next','user-0')).task;
+  const service={store:s,desktop:{ready:true},start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
+  const scheduler=new Scheduler(service);scheduler.tick();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(started.length,24);assert.equal(s.active().length,24);assert.equal(s.get(next.id).status,'QUEUED');
+  scheduler.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(started.length,24);
+  let stopped=false;const stopping=scheduler.stop().then(()=>{stopped=true;});await new Promise(resolve=>setImmediate(resolve));assert.equal(stopped,false);
+  for(const release of releases)release();await stopping;assert.equal(stopped,true);
+  s.transition(tasks[0].id,'COMPLETED');scheduler.tick();assert.equal(s.get(next.id).status,'QUEUED');s.close();
 });
 test('cross-user and cross-tenant commands cannot cancel another task',async()=>{
   const s=memory(),desktop=new EventEmitter(),service=new TaskService(s,desktop),task=s.create(input()).task;
@@ -122,6 +134,73 @@ test('card output respects byte limits for multibyte text and contains no unrela
   const s=memory(),task=s.create(input()).task;task.result='汉🙂'.repeat(12000);task.status='COMPLETED';
   assert(Buffer.byteLength(limitText(task.result,1000))<=1000);const content=renderTask(task);assert(Buffer.byteLength(content)<=24000);
   assert.equal(cardJson(task,content).config.streaming_mode,false);s.close();
+});
+
+test('streamed replies contain public commentary and answer without task chrome or tool status',async()=>{
+  const s=memory(),task=s.create(input()).task,desktop=Object.assign(new EventEmitter(),{stream:new StreamState(),unfollow:()=>{}});
+  const service=new TaskService(s,desktop),calls=[];
+  const fake={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});return url.endsWith('/cards')?{card_id:'card'}:{};},
+    reply:async(...args)=>{calls.push({reply:args});return {message_id:'message'};}};
+  const delivery=new Delivery(s,fake);
+  await delivery.tick();assert.equal(calls.length,0); // No queued status bubble.
+  s.transition(task.id,'STARTING',{thread_id:'thread',turn_id:'turn'});
+  const publish=async(revision,answer,status='inProgress')=>{
+    const item=turn('turn','',answer,status);item.items.push({type:'commandExecution',status:'inProgress',output:'PRIVATE COMMAND OUTPUT'});
+    desktop.stream.receive(broadcast('thread',{type:'snapshot',revision,conversationState:state([item])}));
+    service.onState('thread');await delivery.tick();
+  };
+  await publish(1,'正在');await publish(2,'正在输出');await publish(3,'正在输出完整回复','completed');
+  const activeCards=calls.filter(c=>c.method==='PUT'&&c.data.card&&JSON.parse(c.data.card.data).config.streaming_mode).map(c=>JSON.parse(c.data.card.data));
+  const bodies=[...activeCards.map(c=>c.body.elements[0].content),...calls.filter(c=>c.url?.endsWith('/elements/task_content/content')).map(c=>c.data.content)];
+  assert.deepEqual(bodies,['公开进度\n\n正在','公开进度\n\n正在输出','公开进度\n\n正在输出完整回复']);
+  assert.match(activeCards[0].header.title.content,/^番薯搬砖中\.\.\.\.\.\. \d+s$/);assert.equal(activeCards[0].header.template,'green');
+  const final=calls.filter(c=>c.method==='PUT'&&c.url==='/open-apis/cardkit/v1/cards/card').at(-1);
+  const card=JSON.parse(final.data.card.data);assert.equal(card.header,undefined);assert.equal(card.config.streaming_mode,false);
+  assert.equal(card.body.elements[0].content,bodies.at(-1));
+  const serialized=JSON.stringify(calls);
+  for(const excluded of ['耗时','查询：','状态：','**回复**','**进度**','commandExecution','SECRET_INTERNAL_REASONING','PRIVATE COMMAND OUTPUT'])assert(!serialized.includes(excluded),excluded);
+  assert(!serialized.includes(`任务 ${task.id}`));
+  await new Promise(resolve=>setImmediate(resolve));await delivery.stop();s.close();
+});
+
+test('minimal reply still exposes approval commands, errors, and cancellation',()=>{
+  const s=memory(),task=s.create(input()).task;
+  assert.equal(renderTask(task),'');
+  task.status='WAITING_APPROVAL';
+  const request={id:'req',kind:'command',summary:'允许执行此命令？',payload:{}};
+  const content=renderTask(task,[request]);assert(content.includes(`/approve ${task.id} req`));assert(content.includes(`/deny ${task.id} req`));
+  assert(renderTask(task,[{...request,kind:'input'}]).includes(`/answer ${task.id} req`));
+  task.status='FAILED';task.error='连接失败';assert.equal(renderTask(task),'连接失败\n\n执行失败');
+  task.status='CANCELLED';task.error='';assert.equal(renderTask(task),'已取消');s.close();
+});
+
+test('working card shows only the requested status and seconds, and drops it when execution stops',()=>{
+  const s=memory(),task=s.create(input()).task;task.status='RUNNING';task.started_at=1000;
+  assert.equal(cardJson(task,'',true,13500).header.title.content,'番薯搬砖中...... 12s');
+  assert.equal(cardJson(task,'',true,500).header.title.content,'番薯搬砖中...... 0s');
+  task.progress='正在查看图片';assert.equal(renderTask(task),'正在查看图片');
+  for(const status of ['WAITING_APPROVAL','UNKNOWN','COMPLETED','FAILED','CANCELLED','INTERRUPTED']){
+    task.status=status;assert.equal(cardJson(task,renderTask(task)).header,undefined);
+  }
+  s.close();
+});
+
+test('timer refreshes without new Desktop output, reuses the message, and respects delivery retry backoff',async()=>{
+  const s=memory(),task=s.create(input()).task,calls=[];let fail=false,replies=0;
+  const fake={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});if(fail)throw Error('network down');return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>{replies++;return {message_id:'message'};}};
+  const delivery=new Delivery(s,fake);
+  s.transition(task.id,'STARTING',{started_at:Date.now()-1200});await delivery.tick();
+  assert.match(JSON.parse(calls.at(-1).data.card.data).header.title.content,/^番薯搬砖中\.\.\.\.\.\. \d+s$/);
+  s.update(task.id,{started_at:Date.now()-4200});await delivery.tick();
+  const active=JSON.parse(calls.at(-1).data.card.data);assert.match(active.header.title.content,/^番薯搬砖中\.\.\.\.\.\. [4-9]s$/);assert.equal(active.body.elements[0].content,' ');assert.equal(replies,1);
+  fail=true;s.update(task.id,{started_at:Date.now()-8200});await delivery.tick();
+  const row=s.db.prepare('SELECT * FROM delivery_outbox WHERE id=?').get(`view:${task.id}`);assert.equal(row.status,'RETRYING');
+  s.db.prepare('UPDATE delivery_outbox SET next_attempt_at=? WHERE id=?').run(Date.now()+60000,row.id);
+  const count=calls.length;await delivery.tick();assert.equal(calls.length,count);
+  fail=false;s.transition(task.id,'COMPLETED',{result:'完成正文'});await delivery.tick();
+  const final=JSON.parse(calls.at(-1).data.card.data);assert.equal(final.body.elements[0].content,'完成正文');assert.equal(final.config.streaming_mode,false);
+  const after=calls.length;await delivery.tick();assert.equal(calls.length,after);assert.equal(replies,1);
+  await delivery.stop();s.close();
 });
 test('outbox retries delivery without calling Desktop and serializes card sequences',async()=>{
   const s=memory(),task=s.create(input()).task;s.transition(task.id,'COMPLETED',{result:'ok'});let fail=true;const sequences=[];

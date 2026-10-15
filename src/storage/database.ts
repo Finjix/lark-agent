@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import {randomUUID} from 'node:crypto';
-import {terminal, type Task, type TaskStatus, type PendingInteraction,type IncomingAttachment,type TaskInput,type UserSession} from '../types.js';
+import {terminal, type Task, type TaskStatus, type PendingInteraction,type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
 
 export class Store {
   db: Database.Database;
@@ -8,7 +8,7 @@ export class Store {
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
     const version = this.db.pragma('user_version',{simple:true}) as number;
-    if(version>3) throw Error('数据库版本高于当前程序支持版本');
+    if(version>4) throw Error('数据库版本高于当前程序支持版本');
     this.db.transaction(()=>{
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS tasks (
@@ -36,6 +36,8 @@ export class Store {
           kind TEXT NOT NULL, payload TEXT NOT NULL,created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS task_artifacts (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),
           path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,UNIQUE(task_id,path));
+        CREATE TABLE IF NOT EXISTS task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,
+          saved_path TEXT,base64 TEXT,PRIMARY KEY(task_id,item_id));
         CREATE TABLE IF NOT EXISTS pending_requests (task_id TEXT NOT NULL REFERENCES tasks(id),request_id TEXT NOT NULL,
           kind TEXT NOT NULL,summary TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',
           created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(task_id,request_id));
@@ -44,9 +46,10 @@ export class Store {
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
           thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,UNIQUE(tenant_key,user_id));
-        PRAGMA user_version = 3;
+        PRAGMA user_version = 4;
       `);
       if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
+      if(!(this.db.prepare('PRAGMA table_info(task_artifacts)').all() as any[]).some(c=>c.name==='kind'))this.db.exec("ALTER TABLE task_artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'");
     })();
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
@@ -80,6 +83,16 @@ export class Store {
     })();
   }
   inputs(taskId:string):TaskInput[]{return this.db.prepare('SELECT ordinal,kind,key,name,path,size FROM task_inputs WHERE task_id=? ORDER BY ordinal').all(taskId) as TaskInput[];}
+  images(taskId:string):GeneratedImage[]{return this.db.prepare('SELECT item_id AS id,saved_path AS savedPath,base64 FROM task_generated_images WHERE task_id=? ORDER BY rowid').all(taskId) as GeneratedImage[];}
+  recordImages(taskId:string,images:GeneratedImage[]){
+    return this.db.transaction(()=>{
+      let changed=0;
+      for(const image of images)changed+=this.db.prepare(`INSERT INTO task_generated_images(task_id,item_id,saved_path,base64) VALUES(?,?,?,?)
+        ON CONFLICT(task_id,item_id) DO UPDATE SET saved_path=excluded.saved_path,base64=excluded.base64
+        WHERE saved_path IS NOT excluded.saved_path OR base64 IS NOT excluded.base64`).run(taskId,image.id,image.savedPath,image.base64).changes;
+      return changed>0;
+    })();
+  }
   inputReady(taskId:string,ordinal:number,path:string,size:number){this.db.prepare('UPDATE task_inputs SET path=?,size=? WHERE task_id=? AND ordinal=?').run(path,size,taskId,ordinal);}
   update(id:string,patch:Partial<Task>){
     const columns = new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((r:any)=>r.name));

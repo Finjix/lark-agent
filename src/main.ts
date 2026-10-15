@@ -11,6 +11,7 @@ import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
 import {Delivery} from './feishu/delivery.js';
 import {cleanup} from './maintenance.js';
+import {accessConfigured} from './access.js';
 
 async function main(){
   ensureDirectories();const action=process.argv[2]??'start';
@@ -31,11 +32,11 @@ async function main(){
   }
   if(action==='doctor'){
     const checks:any={runtime:{ok:process.version==='v24.21.0'&&process.arch==='x64',version:process.version,executable:process.execPath},
-      sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length}};
+      sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
     try{checks.desktop=await desktop.probe();}catch(e){checks.desktop={ready:false,error:safeError(e)};}
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     desktop.close();store.close();console.log(JSON.stringify(checks,null,2));
-    if(!checks.runtime.ok||!checks.desktop.ready||!checks.configuration.credentials||!(config.users.length+config.admins.length))process.exitCode=1;return;
+    if(!checks.runtime.ok||!checks.desktop.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;
   }
   if(action!=='start')throw Error('支持命令：start、doctor、stop、backup、retry-delivery');
   let stopping=false;let poll:NodeJS.Timeout|undefined,refresh:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
@@ -51,8 +52,8 @@ async function main(){
       response.end('{"stopping":true}');void stop();return;
     }
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
-    const ready=desktop.ready&&feishu.connected&&(config.users.length+config.admins.length)>0;
-    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,desktop:{ready:desktop.ready,version:desktop.version,error:desktop.error},feishu:{connected:feishu.connected,error:feishu.lastError},...store.stats()}));
+    const ready=desktop.ready&&feishu.connected&&accessConfigured();
+    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},desktop:{ready:desktop.ready,version:desktop.version,error:desktop.error},feishu:{connected:feishu.connected,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(refresh);clearInterval(maintain);server.close();
@@ -82,7 +83,7 @@ async function main(){
   refresh=setInterval(()=>{if(desktop.ready)for(const task of store.active())if(task.thread_id)void desktop.readTask(task.thread_id).catch(()=>{});},3000);
   maintain=setInterval(()=>{if(desktop.ready)void cleanup(store,desktop);},3600000);
   log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书 Desktop 机器人已启动');
-  if(!config.users.length&&!config.admins.length)log.warn('ALLOWED_USERS 为空；任务执行关闭，可向机器人发送 /whoami 获取自己的 Open ID');
+  if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭，可通过 /whoami 获取租户和 Open ID');
   await reconnect();
 }
 main().catch(e=>{log.error({error:safeError(e)},'启动失败');process.exitCode=1;});

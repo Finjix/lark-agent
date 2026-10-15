@@ -69,6 +69,7 @@ export class FeishuClient {
     return this.protect(()=>this.sdk.im.message.create({params:{receive_id_type:'chat_id'},data:{receive_id:chatId,msg_type:type,content:JSON.stringify(content),uuid}}));
   }
   async upload(file:string,name:string){return this.protect(()=>this.sdk.im.file.create({data:{file_type:'stream',file_name:name,file:createReadStream(file)}}));}
+  async uploadImage(file:string){return this.protect(()=>this.sdk.im.image.create({data:{image_type:'message',image:createReadStream(file)}}));}
   async downloadResource(messageId:string,attachment:IncomingAttachment,destination:string){
     try{
       const resource=await this.sdk.im.messageResource.get({path:{message_id:messageId,file_key:attachment.key},params:{type:attachment.kind}});

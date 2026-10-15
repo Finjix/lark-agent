@@ -6,8 +6,9 @@ import {Store} from '../storage/database.js';
 import {config} from '../config.js';
 import {terminal,type Task} from '../types.js';
 import {FeishuClient,FeishuError} from './client.js';
-import {cardJson,renderTask,labels} from './cards.js';
+import {cardJson,renderTask,messageSummary,working,elapsedSeconds} from './cards.js';
 import {safeError,log} from '../log.js';
+import {stageGeneratedImage} from './images.js';
 
 export async function ownedArtifact(workspace:string,candidate:string){
   const root=await fs.realpath(workspace),file=await fs.realpath(candidate),relative=path.relative(root,file);
@@ -23,12 +24,19 @@ export function artifactLinks(text:string){
 }
 export class Delivery {
   private timer?:NodeJS.Timeout;private busy=false;private stopping=false;
+  private renderedSeconds=new Map<string,number>();
   private gate=new PQueue({concurrency:1,intervalCap:5,interval:1000,strict:true});
   constructor(private store:Store,private feishu:FeishuClient){}
   start(){this.timer=setInterval(()=>{void this.tick();},config.CARD_UPDATE_INTERVAL_MS);void this.tick();}
   async tick(){
     if(this.busy||this.stopping||!this.feishu.connected)return;this.busy=true;
-    try{for(const row of this.store.due()){
+    try{
+      // Refresh the timer even when Desktop has no new text. Preserve retry backoff and failures.
+      for(const task of this.store.active())if(working(task)&&this.renderedSeconds.get(task.id)!==elapsedSeconds(task)){
+        const row=this.store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`) as {status:string}|undefined;
+        if(row?.status==='DELIVERED')this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
+      }
+      for(const row of this.store.due()){
       try{await this.deliver(row);this.store.ack(row.id,row.version);}
       catch(e){const error=safeError(e);const permanent=e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code);
         this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
@@ -46,20 +54,24 @@ export class Delivery {
       if(!artifact||artifact.message_id)return;
       // Revalidate realpath immediately before uploading; do not follow replaced symlinks outside the task directory.
       await ownedArtifact(task.workspace_path!,artifact.path);
-      if(!artifact.file_key){const uploaded=await this.api(()=>this.feishu.upload(artifact.path,artifact.name));artifact.file_key=uploaded.file_key;
+      const image=artifact.kind==='image';
+      if(!artifact.file_key){const uploaded=await this.api(()=>image?this.feishu.uploadImage(artifact.path):this.feishu.upload(artifact.path,artifact.name));artifact.file_key=image?uploaded.image_key:uploaded.file_key;
+        if(!artifact.file_key)throw Error('飞书未返回附件上传标识');
         this.store.db.prepare('UPDATE task_artifacts SET file_key=? WHERE id=?').run(artifact.file_key,artifact.id);}
-      const sent=await this.api(()=>this.feishu.reply(task.source_message_id,task.chat_id,'file',{file_key:artifact.file_key},this.uuid(row.id)));
+      const sent=await this.api(()=>this.feishu.reply(task.source_message_id,task.chat_id,image?'image':'file',image?{image_key:artifact.file_key}:{file_key:artifact.file_key},this.uuid(row.id)));
       this.store.db.prepare('UPDATE task_artifacts SET message_id=? WHERE id=?').run(sent.message_id,artifact.id);return;
     }
     if(row.kind!=='VIEW')throw Error('未知投递类型');
-    await this.updateCard(task);
     if(terminal(task.status))await this.collectArtifacts(task);
+    await this.updateCard(task);
   }
   private uuid(id:string){return createHash('sha256').update(id).digest('hex').slice(0,32);}
   private async updateCard(task:Task){
-    let message=this.store.messages(task.id);const content=renderTask(task,this.store.pending(task.id));
+    const now=Date.now();let message=this.store.messages(task.id);const content=renderTask(task,this.store.pending(task.id))||(working(task)?' ':'');
+    // Queued tasks stay quiet until execution starts.
+    if(!content&&!working(task))return;
     if(!message.card_id){
-      const card=await this.api(()=>this.feishu.raw('POST','/open-apis/cardkit/v1/cards',{type:'card_json',data:JSON.stringify(cardJson(task,content,true))}));
+      const card=await this.api(()=>this.feishu.raw('POST','/open-apis/cardkit/v1/cards',{type:'card_json',data:JSON.stringify(cardJson(task,content,true,now))}));
       if(!card.card_id)throw Error('飞书未返回 card_id');
       this.store.db.prepare('UPDATE task_messages SET card_id=? WHERE task_id=?').run(card.card_id,task.id);message=this.store.messages(task.id);
     }
@@ -69,35 +81,48 @@ export class Delivery {
     }
     // Feishu streaming sessions close after 10 minutes. Switch to full-card updates before that limit.
     const closeStream=terminal(task.status)||Date.now()-task.created_at>9*60*1000;
-    if(message.finalized){
+    if(working(task)&&!message.finalized&&!closeStream){
+      // The colored header is outside the text element, so refresh the full card with the stream open.
       const {sequence}=this.store.nextSequence(task.id);
-      await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,false))},sequence,uuid:`u_${task.id}_${sequence}`}));
+      await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,true,now))},sequence,uuid:`u_${task.id}_${sequence}`}));
+    }else if(message.finalized){
+      const {sequence}=this.store.nextSequence(task.id);
+      await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,false,now))},sequence,uuid:`u_${task.id}_${sequence}`}));
     }else{
       const {sequence}=this.store.nextSequence(task.id);
       try{await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}/elements/task_content/content`,{content,sequence,uuid:`c_${task.id}_${sequence}`}));}
       catch(e){if(e instanceof FeishuError&&/stream|流式/i.test(e.message)){this.store.db.prepare('UPDATE task_messages SET finalized=1 WHERE task_id=?').run(task.id);}throw e;}
       if(closeStream){
         const {sequence}=this.store.nextSequence(task.id);
-        await this.api(()=>this.feishu.raw('PATCH',`/open-apis/cardkit/v1/cards/${message.card_id}/settings`,{settings:JSON.stringify({config:{streaming_mode:false,summary:{content:`${labels[task.status]} · ${task.id.slice(0,8)}`}}}),sequence,uuid:`s_${task.id}_${sequence}`}));
+        await this.api(()=>this.feishu.raw('PATCH',`/open-apis/cardkit/v1/cards/${message.card_id}/settings`,{settings:JSON.stringify({config:{streaming_mode:false,summary:{content:messageSummary(content)}}}),sequence,uuid:`s_${task.id}_${sequence}`}));
         this.store.db.prepare('UPDATE task_messages SET finalized=1 WHERE task_id=?').run(task.id);
-        // Refresh the title after the final stream update.
+        // Persist the final body and preview after closing the stream.
         const {sequence:next}=this.store.nextSequence(task.id);
         await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,false))},sequence:next,uuid:`u_${task.id}_${next}`}));
       }
     }
     this.store.db.prepare('UPDATE task_messages SET last_revision=? WHERE task_id=?').run(task.last_revision,task.id);
+    if(working(task))this.renderedSeconds.set(task.id,elapsedSeconds(task,now));else this.renderedSeconds.delete(task.id);
   }
   private async collectArtifacts(task:Task){
-    if(!task.workspace_path)return;
-    const paths=artifactLinks(task.result);
+    const images=this.store.images(task.id);
+    if(!task.workspace_path){if(images.length)throw Error('生成图片缺少交付目录');return;}
+    const paths=new Map(artifactLinks(task.result).map(p=>[p,'file']));
+    for(const image of images){
+      const staged=this.store.db.prepare('SELECT path FROM task_artifacts WHERE task_id=? AND name=?').get(task.id,`codex-image-${image.id}.png`) as {path:string}|undefined;
+      const file=staged?.path??await stageGeneratedImage(task,image);
+      paths.set(file,'image');
+    }
     if(Buffer.byteLength(task.result)>12000){
       const file=path.join(task.workspace_path,`lark-result-${task.id}.md`);
-      try{await fs.writeFile(file,task.result,{flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}paths.push(file);
+      try{await fs.writeFile(file,task.result,{flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}paths.set(file,'file');
     }
-    for(const candidate of new Set(paths)){
+    for(const [candidate,requestedKind] of paths){
       try{
         const file=await ownedArtifact(task.workspace_path,candidate),id=this.uuid(`${task.id}:${file.path}`);
-        this.store.db.transaction(()=>{this.store.db.prepare('INSERT OR IGNORE INTO task_artifacts(id,task_id,path,name,size) VALUES(?,?,?,?,?)').run(id,task.id,file.path,file.name,file.size);
+        // Feishu's image upload limit is 10 MB; larger images remain downloadable files.
+        const kind=requestedKind==='image'&&file.size<=10*1024*1024?'image':'file';
+        this.store.db.transaction(()=>{this.store.db.prepare('INSERT OR IGNORE INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run(id,task.id,file.path,file.name,file.size,kind);
           const artifact=this.store.db.prepare('SELECT message_id FROM task_artifacts WHERE id=?').get(id) as any;
           if(!artifact.message_id)this.store.enqueue(`file:${id}`,task.id,'FILE',{artifactId:id});})();
       }catch(e){

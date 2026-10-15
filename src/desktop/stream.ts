@@ -59,6 +59,10 @@ export class StreamState extends EventEmitter {
     return {threadId,turnId:turn.turnId,revision:cached.revision,status:turn.status,
       commentary:messages.filter((i:any)=>i.phase==='commentary').map((i:any)=>i.text).join('\n\n'),
       answer:messages.filter((i:any)=>i.phase==='final_answer').map((i:any)=>i.text).join('\n\n'),
+      images:items.filter((i:any)=>i.type==='imageGeneration'&&i.status==='completed'&&!i.failure).map((i:any)=>({
+        id:String(i.id),savedPath:typeof i.savedPath==='string'&&i.savedPath?i.savedPath:null,
+        base64:!i.savedPath&&typeof i.result==='string'?i.result:null,
+      })),
       progress:items.filter((i:any)=>['commandExecution','fileChange','mcpToolCall','dynamicToolCall'].includes(i.type)).map((i:any)=>({type:i.type,status:i.status??'inProgress'})),
       error:typeof turn.error==='string'?turn.error:turn.error?.message??'',requests:interactionsOf(cached.state,turn.turnId)};
   }

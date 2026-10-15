@@ -26,6 +26,7 @@ export async function cleanup(store:Store,desktop:NativeDesktop){
         }
       }
       await removeInputs(task.id);
+      store.db.prepare('UPDATE task_generated_images SET base64=NULL WHERE task_id=?').run(task.id);
       store.update(task.id,{cleaned_at:Date.now()});store.event(task.id,'CLEANED',{});
     }catch(e){log.warn({taskId:task.id,error:safeError(e)},'保留策略清理已跳过');}
   }
