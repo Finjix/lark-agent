@@ -9,7 +9,7 @@ runtime\node\node.exe scripts\verify-desktop.mjs --live
 runtime\node\node.exe scripts\verify-desktop.mjs --live --parallel
 ```
 
-测试会使用账号额度并创建机器人拥有的临时聊天。并发模式创建五个任务（用户 A 三个、B/C 各一个），验证最多四个执行、每人最多两个、超额排队、独立目录和精确最终结果；结束后归档已完成的测试聊天。报告保存在 `data/verify-*.json`，不会进入交付包。
+测试会使用账号额度并创建机器人拥有的临时聊天。并发模式创建五个任务（用户 A 两个、B/C/D 各一个），验证最多四个执行、同用户串行并复用会话、独立交付目录和精确最终结果；结束后归档已完成的测试聊天。报告保存在 `data/verify-*.json`，不会进入交付包。
 
 发布前还需实机验收：
 
@@ -21,3 +21,13 @@ runtime\node\node.exe scripts\verify-desktop.mjs --live --parallel
 - 解压离线包到包含中文和空格的新目录，屏蔽系统 Node/npm 路径后运行诊断和自动测试。
 
 单元测试通过不代表以上全部实机验收已完成。当前验证结果由执行记录另行报告。
+
+## 本机实测：2026-10-15
+
+通过飞书 Windows 客户端向机器人发送消息，验证：
+
+- 同一用户的后续消息使用相同 Desktop thread、不同 turn；服务重启后仍能准确回复此前提供的公开项目名称。
+- Codex 使用上一轮记住的项目名称生成 `receipt.txt` 和 `receipt.zip`，机器人成功发送两个文件附件；从飞书客户端下载后，两个文件均与原始交付文件字节一致。
+- 用户上传的 TXT 已触发任务，但下载被飞书返回 `99991672` 拒绝，明确要求应用身份权限 `im:message.history:readonly`（或接口列出的其他消息读取权限）。当前无法开通，因此入站附件读取尚未通过实机验收；未绕过权限或宣称通过。
+
+本机详细结果保存在 `output/file-roundtrip/report.json`。该报告和测试附件不进入 Git 或交付包。

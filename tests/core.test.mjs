@@ -90,13 +90,13 @@ test('global, per-user, per-thread and resource locks count UNKNOWN and waiting 
   c.thread_id='same';d.thread_id='same';assert.equal(canSchedule(c,[d],4,2),false);
   c.thread_id=null;c.resources='["shared"]';d.resources='["shared"]';assert.equal(canSchedule(c,[d],4,2),false);s.close();
 });
-test('equal-timestamp tasks remain FIFO and a blocked user does not block other users',async()=>{
+test('equal-timestamp messages serialize per user and a blocked user does not block other users',async()=>{
   const s=memory(),d=new EventEmitter(),releases=[];d.ready=true;d.startTask=task=>new Promise(resolve=>releases.push(()=>resolve({threadId:task.id,workspace:'test'})));d.follow=async()=>{};
   const tasks=['A','A','A','B','C'].map((user,i)=>s.create(input('fifo-'+i,user)).task);
   for(const t of tasks)s.update(t.id,{created_at:1000});
   assert.deepEqual(s.list('QUEUED').map(t=>t.id),tasks.map(t=>t.id));
   const scheduler=new Scheduler(new TaskService(s,d));scheduler.tick();
-  assert.deepEqual(s.active().map(t=>t.id),[tasks[0].id,tasks[1].id,tasks[3].id,tasks[4].id]);
+  assert.deepEqual(s.active().map(t=>t.id),[tasks[0].id,tasks[3].id,tasks[4].id]);
   await new Promise(r=>setImmediate(r));for(const release of releases)release();await scheduler.stop();s.close();
 });
 test('cross-user and cross-tenant commands cannot cancel another task',async()=>{

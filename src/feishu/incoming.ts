@@ -1,0 +1,51 @@
+import type {IncomingMessage,IncomingAttachment} from '../types.js';
+
+export const MAX_INPUT_FILES=10;
+export function incomingMessage(event:any,botId:string):IncomingMessage|undefined{
+  const msg=event?.message,sender=event?.sender;
+  if(sender?.sender_type!=='user'||!msg?.message_id)return;
+  const isGroup=msg.chat_type==='group',mentions=Array.isArray(msg.mentions)?msg.mentions:[];
+  if(isGroup&&(!botId||!mentions.some((m:any)=>m.id?.open_id===botId)))return;
+  const message:IncomingMessage={tenant:event.tenant_key??sender.tenant_key??'',user:sender.sender_id?.open_id??'',
+    chat:msg.chat_id,message:msg.message_id,text:'',isGroup,attachments:[]};
+  if(!message.tenant||!message.user)return;
+  const attachments=message.attachments!;
+  const add=(kind:IncomingAttachment['kind'],key:unknown,name:unknown)=>{
+    if(typeof key!=='string'||!key)throw Error('消息中的附件缺少资源标识，请重新发送');
+    if(!attachments.some(a=>a.kind===kind&&a.key===key))attachments.push({kind,key,name:typeof name==='string'&&name?name:kind==='image'?`image-${attachments.length+1}.png`:'attachment'});
+  };
+  try{
+    const content=JSON.parse(msg.content);
+    if(msg.message_type==='text')message.text=typeof content.text==='string'?content.text:'';
+    else if(msg.message_type==='image')add('image',content.image_key,undefined);
+    else if(msg.message_type==='file')add('file',content.file_key,content.file_name);
+    else if(msg.message_type==='post'){
+      // Receive events normally omit the locale wrapper; accept both API representations.
+      const post=Array.isArray(content.content)?content:content.zh_cn??content.en_us??Object.values(content).find((v:any)=>Array.isArray(v?.content));
+      if(!post||!Array.isArray(post.content))throw Error('无法读取图文消息，请重新发送');
+      const lines:string[]=[];if(typeof post.title==='string')lines.push(post.title);
+      for(const row of post.content){
+        if(!Array.isArray(row))throw Error('无法读取图文消息，请重新发送');
+        const parts:string[]=[];
+        for(const node of row){
+          if(node.tag==='img')add('image',node.image_key,undefined);
+          else if(node.tag==='media')add('file',node.file_key,node.file_name??'video.mp4');
+          else if(node.tag==='file')add('file',node.file_key,node.file_name);
+          else if(node.tag==='at'){
+            const mention=mentions.find((m:any)=>m.key===node.user_id||m.id?.open_id===node.user_id);
+            if(mention?.id?.open_id!==botId&&node.user_id!==botId)parts.push(node.user_name??node.user_id??'');
+          }else if(node.tag==='a')parts.push(node.href?`${node.text??''} (${node.href})`:node.text??'');
+          else if(typeof node.text==='string')parts.push(node.text);
+          else if(node.tag!=='emotion')throw Error('图文消息包含暂不支持的内容，请改为文字、图片或文件');
+        }
+        lines.push(parts.join(''));
+      }
+      message.text=lines.filter(Boolean).join('\n');
+    }else message.error='暂不支持此消息类型，请发送文字、图片、文件或图文消息。';
+    for(const mention of mentions)if(mention.id?.open_id===botId&&typeof mention.key==='string')message.text=message.text.replaceAll(mention.key,'');
+    message.text=message.text.trim();
+    if(attachments.length>MAX_INPUT_FILES)throw Error(`每条消息最多接收 ${MAX_INPUT_FILES} 个附件，请分批发送`);
+  }catch(e){message.error=e instanceof SyntaxError?'无法解析消息，请重新发送。':(e as Error).message;}
+  if(!message.text&&!attachments.length&&!message.error)return;
+  return message;
+}

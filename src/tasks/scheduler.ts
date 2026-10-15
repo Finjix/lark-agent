@@ -21,7 +21,7 @@ export class Scheduler {
     for(const task of this.service.store.list('QUEUED')){
       const user=`${task.tenant_key}:${task.user_id}`;
       if(blocked.has(user))continue;
-      if(!canSchedule(task,this.service.store.active(),config.MAX_CONCURRENT_TASKS,config.MAX_TASKS_PER_USER)){blocked.add(user);continue;}
+      if(!canSchedule(task,this.service.store.active(),config.MAX_CONCURRENT_TASKS,Math.min(1,config.MAX_TASKS_PER_USER))){blocked.add(user);continue;}
       this.service.store.transition(task.id,'STARTING',{started_at:Date.now()});
       void this.queue.add(()=>this.service.start(this.service.store.get(task.id)!)).catch(e=>log.error({taskId:task.id,error:safeError(e)},'调度异常'));
     }

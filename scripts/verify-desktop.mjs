@@ -24,7 +24,7 @@ try{
     report.recoveredAfterRestart=true;await service.reconcile();
   }
   for(let i=0;!resume&&i<count;i++){
-    const marker=`LARK_VERIFY_${run}_${i+1}`,user=['A','A','A','B','C'][i];
+    const marker=`LARK_VERIFY_${run}_${i+1}`,user=['A','A','B','C','D'][i];
     const task=store.create({tenant_key:'verification',user_id:user,chat_id:`test-${user}`,source_message_id:`${run}-${i}`,instruction:
       `这是明确授权的桥接验收。只执行一次 PowerShell 命令 Start-Sleep -Seconds ${count===1?1:12}; Write-Output '${marker}'。不要访问其他文件或网络，不要创建子代理或聊天。先在进度消息说明正在进行验收，最终只回复 ${marker}。`}).task;
     tasks.push({id:task.id,marker,user});
@@ -43,7 +43,8 @@ try{
   while(Date.now()<deadline){if(store.list().every(t=>terminal(t.status)))break;await new Promise(r=>setTimeout(r,250));}
   report.tasks=tasks.map(t=>{const row=store.get(t.id);return {...t,status:row.status,threadId:row.thread_id,turnId:row.turn_id,workspace:row.workspace_path,replyMatches:row.result.trim()===t.marker,error:row.error,startedAt:row.started_at,finishedAt:row.finished_at};});
   const sameUser=report.tasks.filter(t=>t.user==='A');report.fifoCorrect=sameUser.every((t,i)=>!i||t.startedAt>=sameUser[i-1].startedAt);
-  report.success=report.tasks.every(t=>t.status==='COMPLETED'&&t.replyMatches)&&new Set(report.tasks.map(t=>t.threadId)).size===count&&report.fifoCorrect&&report.maxPerUser<=2&&(count===1||report.maxRunning===4&&report.maxCommands===4);
+  report.sessionReuseCorrect=new Set(report.tasks.map(t=>t.threadId)).size===new Set(report.tasks.map(t=>t.user)).size&&sameUser.every(t=>t.threadId===sameUser[0].threadId);
+  report.success=report.tasks.every(t=>t.status==='COMPLETED'&&t.replyMatches)&&report.sessionReuseCorrect&&report.fifoCorrect&&report.maxPerUser<=1&&(count===1||report.maxRunning===4&&report.maxCommands===4);
   if(!report.success)process.exitCode=1;
 }catch(e){report.error=e.message;process.exitCode=1;}
 finally{

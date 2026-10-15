@@ -1,15 +1,17 @@
 import {randomUUID} from 'node:crypto';
 import {Store} from '../storage/database.js';
-import {NativeDesktop} from '../desktop/adapter.js';
+import {NativeDesktop,taskWorkspace} from '../desktop/adapter.js';
 import {config} from '../config.js';
 import {terminal,type Task,type TaskView,type IncomingMessage} from '../types.js';
 import {safeError,log} from '../log.js';
 import {OutcomeUnknown} from '../desktop/transport.js';
+import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 
 export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
 export class TaskService {
   private interruptSent=new Set<string>();
-  constructor(public store:Store,public desktop:NativeDesktop){
+  private starting=new Set<string>();
+  constructor(public store:Store,public desktop:NativeDesktop,private downloader?:ResourceDownloader){
     desktop.on('state',(id:string)=>{try{this.onState(id);}catch(e){log.error({taskThread:id,error:safeError(e)},'Desktop 状态处理失败');}});
     desktop.on('online',()=>this.interruptSent.clear());
   }
@@ -18,10 +20,12 @@ export class TaskService {
   async receive(message:IncomingMessage){
     if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(!this.authorized(message)){this.notice(message,`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
-    if(message.text.startsWith('/')){await this.command(message);return;}
-    if(!message.text.trim())return;
+    if(message.error){this.notice(message,message.error);return;}
+    if(message.text.startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
+    if(!message.text.trim()&&!message.attachments?.length)return;
     const resources=config.resources.filter(r=>r.regex.test(message.text)).map(r=>r.key);
-    const result=this.store.create({tenant_key:message.tenant,user_id:message.user,chat_id:message.chat,source_message_id:message.message,instruction:message.text},resources);
+    const result=this.store.create({tenant_key:message.tenant,user_id:message.user,chat_id:message.chat,source_message_id:message.message,
+      instruction:message.text||'请查看用户发送的附件，说明内容并根据附件提供帮助。'},resources,message.attachments);
     if(result.created)log.info({taskId:result.task.id},'任务已入队');
   }
   private owned(message:IncomingMessage,id:string){
@@ -67,23 +71,41 @@ export class TaskService {
     }catch(e){this.notice(message,safeError(e));}
   }
   async start(task:Task){
+    if(this.starting.has(task.id))return;this.starting.add(task.id);
+    let submitting=false;
     try{
       if(this.store.get(task.id)?.cancel_requested){this.store.transition(task.id,'CANCELLED');return;}
-      const created=await this.desktop.startTask(task);
+      if(this.store.inputs(task.id).length){
+        if(!this.downloader)throw Error('附件下载服务不可用');
+        this.store.update(task.id,{progress:'正在接收附件'});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
+        await prepareInputs(this.store,task,this.downloader);
+      }
+      const current=this.store.get(task.id)!;
+      if(current.cancel_requested||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,'CANCELLED');return;}
+      const session=this.store.sessionFor(task);
+      if(session.thread_id&&session.workspace_path)this.store.update(task.id,{thread_id:session.thread_id,workspace_path:taskWorkspace(session.workspace_path,task.id)});
+      this.store.event(task.id,'DESKTOP_SUBMITTING',{});submitting=true;
+      const created=await this.desktop.startTask(this.store.get(task.id)!);
       this.store.update(task.id,{thread_id:created.threadId,workspace_path:created.workspace});
       await this.desktop.follow(created.threadId);
-    }catch(e){this.store.transition(task.id,'UNKNOWN',{error:`需要核对 Desktop：${safeError(e)}`});}
+    }catch(e){this.store.transition(task.id,submitting?'UNKNOWN':'FAILED',{error:submitting?`需要核对 Desktop：${safeError(e)}`:`附件接收失败，任务未提交给 Codex：${safeError(e)}`});}
+    finally{this.starting.delete(task.id);}
   }
   onState(threadId:string){
     const task=this.store.byThread(threadId);if(!task||terminal(task.status))return;
     const cached=this.desktop.stream.states.get(threadId);
     const view=this.desktop.stream.view(threadId,task.turn_id,`[LARK_TASK_ID:${task.submission_key}]`);
     if(!view)return;
-    if(!task.turn_id){this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??cached?.state.projectlessOutputDirectory??cached?.state.cwd});}
+    if(!task.turn_id){
+      const session=task.session_id?this.store.session(task.session_id):undefined;
+      const root=session?.workspace_path??cached?.state.projectlessOutputDirectory??cached?.state.cwd;
+      if(session&&root)this.store.bindSession(session.id,threadId,root);
+      this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root,task.id):root)});
+    }
     const progress=[view.commentary,...view.progress.slice(-12).map(p=>`${p.type}：${p.status}`)].filter(Boolean).join('\n').slice(-18000);
     const patch={result:view.answer,error:view.error,progress,last_revision:view.revision};
     const completed=({completed:'COMPLETED',failed:'FAILED',interrupted:'INTERRUPTED'} as const)[view.status as 'completed'];
-    if(completed){this.store.transition(task.id,completed,patch);this.store.meta('desktop_caller',{threadId,turnId:view.turnId});setImmediate(()=>this.desktop.unfollow(threadId));log.info({taskId:task.id,status:completed},'任务结束');return;}
+    if(completed){this.store.transition(task.id,completed,patch);this.store.meta('desktop_caller',{threadId,turnId:view.turnId});setImmediate(()=>{if(!this.store.byThread(threadId))this.desktop.unfollow(threadId);});log.info({taskId:task.id,status:completed},'任务结束');return;}
     const previousRequests=JSON.stringify(this.store.pending(task.id));this.store.setRequests(task.id,view.requests);
     const status=view.requests.length?'WAITING_APPROVAL':'RUNNING';
     if(task.status!==status)this.store.transition(task.id,status,patch);
@@ -98,8 +120,10 @@ export class TaskService {
   }
   async reconcile(){
     for(const task of this.store.active()){
+      if(this.starting.has(task.id))continue;
       try{
         if(task.thread_id)await this.desktop.follow(task.thread_id);
+        else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))this.store.transition(task.id,'QUEUED',{error:'',progress:'等待恢复附件接收',started_at:null});
         else{this.store.transition(task.id,'UNKNOWN',{error:'服务重启或提交结果不明，正在核对'});await this.desktop.recoverUnbound(task);}
       }catch(e){this.store.transition(task.id,'UNKNOWN',{error:safeError(e)});}
     }

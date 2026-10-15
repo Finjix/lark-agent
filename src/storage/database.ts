@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import {randomUUID} from 'node:crypto';
-import {terminal, type Task, type TaskStatus, type PendingInteraction} from '../types.js';
+import {terminal, type Task, type TaskStatus, type PendingInteraction,type IncomingAttachment,type TaskInput,type UserSession} from '../types.js';
 
 export class Store {
   db: Database.Database;
@@ -8,7 +8,7 @@ export class Store {
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
     const version = this.db.pragma('user_version',{simple:true}) as number;
-    if(version>1) throw Error('数据库版本高于当前程序支持版本');
+    if(version>3) throw Error('数据库版本高于当前程序支持版本');
     this.db.transaction(()=>{
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS tasks (
@@ -40,15 +40,33 @@ export class Store {
           kind TEXT NOT NULL,summary TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',
           created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(task_id,request_id));
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
-        PRAGMA user_version = 1;
+        CREATE TABLE IF NOT EXISTS task_inputs (task_id TEXT NOT NULL REFERENCES tasks(id),ordinal INTEGER NOT NULL,
+          kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
+        CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
+          thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,UNIQUE(tenant_key,user_id));
+        PRAGMA user_version = 3;
       `);
+      if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
     })();
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
-  byThread(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE thread_id=?').get(id) as Task|undefined;}
+  byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
+  session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
+  sessionFor(task:Task):UserSession{
+    return this.db.transaction(()=>{
+      let session=this.db.prepare('SELECT * FROM user_sessions WHERE tenant_key=? AND user_id=?').get(task.tenant_key,task.user_id) as UserSession|undefined;
+      if(!session){this.db.prepare('INSERT INTO user_sessions(id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(task.id,task.tenant_key,task.user_id,Date.now());session=this.session(task.id)!;}
+      this.update(task.id,{session_id:session.id});return session;
+    })();
+  }
+  bindSession(id:string,threadId:string,workspace?:string){
+    const session=this.session(id);if(!session)throw Error('用户会话不存在');
+    if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他 Desktop 聊天');
+    this.db.prepare('UPDATE user_sessions SET thread_id=?,workspace_path=COALESCE(?,workspace_path) WHERE id=?').run(threadId,workspace??null,id);
+  }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as Task[];}
   active(){return this.list().filter(t=>!terminal(t.status)&&t.status!=='QUEUED');}
-  create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[]){
+  create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[],attachments:IncomingAttachment[]=[]){
     return this.db.transaction(()=>{
       const existing=this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(input.tenant_key,input.source_message_id) as Task|undefined;
       if(existing)return {task:existing,created:false};
@@ -56,10 +74,13 @@ export class Store {
       this.db.prepare(`INSERT INTO tasks(id,tenant_key,user_id,chat_id,source_message_id,instruction,status,submission_key,created_at,resources)
         VALUES(?,?,?,?,?,?,'QUEUED',?,?,?)`).run(id,input.tenant_key,input.user_id,input.chat_id,input.source_message_id,input.instruction,id,Date.now(),JSON.stringify(resources));
       this.db.prepare('INSERT INTO task_messages(task_id) VALUES(?)').run(id);
+      for(const [ordinal,a] of attachments.entries())this.db.prepare('INSERT INTO task_inputs(task_id,ordinal,kind,key,name) VALUES(?,?,?,?,?)').run(id,ordinal,a.kind,a.key,a.name);
       this.event(id,'QUEUED',{}); this.enqueue(`view:${id}`,id,'VIEW',{});
       return {task:this.get(id)!,created:true};
     })();
   }
+  inputs(taskId:string):TaskInput[]{return this.db.prepare('SELECT ordinal,kind,key,name,path,size FROM task_inputs WHERE task_id=? ORDER BY ordinal').all(taskId) as TaskInput[];}
+  inputReady(taskId:string,ordinal:number,path:string,size:number){this.db.prepare('UPDATE task_inputs SET path=?,size=? WHERE task_id=? AND ordinal=?').run(path,size,taskId,ordinal);}
   update(id:string,patch:Partial<Task>){
     const columns = new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((r:any)=>r.name));
     const entries=Object.entries(patch).filter(([k,v])=>columns.has(k)&&k!=='id'&&v!==undefined);

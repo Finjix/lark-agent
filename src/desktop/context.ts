@@ -45,7 +45,7 @@ export async function discoverToolEndpoint(){
   const results=await Promise.allSettled(candidates.map(async name=>{
     const pipe=new FramedPipe('\\\\.\\pipe\\'+name,1500);
     try{await pipe.connect();const r=await pipe.roundTrip({jsonrpc:'2.0',id:randomUUID(),method:'tools/list',params:{threadStartKind:'all'}},1500);
-      const tools=r.result?.tools??[];if(['create_thread','list_threads','read_thread','set_thread_archived'].every(name=>tools.some((t:any)=>t.namespace==='codex_app'&&t.name===name)))return pipe.path;
+      const tools=r.result?.tools??[];if(['create_thread','send_message_to_thread','list_threads','read_thread','set_thread_archived'].every(name=>tools.some((t:any)=>t.namespace==='codex_app'&&t.name===name)))return pipe.path;
     }catch{}finally{pipe.close();}
   }));
   const valid=results.flatMap(r=>r.status==='fulfilled'&&r.value?[r.value]:[]);

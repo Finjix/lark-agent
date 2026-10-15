@@ -41,7 +41,7 @@ async function main(){
   let stopping=false;let poll:NodeJS.Timeout|undefined,refresh:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
   let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0;
   const token=randomBytes(32).toString('hex');
-  const service=new TaskService(store,desktop),scheduler=new Scheduler(service),feishu=new FeishuClient(),delivery=new Delivery(store,feishu);
+  const feishu=new FeishuClient(),service=new TaskService(store,desktop,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
   const server=http.createServer((request,response)=>{
     response.setHeader('Content-Type','application/json; charset=utf-8');response.setHeader('Cache-Control','no-store');
     if(request.headers.origin){response.writeHead(403).end('{}');return;}

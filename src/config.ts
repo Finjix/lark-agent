@@ -11,7 +11,7 @@ const number = (value: number, min = 0) => z.coerce.number().int().min(min).defa
 const schema = z.object({
   FEISHU_APP_ID: z.string().default(''), FEISHU_APP_SECRET: z.string().default(''),
   ALLOWED_USERS: z.string().default(''), ADMIN_USERS: z.string().default(''), ALLOWED_CHATS: z.string().default(''),
-  MAX_CONCURRENT_TASKS: number(4,1), MAX_TASKS_PER_USER: number(2,1), DATABASE_PATH:z.string().default('./data/agent.sqlite'),
+  MAX_CONCURRENT_TASKS: number(4,1), MAX_TASKS_PER_USER: number(1,1), DATABASE_PATH:z.string().default('./data/agent.sqlite'),
   CARD_UPDATE_INTERVAL_MS:number(1000,250), DESKTOP_CONNECT_TIMEOUT_MS:number(10000,500),
   TASK_TIMEOUT_MS:number(0), TASK_RETENTION_DAYS:number(30,1), HEALTH_PORT:z.coerce.number().int().min(1).max(65535).default(8765),
   RESOURCE_LOCKS:z.string().default('{}'), DESKTOP_SUPPORTED_VERSIONS:z.string().default('26.1007.9446.0'),
