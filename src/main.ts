@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {config,ensureDirectories,restrictSecret} from './config.js';
@@ -12,6 +13,11 @@ import {Scheduler} from './tasks/scheduler.js';
 import {Delivery} from './feishu/delivery.js';
 import {cleanup} from './maintenance.js';
 import {accessConfigured} from './access.js';
+import {BrowserManager} from './browser/manager.js';
+import {McpServer,mcpToken} from './mcp/server.js';
+import {registerMcp,unregisterMcp,mcpRegistered} from './mcp/register.js';
+import {feishuCliBinary} from './feishu-cli/run.js';
+import {FeishuCliAuth} from './feishu-cli/auth.js';
 
 async function main(){
   ensureDirectories();const action=process.argv[2]??'start';
@@ -19,6 +25,13 @@ async function main(){
     const token=await fs.readFile(path.join(config.data,'control.token'),'utf8');
     const response=await fetch(`http://127.0.0.1:${config.HEALTH_PORT}/shutdown`,{method:'POST',headers:{authorization:`Bearer ${token}`}});
     if(!response.ok)throw Error(`停止请求失败：${response.status}`);console.log('已请求安全停止');return;
+  }
+  if(action==='register-mcp'){
+    // The only place that edits Codex's config.toml: explicit, idempotent, and reversible with `register-mcp remove`.
+    if(process.argv[3]==='remove'){console.log(`Codex 配置：MCP 服务器 ${unregisterMcp()}，重启 Codex Desktop 后生效`);return;}
+    const store=new Store(config.database);
+    try{console.log(`Codex 配置：MCP 服务器 ${registerMcp(mcpToken(store))}（${path.join(config.codexHome,'config.toml')}）\n需重启 Codex Desktop 后才会加载；飞书机器人服务运行时工具才可用。`);}finally{store.close();}
+    return;
   }
   const store=new Store(config.database),desktop=new NativeDesktop(store);
   if(action==='retry-delivery'){
@@ -32,19 +45,21 @@ async function main(){
   }
   if(action==='doctor'){
     const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
-      sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
+      sqlite:{ok:true},tools:{feishuCli:existsSync(feishuCliBinary()),playwright:existsSync(path.join(config.root,'node_modules','playwright-core'))},mcp:{registered:mcpRegistered(mcpToken(store)),url:`http://127.0.0.1:${config.HEALTH_PORT}/mcp`},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
     try{checks.desktop=await desktop.probe();}catch(e){checks.desktop={ready:false,error:safeError(e)};}
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     desktop.close();store.close();console.log(JSON.stringify(checks,null,2));
-    if(!checks.runtime.ok||!checks.desktop.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;
+    const toolsOk=checks.tools.feishuCli&&checks.tools.playwright&&checks.mcp.registered;
+    if(!checks.runtime.ok||!toolsOk||!checks.desktop.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;
   }
-  if(action!=='start')throw Error('支持命令：start、doctor、stop、backup、retry-delivery');
+  if(action!=='start')throw Error('支持命令：start、register-mcp、doctor、stop、backup、retry-delivery');
+  try{if(!mcpRegistered(mcpToken(store)))log.warn('Codex 尚未注册或需更新 MCP 工具（浏览器、飞书 CLI），请运行 register-mcp.cmd 后重启 Codex Desktop');}catch(e){log.warn({error:safeError(e)},'无法读取 Codex 配置');}
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
   let stopping=false;let poll:NodeJS.Timeout|undefined,refresh:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
   let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0,lastNameSync=0,nameSync:Promise<void>|undefined;
-  const token=randomBytes(32).toString('hex');
+  const token=randomBytes(32).toString('hex'),browsers=new BrowserManager(),mcp=new McpServer(store,browsers,new FeishuCliAuth());
   const feishu=new FeishuClient(),service=new TaskService(store,desktop,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
   const server=http.createServer((request,response)=>{
     response.setHeader('Content-Type','application/json; charset=utf-8');response.setHeader('Cache-Control','no-store');
@@ -54,6 +69,7 @@ async function main(){
       if(given.length!==expected.length||!timingSafeEqual(given,expected)){response.writeHead(403).end('{}');return;}
       response.end('{"stopping":true}');void stop();return;
     }
+    if(request.url==='/mcp'){void mcp.handle(request,response).catch(()=>{if(!response.headersSent)response.writeHead(500).end('{}');});return;}
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
     const ready=desktop.ready&&feishu.connected&&accessConfigured();
     response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},desktop:{ready:desktop.ready,version:desktop.version,error:desktop.error},feishu:{connected:feishu.connected,state:feishu.state,error:feishu.lastError},...store.stats()}));
@@ -61,7 +77,7 @@ async function main(){
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(refresh);clearInterval(maintain);server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
-    desktop.close();await scheduler.stop();await delivery.stop();await nameSync;feishu.close();store.close();
+    desktop.close();await browsers.close();await scheduler.stop();await delivery.stop();await nameSync;feishu.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
   };
   try{await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.HEALTH_PORT,'127.0.0.1',resolve);});}

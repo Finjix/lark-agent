@@ -17,10 +17,12 @@ export const config = {
   FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
   CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250), DESKTOP_CONNECT_TIMEOUT_MS:int('DESKTOP_CONNECT_TIMEOUT_MS',10000,500),
   TASK_TIMEOUT_MS:int('TASK_TIMEOUT_MS',0), TASK_RETENTION_DAYS:int('TASK_RETENTION_DAYS',30,1), HEALTH_PORT:int('HEALTH_PORT',8765,1,65535),
+  FEISHU_CLI_ENABLED:int('FEISHU_CLI_ENABLED',1,0,1)===1, FEISHU_CLI_SCOPES:list(text('FEISHU_CLI_SCOPES')), FEISHU_CLI_PATH:text('FEISHU_CLI_PATH'),
+  BROWSER_ENABLED:int('BROWSER_ENABLED',1,0,1)===1, BROWSER_CHANNEL:text('BROWSER_CHANNEL','msedge'), BROWSER_EXECUTABLE:text('BROWSER_EXECUTABLE'), BROWSER_IDLE_MS:int('BROWSER_IDLE_MS',600000,10000),
   root, database: path.resolve(root,text('DATABASE_PATH','./data/agent.sqlite')),
   data:path.join(root,'data'), user:path.join(root,'user'), codexHome:process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),
   users:list(text('ALLOWED_USERS')), admins:list(text('ADMIN_USERS')), chats:list(text('ALLOWED_CHATS')), tenants:list(text('ALLOWED_TENANTS')),
-  versions:list(text('DESKTOP_SUPPORTED_VERSIONS','26.1007.9446.0')), resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
+  resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
 };
 export function restrictSecret(file:string){
   if(process.platform!=='win32'||!existsSync(file))return;

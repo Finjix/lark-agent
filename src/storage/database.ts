@@ -71,6 +71,7 @@ export class Store {
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
+  sessionByThread(threadId:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE thread_id=? AND retired_at IS NULL').get(threadId) as UserSession|undefined;}
   sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');

@@ -27,7 +27,7 @@ export class NativeDesktop extends EventEmitter {
     try{
       // Endpoint discovery is cheap and fails fast while Desktop is not running; check the version only once it is.
       const endpoint=await discoverToolEndpoint();
-      this.version=await desktopVersion();if(!config.versions.includes(this.version))throw Error(`Desktop ${this.version||'未安装'} 不在已验证兼容版本列表`);
+      this.version=await desktopVersion().catch(()=>'');
       const saved=this.store.meta('desktop_caller') as CallerContext|undefined;
       const attempt=async(caller:CallerContext)=>{
         const tool=new AppTools(endpoint,caller);
@@ -202,7 +202,18 @@ export function taskRequest(task:Task,store:Store){
       `Write deliverable files only to: ${task.workspace_path}\nList each deliverable in the final reply as a Markdown link with an absolute path. Copy earlier files into that directory before returning them.`+
       (inputs.length?'\nUser attachments are listed in lark_user_attachments.':'')},
   };
+  const tools=toolInstructions();if(tools)additionalContext.lark_tool_instructions={kind:'application',value:tools};
   if(inputs.length)additionalContext.lark_user_attachments={kind:'untrusted',value:JSON.stringify(inputs.map(({name,kind,path})=>({name,kind,path})))};
   return {threadId:task.thread_id,clientUserMessageId:task.submission_key,
     input:[{type:'text',text,text_elements:[]},...inputs.filter(i=>i.kind==='image').map(i=>({type:'localImage',path:i.path!}))],additionalContext};
+}
+/** Steers web and Feishu work to the lark_agent MCP tools, which resolve the user from the calling thread; the Desktop built-in browser shares one cookie jar across all users. */
+export function toolInstructions(){
+  const browser=config.BROWSER_ENABLED,feishu=config.FEISHU_CLI_ENABLED&&!!config.FEISHU_APP_ID;
+  if(!browser&&!feishu)return;
+  return [
+    browser&&'Do not use the Desktop built-in browser or any other browser tool: it shares cookies between users. For every web task use the lark_agent MCP browser_* tools: a private headless browser for this user whose logins persist across tasks. browser_open and browser_snapshot list elements as [ref]; use those numbers as the target, and snapshot again after the page changes. browser_screenshot saves into the delivery directory.',
+    feishu&&'For Feishu/Lark work (docs, drive, messages, calendar, tasks, sheets, base, wiki, contacts) use the lark_agent MCP tool feishu_cli; it always acts as this user with their own login. If it says the user is not logged in, call it with ["auth","login"], put the link it prints in your final reply and stop; the user authorizes and sends the request again.',
+    'If a site needs a login or verification code, ask the user in the final reply.',
+  ].filter(Boolean).join('\n');
 }
