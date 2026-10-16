@@ -9,24 +9,25 @@ export interface ResourceDownloader {
   getUserName?(userId:string):Promise<string|undefined>;
 }
 export {sessionInputs} from '../layout.js';
-export function inputDirectory(taskId:string,root:string){
-  if(!/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(taskId))throw Error('无效的附件任务标识');
-  return path.join(root,taskId);
+/** One folder per task, named like its output folder (input/20261016_162500). */
+export function inputDirectory(name:string,root:string){
+  if(!/^[0-9A-Za-z_-][0-9A-Za-z_.-]*$/.test(name)||name.includes('..'))throw Error('无效的附件目录名');
+  return path.join(root,name);
 }
 export function inputFilename(name:string,ordinal:number){
   const safe=path.win32.basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/,'').slice(0,140)||'attachment';
   return `${ordinal+1}-${safe}`;
 }
-async function ownedDirectory(taskId:string,root:string,create=false){
-  const directory=inputDirectory(taskId,root);
+async function ownedDirectory(name:string,root:string,create=false){
+  const directory=inputDirectory(name,root);
   if(create)await fs.mkdir(directory,{recursive:true});
   const actualRoot=await fs.realpath(root),actual=await fs.realpath(directory);
-  if(actual!==path.join(actualRoot,taskId))throw Error('附件目录不属于当前任务');
+  if(actual!==path.join(actualRoot,name))throw Error('附件目录不属于当前任务');
   return actual;
 }
-export async function prepareInputs(store:Store,task:Task,downloader:ResourceDownloader,root:string){
+export async function prepareInputs(store:Store,task:Task,downloader:ResourceDownloader,root:string,name:string){
   const inputs=store.inputs(task.id);if(!inputs.length)return;
-  const directory=await ownedDirectory(task.id,root,true);
+  const directory=await ownedDirectory(name,root,true);
   for(const input of inputs){
     if(input.path){
       const actual=await fs.realpath(input.path),stat=await fs.stat(actual);
@@ -47,7 +48,7 @@ export async function prepareInputs(store:Store,task:Task,downloader:ResourceDow
     }finally{await fs.rm(temporary,{force:true});}
   }
 }
-export async function removeInputs(taskId:string,root:string){
-  let directory:string;try{directory=await ownedDirectory(taskId,root);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
+export async function removeInputs(name:string,root:string){
+  let directory:string;try{directory=await ownedDirectory(name,root);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
   await fs.rm(directory,{recursive:true,force:false});
 }

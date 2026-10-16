@@ -1,17 +1,17 @@
 import path from 'node:path';
 import {config} from './config.js';
 import type {Store} from './storage/database.js';
-import type {UserSession} from './types.js';
+import type {Task,UserSession} from './types.js';
 import {displayName,sessionStamp} from './sessions/naming.js';
 
 /**
- * user/
- *   <user name>/             one per Feishu user (a duplicate name becomes name2, name3 ...)
- *     data/                  user-level data that outlives sessions: browser profile, Feishu CLI login, downloads
- *     session/
- *       <yyyyMMdd_HHmmss>/   one per Desktop chat
- *         input/<taskId>/    inbound attachments
- *         output/<taskId>/   deliverables
+ * user/<user name>/data/        the only thing kept under user/: browser profile, Feishu CLI login, downloads
+ *                               (a duplicate user name becomes name2, name3 ...)
+ *
+ * Inputs and outputs live in the folder Codex Desktop itself gives each chat (Documents\Codex\<date>\lark-<id>), where it can
+ * write without approval; the bridge reads from and delivers out of there:
+ *   <chat folder>/input/<yyyyMMdd_HHmmss>/    inbound attachments
+ *   <chat folder>/output/<yyyyMMdd_HHmmss>/   deliverables, created by Codex only when a task produces something
  */
 const illegal=/[<>:"/\\|?*\x00-\x1f]/g;
 const clean=(value:string)=>displayName(value).replace(illegal,'_').replace(/[. ]+$/,'');
@@ -22,17 +22,11 @@ export function userDirectory(store:Store,session:Pick<UserSession,'tenant_key'|
 }
 export const userData=(store:Store,session:Pick<UserSession,'tenant_key'|'user_id'|'display_name'>)=>path.join(userDirectory(store,session),'data');
 
-/** The session folder, fixed when the session is bound so later renames do not move files. */
-export function sessionDirectory(store:Store,session:UserSession){
-  if(session.workspace_path)return session.workspace_path;
-  const base=path.join(userDirectory(store,session),'session',sessionStamp(session.created_at));
-  let directory=base;for(let n=2;store.workspaceTaken(directory,session.id);n++)directory=`${base}_${n}`;
+/** A task's output folder is named by when its message arrived (output/20261016_162500); a clash within the same second gets _2. Fixed once stored on the task. */
+export function taskWorkspace(store:Store,root:string,task:Pick<Task,'id'|'created_at'|'workspace_path'>){
+  if(task.workspace_path)return task.workspace_path;
+  const base=path.join(root,'output',sessionStamp(task.created_at));
+  let directory=base;for(let n=2;store.taskWorkspaceTaken(directory,task.id);n++)directory=`${base}_${n}`;
   return directory;
 }
-export function taskWorkspace(root:string,taskId:string){
-  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(taskId))throw Error('无效的任务标识');
-  return path.join(root,'output',taskId);
-}
-/** Sessions created before the user/<name>/session layout kept deliverables under tasks/ and attachments under inputs/. */
-export const legacyTaskWorkspace=(root:string,taskId:string)=>path.join(root,'tasks',taskId);
 export const sessionInputs=(sessionRoot:string)=>path.join(sessionRoot,'input');

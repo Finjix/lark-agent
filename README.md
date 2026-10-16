@@ -22,20 +22,24 @@ Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 �
 | `src` / `dist` | TypeScript 源码 / 编译产物（`start.cmd` 生成） |
 | `dev` | 自动测试，`npm test` |
 | `data` | 运行数据：SQLite 数据库、控制令牌、日志 |
-| `user` | 按用户组织，见下 |
+| `user` | 只存用户数据，见下 |
 | `.env` | 凭证和白名单，不入 Git |
 
 ```
 user/
   李小明/                     每个飞书用户一个目录，显示名取自飞书，重名依次加 2、3（如 李小明2），分配后不再改变
-    data/                     用户数据，跨会话保留：浏览器 profile（cookie、登录态）、downloads、飞书 CLI 登录凭据（feishu-cli）
-    session/
-      20261016_161000/        一个会话（对应一个 Desktop 聊天），按创建时间（北京时间）命名
-        input/<任务ID>/       入站附件
-        output/<任务ID>/      交付文件
+    data/                     用户数据，跨聊天保留：浏览器 profile（cookie、登录态）、downloads、飞书 CLI 登录凭据（feishu-cli）
 ```
 
-Desktop 里的聊天标题仍是 `显示名_yyyy_MMdd_HHmm_ssSS`，与目录名无关。聊天被归档后会新建一个会话目录，但用户的 `data` 不变，所以浏览器和飞书 CLI 的登录不会丢。更早版本建在 `user/<标题>/tasks` 下的会话继续沿用原目录，不迁移。
+附件和交付文件不放在 `user/`，而放在 Codex Desktop 给每个聊天自己分配的工作目录里（`Documents\Codex\<日期>\lark-<会话ID>`，服务从 Desktop 的 `read_thread` 读到它）。Codex 在自己的工作目录里写文件不需要任何批准；桥接程序负责从那里读取附件目录、投递输出目录：
+
+```
+<聊天工作目录>/
+  input/20261016_162500/      入站附件，按消息到达时间（北京时间）命名；有附件才会创建
+  output/20261016_162500/     交付文件，与同一任务的 input 同名；Codex 有产出时才会创建，没有输出就没有目录
+```
+
+Desktop 里的聊天标题是 `显示名_yyyy_MMdd_HHmm_ssSS`。聊天被归档后会新建一个聊天和工作目录，但用户的 `data` 不变，所以浏览器和飞书 CLI 的登录不会丢。旧版本建在 `user/…/tasks`、`user/…/session` 下的目录不再使用，可以手工删除；旧任务按原路径过期清理。
 
 ## 行为
 
@@ -45,7 +49,7 @@ Desktop 里的聊天标题仍是 `显示名_yyyy_MMdd_HHmm_ssSS`，与目录名�
 - **任务关联**：用持久化的客户端请求 ID 和 Desktop 轮次 ID，相同原文连续发送也分别执行。提交结果不明时进入 `UNKNOWN`，核对原轮次，绝不自动重发。
 - **回传**：卡片流式更新（每秒合并；超过 9 分钟改为整体更新），Codex 工作中标题栏显示计时。长回复转 Markdown 附件；文件只上传最终回复链接且位于任务目录内的；Codex 生成的图片自动发送（>10 MB 改发文件）。投递记录持久化，重启后继续。
 - **命名**：用飞书显示名命名会话，需 `contact` 权限；查不到则保留默认名，任务照常执行，补权限后自动更新。
-- **保留**：每条消息的 `output` 和 `input` 子目录在任务终态、投递完成后保留 30 天（`TASK_RETENTION_DAYS`）再清理；会话和任务记录不清理。默认无任务超时，交互请求 24 小时无响应则请求中断。
+- **保留**：每条消息的 `output` 和 `input` 子目录在任务终态、投递完成后保留 30 天（在聊天工作目录里）（`TASK_RETENTION_DAYS`）再清理；会话和任务记录不清理。默认无任务超时，交互请求 24 小时无响应则请求中断。
 - **浏览器**：Desktop 内置浏览器所有用户共用一份 cookie，无法隔离。因此每轮上下文会禁止 Codex 使用内置浏览器，改让它使用 MCP 工具 `browser_open`、`browser_snapshot`、`browser_click`、`browser_screenshot` 等，由本服务里的无头 Playwright 浏览器（系统 Edge，无需下载浏览器）执行。每个用户一个独立 profile（`user/<用户名>/data/browser`），登录态跨任务保留，包括关闭浏览器后仍保留的会话 cookie；不同用户互不可见。仅允许 http/https，截图只保存在当前任务的交付目录。空闲 `BROWSER_IDLE_MS`（默认 10 分钟）后自动关闭浏览器进程。需要登录或验证码时，Codex 会在回复里向用户求助（可截图交付）。`.env` 中 `BROWSER_ENABLED=0` 可关闭，`BROWSER_CHANNEL`（msedge/chrome）或 `BROWSER_EXECUTABLE` 可更换浏览器。
 - **飞书 CLI**：项目依赖里的官方 `@larksuite/cli`（`lark-cli`）的登录凭据默认存在系统钥匙串（Windows 是注册表 `HKCU\Software\LarkCli`），所有用户共用且无法重定向，所以不用它自带的登录。服务自己实现飞书设备授权，把每个用户的 token 存在 `user/<用户名>/data/feishu-cli/credentials.json`，过期前自动刷新；调用时由服务进程用环境变量注入给 `lark-cli`（并设 `STRICT_MODE=user`，只能以用户身份操作，不能借机器人的权限）。Codex 通过 MCP 工具 `feishu_cli`（参数是 `lark-cli` 的命令行参数）使用，拿不到应用密钥和 token。首次使用时 Codex 调用 `["auth","login"]`，把授权链接发给用户，用户点开授权后任务重试即可。`auth status` / `auth logout` 可查看和退出登录。登录的权限范围由 `.env` 的 `FEISHU_CLI_SCOPES` 指定，这些权限必须已在飞书开发者后台为应用开通并发布；`FEISHU_CLI_ENABLED=0` 可关闭，`FEISHU_CLI_PATH` 可指定其他位置的 `lark-cli`。
 

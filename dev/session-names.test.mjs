@@ -34,12 +34,12 @@ test('existing sessions gain naming metadata without changing owner, thread, dir
 test('new named sessions keep their title across native creation and can recover a lost creation response by that title',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-name-native-')),s=new Store(':memory:'),task=s.create(input()).task,session=s.sessionFor(task);
   const named=s.nameSession(session.id,'薯薯'),d=new NativeDesktop(s),calls=[];
-  d.ready=true;d.follow=async()=>{};d.waitForIdle=async()=>{};d.tools={call:async(tool,args)=>{calls.push({tool,args});return {threadId:'thread',projectlessOutputDirectory:root};}};
+  d.ready=true;d.follow=async()=>{};d.waitForIdle=async()=>{};d.tools={call:async(tool,args)=>{calls.push({tool,args});return {threadId:'thread',thread:{cwd:root}};}};
   d.ipc={request:async()=>({result:{result:{turn:{id:'turn'}}}})};
-  await d.startTask(s.get(task.id));assert.equal(calls[0].args.title,named.title);assert.equal(s.session(session.id).applied_title,named.title);assert.equal(calls.length,1);
+  await d.startTask(s.get(task.id));assert.equal(calls[0].args.title,named.title);assert.equal(s.session(session.id).applied_title,named.title);assert.equal(calls.filter(c=>c.tool!=='read_thread').length,1);
   const lost=s.create(input('lost','other')).task,other=s.sessionFor(lost),otherNamed=s.nameSession(other.id,'另一人');s.event(lost.id,'DESKTOP_RAW_REQUEST',{});
   s.event(lost.id,'DESKTOP_SESSION_CREATING',{title:otherNamed.title});s.nameSession(other.id,'用户后来改名');
-  d.tools={call:async(tool,args)=>{assert.equal(tool,'list_threads');assert.equal(args.limit,50);return {threads:[{id:'recovered',title:otherNamed.title}]};}};d.stream.states.set('recovered',{revision:1,state:{projectlessOutputDirectory:root,turns:[]}});
+  d.tools={call:async(tool,args)=>{if(tool==='read_thread')return {thread:{cwd:root}};assert.equal(tool,'list_threads');assert.equal(args.limit,50);return {threads:[{id:'recovered',title:otherNamed.title}]};}};d.stream.states.set('recovered',{revision:1,state:{projectlessOutputDirectory:root,turns:[]}});
   await d.recoverUnbound(s.get(lost.id));assert.equal(s.session(other.id).thread_id,'recovered');assert.equal(s.get(lost.id).thread_id,'recovered');s.close();await fs.rm(root,{recursive:true});
 });
 

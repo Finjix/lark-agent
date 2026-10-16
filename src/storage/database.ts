@@ -84,7 +84,7 @@ export class Store {
       }
     })();
   }
-  workspaceTaken(directory:string,exceptSessionId:string):boolean{return !!this.db.prepare('SELECT 1 FROM user_sessions WHERE workspace_path=? AND id<>?').get(directory,exceptSessionId);}
+  taskWorkspaceTaken(directory:string,exceptTaskId:string):boolean{return !!this.db.prepare('SELECT 1 FROM tasks WHERE workspace_path=? AND id<>?').get(directory,exceptTaskId);}
   sessionByThread(threadId:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE thread_id=? AND retired_at IS NULL').get(threadId) as UserSession|undefined;}
   sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){
@@ -116,11 +116,8 @@ export class Store {
       return this.session(id)!;
     })();
   }
-  /** Fix the session's delivery root before any file is written, so inputs and outputs share it. */
-  reserveWorkspace(id:string,directory:string):string{
-    this.db.prepare('UPDATE user_sessions SET workspace_path=COALESCE(workspace_path,?) WHERE id=?').run(directory,id);
-    return this.session(id)!.workspace_path!;
-  }
+  /** The folder Codex itself works in for this chat; it follows Desktop if that ever changes. */
+  setSessionWorkspace(id:string,directory:string){this.db.prepare('UPDATE user_sessions SET workspace_path=? WHERE id=?').run(directory,id);}
   bindSession(id:string,threadId:string,workspace?:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
     if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他 Desktop 聊天');

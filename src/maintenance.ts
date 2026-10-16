@@ -6,7 +6,7 @@ import {NativeDesktop} from './desktop/adapter.js';
 import {terminal} from './types.js';
 import {log,safeError} from './log.js';
 import {removeInputs} from './feishu/inputs.js';
-import {taskWorkspace,legacyTaskWorkspace,sessionInputs} from './layout.js';
+import {sessionInputs} from './layout.js';
 export async function cleanup(store:Store,desktop:NativeDesktop){
   for(const task of store.list()){
     if(!terminal(task.status)||task.cleaned_at||!task.finished_at||Date.now()-task.finished_at<config.TASK_RETENTION_DAYS*86400000)continue;
@@ -20,7 +20,7 @@ export async function cleanup(store:Store,desktop:NativeDesktop){
         const session=task.session_id?store.session(task.session_id):undefined;
         if(actual&&session){
           const sessionRoot=session.workspace_path?await fs.realpath(session.workspace_path):'';
-          if(!session.workspace_path||actual!==target||![taskWorkspace,legacyTaskWorkspace].some(own=>actual===own(sessionRoot,task.id)))throw Error('目录不满足会话任务所有权检查，跳过清理');
+          if(!session.workspace_path||actual!==target||path.dirname(path.dirname(actual))!==sessionRoot||!['output','tasks'].includes(path.basename(path.dirname(actual))))throw Error('目录不满足会话任务所有权检查，跳过清理');
           // A user session stays open; only this message's output directory expires.
           await fs.rm(actual,{recursive:true,force:false});
         }else if(actual){
@@ -29,7 +29,11 @@ export async function cleanup(store:Store,desktop:NativeDesktop){
         }
       }
       const session=task.session_id?store.session(task.session_id):undefined;
-      if(session?.workspace_path)await removeInputs(task.id,sessionInputs(session.workspace_path));
+      if(session?.workspace_path){
+        const names=new Set(store.inputs(task.id).flatMap(i=>i.path?[path.basename(path.dirname(i.path))]:[]));
+        if(task.workspace_path)names.add(path.basename(task.workspace_path));
+        for(const name of names)for(const folder of [sessionInputs(session.workspace_path),path.join(session.workspace_path,'inputs')])await removeInputs(name,folder);
+      }
       store.db.prepare('UPDATE task_generated_images SET base64=NULL WHERE task_id=?').run(task.id);
       store.update(task.id,{cleaned_at:Date.now()});store.event(task.id,'CLEANED',{});
     }catch(e){log.warn({taskId:task.id,error:safeError(e)},'保留策略清理已跳过');}

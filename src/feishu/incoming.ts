@@ -42,6 +42,12 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
         if(parts.length)lines.push(parts.join(''));
       }
       message.text=lines.join('\n');
+      // Text sent together with attachments carries them beside the content nodes, not inside them.
+      for(const file of Array.isArray(post.files)?post.files:Array.isArray(content.files)?content.files:[]){
+        if(file?.is_folder)throw Error('暂不支持发送文件夹，请打包成压缩文件后再发送');
+        add('file',file?.file_key,file?.file_name);
+      }
+      for(const image of Array.isArray(post.images)?post.images:Array.isArray(content.images)?content.images:[])add('image',image?.image_key,undefined);
     }else message.error='暂不支持此消息类型，请发送文字、图片、文件或图文消息。';
     for(const mention of mentions)if(mention.id?.open_id===botId&&typeof mention.key==='string')message.text=message.text.replaceAll(mention.key,'');
     if(attachments.length>MAX_INPUT_FILES)throw Error(`每条消息最多接收 ${MAX_INPUT_FILES} 个附件，请分批发送`);

@@ -42,11 +42,15 @@ export async function runFeishuCli(auth:FeishuCliAuth,root:string,args:string[],
     LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1',LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1'};
   for(const key of inherited)if(process.env[key])env[key]=process.env[key]!;
   // Relative file arguments resolve inside the task's output directory.
-  await fs.mkdir(workdir,{recursive:true});
+  const created=!existsSync(workdir);await fs.mkdir(workdir,{recursive:true});
   return new Promise(resolve=>{
     const child=spawn(binary,args,{cwd:workdir,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
     let stdout='',stderr='',done=false;
-    const finish=(result:CliResult)=>{if(done)return;done=true;clearTimeout(timer);resolve(result);};
+    const finish=(result:CliResult)=>{
+      if(done)return;done=true;clearTimeout(timer);
+      // rmdir only removes an empty directory, so a task that saved something keeps its folder.
+      (created?fs.rmdir(workdir).catch(()=>{}):Promise.resolve()).then(()=>resolve(result));
+    };
     const timer=setTimeout(()=>{child.kill();finish({code:124,stdout,stderr:`${stderr}\n命令超时（${TIMEOUT_MS/1000} 秒）`});},TIMEOUT_MS);
     child.stdout.on('data',d=>{if(stdout.length<OUTPUT_LIMIT)stdout+=d;});child.stderr.on('data',d=>{if(stderr.length<OUTPUT_LIMIT)stderr+=d;});
     child.on('error',e=>finish(note(`无法启动飞书 CLI：${e.message}`)));

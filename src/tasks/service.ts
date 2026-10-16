@@ -1,8 +1,9 @@
 import {randomUUID} from 'node:crypto';
+import path from 'node:path';
 import {Store} from '../storage/database.js';
 import {sessionInputs} from '../feishu/inputs.js';
 import {NativeDesktop} from '../desktop/adapter.js';
-import {taskWorkspace,sessionDirectory} from '../layout.js';
+import {taskWorkspace} from '../layout.js';
 import {config} from '../config.js';
 import {terminal,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
@@ -107,14 +108,16 @@ export class TaskService {
         if(!this.downloader)throw Error('附件下载服务不可用');
         this.store.update(task.id,{progress:'正在接收附件'});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
         const owner=this.store.sessionFor(task);await this.refreshSessionName(owner);
-        const root=this.store.reserveWorkspace(owner.id,sessionDirectory(this.store,this.store.session(owner.id)!));
-        await prepareInputs(this.store,task,this.downloader,sessionInputs(root));
+        // Attachments are saved in Codex's own folder for this chat, so the chat has to exist first.
+        const root=(await this.desktop.prepareSession(task)).workspace_path!;
+        const output=taskWorkspace(this.store,root,this.store.get(task.id)!);
+        this.store.update(task.id,{workspace_path:output});
+        await prepareInputs(this.store,task,this.downloader,sessionInputs(root),path.basename(output));
       }
       const current=this.store.get(task.id)!;
       if(current.cancel_requested||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,'CANCELLED');return;}
       const session=this.store.sessionFor(task);
       await this.refreshSessionName(session);
-      if(session.thread_id&&session.workspace_path)this.store.update(task.id,{thread_id:session.thread_id,workspace_path:taskWorkspace(session.workspace_path,task.id)});
       this.store.event(task.id,'DESKTOP_SUBMITTING',{});submitting=true;
       const created=await this.desktop.startTask(this.store.get(task.id)!);
       this.store.update(task.id,{thread_id:created.threadId,workspace_path:created.workspace});
@@ -140,9 +143,9 @@ export class TaskService {
     if(!view)return;
     if(!task.turn_id){
       const session=task.session_id?this.store.session(task.session_id):undefined;
-      const root=session?sessionDirectory(this.store,session):cached?.state.projectlessOutputDirectory??cached?.state.cwd;
+      const root=session?.workspace_path??cached?.state.projectlessOutputDirectory??cached?.state.cwd;
       if(session&&root)this.store.bindSession(session.id,threadId,root);
-      this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root,task.id):root)});
+      this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(this.store,root,task):root)});
     }
     const progress=view.commentary;
     // Persist images before the terminal transition can release the Desktop subscription.

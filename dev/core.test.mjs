@@ -8,7 +8,7 @@ import {FrameDecoder,encodeFrame,FramedPipe,OutcomeUnknown} from '../dist/deskto
 import {StreamState,applyPatch,interactionsOf} from '../dist/desktop/stream.js';
 import {canSchedule,Scheduler} from '../dist/tasks/scheduler.js';
 import {TaskService} from '../dist/tasks/service.js';
-import {ownedArtifact,artifactLinks,Delivery} from '../dist/feishu/delivery.js';
+import {ownedArtifact,artifactLinks,outputFiles,Delivery} from '../dist/feishu/delivery.js';
 import {cardJson,renderTask,limitText} from '../dist/feishu/cards.js';
 import {EventEmitter} from 'node:events';
 import {sanitizedFeishuError,FeishuClient} from '../dist/feishu/client.js';
@@ -222,4 +222,18 @@ test('rejected final artifacts produce a user-facing delivery notice without upl
   const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>{uploaded=true;}};
   const delivery=new Delivery(s,f);await delivery.tick();const notice=s.due().find(r=>r.kind==='NOTICE');assert(notice);assert(JSON.parse(notice.payload).text.includes('附件未发送'));assert.equal(uploaded,false);
   await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
+});
+test('whatever Codex leaves in the task output folder is delivered even when the reply does not link it',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-scan-')),workspace=path.join(dir,'output','20261016_170000');
+  await fs.mkdir(path.join(workspace,'sub'),{recursive:true});
+  await fs.writeFile(path.join(workspace,'report.txt'),'r');await fs.writeFile(path.join(workspace,'sub','data.csv'),'d');await fs.writeFile(path.join(workspace,'chart.png'),'p');
+  await fs.writeFile(path.join(workspace,'.scratch'),'x');await fs.writeFile(path.join(dir,'elsewhere.txt'),'never');
+  const s=memory(),task=s.create(input()).task;s.transition(task.id,'COMPLETED',{workspace_path:workspace,result:`done, see [report](<${path.join(workspace,'report.txt')}>)`});
+  const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>({file_key:'file'}),uploadImage:async()=>({image_key:'image'})};
+  const delivery=new Delivery(s,f);await delivery.tick();
+  const rows=s.db.prepare('SELECT name,kind FROM task_artifacts WHERE task_id=? ORDER BY name').all(task.id).map(r=>`${r.name}:${r.kind}`);
+  assert.deepEqual(rows,['chart.png:image','data.csv:file','report.txt:file'],'linked and unlinked files once each; dotfiles and files outside the folder are not sent');
+  await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
+  const many=await fs.mkdtemp(path.join(os.tmpdir(),'lark-scan-many-'));for(let n=0;n<25;n++)await fs.writeFile(path.join(many,`f${String(n).padStart(2,'0')}.txt`),'x');
+  assert.equal((await outputFiles(many)).length,10,'capped');await fs.rm(many,{recursive:true});
 });

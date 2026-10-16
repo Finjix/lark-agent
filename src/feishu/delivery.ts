@@ -33,6 +33,21 @@ export async function ownedArtifact(workspace:string,candidate:string){
   if(stat.size>30*1024*1024)throw Error('文件超过当前机器人 30 MB 上传上限');
   return {path:file,name:path.basename(file),size:stat.size};
 }
+/** Files Codex left in the task's own output folder (no dotfiles, no symlinks, a few levels deep, capped so a stray tree cannot flood the chat). */
+const MAX_UNLINKED=10;
+export async function outputFiles(root:string){
+  const found:string[]=[];
+  const walk=async(directory:string,depth:number):Promise<void>=>{
+    let entries;try{entries=await fs.readdir(directory,{withFileTypes:true});}catch{return;}
+    for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
+      if(found.length>=MAX_UNLINKED)return;
+      if(entry.name.startsWith('.'))continue;
+      const full=path.join(directory,entry.name);
+      if(entry.isFile())found.push(full);else if(entry.isDirectory()&&depth<3)await walk(full,depth+1);
+    }
+  };
+  await walk(root,0);return found;
+}
 export function artifactLinks(text:string){
   return [...text.matchAll(/\]\(<?((?:[A-Za-z]:[\\/]|\/)[^\n)<>]*?)>?\)/g)].map(m=>{
     try{return decodeURIComponent(m[1]).replace(/:\d+$/,'');}catch{return m[1];}
@@ -144,10 +159,13 @@ ${reason}`});
     if(Buffer.byteLength(task.result)>12000){
       const file=path.join(task.workspace_path,`lark-result-${task.id}.md`);
       try{
+        await fs.mkdir(task.workspace_path,{recursive:true});
         try{await fs.writeFile(file,task.result,{flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}
         paths.set(file,'file');
       }catch(e){reject(path.basename(file),e);}
     }
+    // The task's output folder is the delivery folder: whatever Codex left there goes out even if the reply forgot to link it.
+    for(const file of await outputFiles(task.workspace_path))if(!paths.has(file))paths.set(file,/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file');
     for(const [candidate,requestedKind] of paths){
       try{
         const file=await ownedArtifact(task.workspace_path,candidate),id=this.uuid(`${task.id}:${file.path}`);

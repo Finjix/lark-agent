@@ -3,12 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {config} from '../config.js';
 import {Store} from '../storage/database.js';
-import type {Task,PendingInteraction} from '../types.js';
+import type {Task,PendingInteraction,UserSession} from '../types.js';
 import {DesktopIPC,OutcomeUnknown,NotSubmitted} from './transport.js';
 import {AppTools,callerCandidates,desktopVersion,desktopThreadStatus,discoverToolEndpoint, type CallerContext} from './context.js';
 import {StreamState,turnsOf} from './stream.js';
 import {log,safeError} from '../log.js';
-import {sessionDirectory,taskWorkspace} from '../layout.js';
+import {taskWorkspace} from '../layout.js';
 
 export const SESSION_INIT_PROMPT='hi';
 
@@ -46,12 +46,13 @@ export class NativeDesktop extends EventEmitter {
       await this.ipc.connect();this.ready=true;this.error='';this.emit('online');return {ready:true,version:this.version,standaloneContext:true};
     }catch(e){this.error=(e as Error).message;this.close();throw e;}
   }
-  async startTask(task:Task){
-    if(!this.ready||!this.tools||!this.ipc)throw new NotSubmitted('Desktop 尚未就绪');
+  /**
+   * Makes sure this user's Desktop chat exists and records the folder Codex works in for it. That folder (Documents\Codex\<date>\lark-<id>)
+   * is where Codex can write without approval, so inputs and outputs live there and user/ only holds the user's own data.
+   */
+  async prepareSession(task:Task):Promise<UserSession>{
+    if(!this.ready||!this.tools)throw new NotSubmitted('Desktop 尚未就绪');
     let session=this.store.sessionFor(task);
-    taskPrompt(task,this.store); // Validate downloaded inputs before creating or submitting anything.
-    if(this.store.submission(task.id))throw new OutcomeUnknown('用户原文已尝试提交，必须核对原轮次，不能重复发送');
-    if(!this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST'))this.store.event(task.id,'DESKTOP_RAW_REQUEST',{});
     if(session.thread_id){
       const status=this.threadStatus(session.thread_id);
       if(status!=='active'){
@@ -70,15 +71,30 @@ export class NativeDesktop extends EventEmitter {
         target:{type:'projectless',directoryName:`lark-${session.id}`},
       });
       if(!result.threadId)throw new OutcomeUnknown('Desktop creation returned no ready thread; reconcile before retrying');
-      const directory=sessionDirectory(this.store,session);
-      this.store.bindSession(session.id,result.threadId,directory);
-      session.thread_id=result.threadId;session.workspace_path=directory;
+      // Bind the thread first: if reading its folder fails, a retry must not create a second chat.
+      this.store.bindSession(session.id,result.threadId);
       if(session.title)this.store.sessionTitleApplied(session.id,session.title);
+      session=this.store.session(session.id)!;
     }
+    const folder=await this.threadWorkspace(session.thread_id!).catch(e=>{if(!session.workspace_path)throw e;return session.workspace_path;});
+    if(folder!==session.workspace_path){this.store.setSessionWorkspace(session.id,folder);session=this.store.session(session.id)!;}
     await this.syncSessionTitle(session.id);
+    return session;
+  }
+  async threadWorkspace(threadId:string){
+    const thread=await this.tools!.call('read_thread',{threadId,turnLimit:1});
+    const cwd=thread?.thread?.cwd;
+    if(typeof cwd!=='string'||!cwd)throw Error('无法确认 Desktop 聊天的工作目录');
+    return path.resolve(cwd);
+  }
+  async startTask(task:Task){
+    if(!this.ready||!this.tools||!this.ipc)throw new NotSubmitted('Desktop 尚未就绪');
+    taskPrompt(task,this.store); // Validate downloaded inputs before creating or submitting anything.
+    if(this.store.submission(task.id))throw new OutcomeUnknown('用户原文已尝试提交，必须核对原轮次，不能重复发送');
+    if(!this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST'))this.store.event(task.id,'DESKTOP_RAW_REQUEST',{});
+    const session=await this.prepareSession(task);
     if(!session.thread_id||!session.workspace_path)throw Error('用户会话和工作目录尚未确认');
-    const threadId=session.thread_id,workspace=taskWorkspace(session.workspace_path,task.id);
-    await fs.mkdir(workspace,{recursive:true});
+    const threadId=session.thread_id,workspace=taskWorkspace(this.store,session.workspace_path,task);
     this.store.update(task.id,{thread_id:threadId,workspace_path:workspace});
     await this.follow(threadId);await this.waitForIdle(threadId);
     // Persist the stable client ID before the write. Streaming and restart recovery use it,
@@ -86,9 +102,7 @@ export class NativeDesktop extends EventEmitter {
     const request=taskRequest(this.store.get(task.id)!,this.store);
     if(this.store.get(task.id)?.cancel_requested)throw new NotSubmitted('任务已请求取消，用户原文未提交');
     this.store.event(task.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:task.submission_key});
-    const accepted=await this.ipc.request('thread-follower-start-turn',{
-      conversationId:threadId,turnStart:{request,context:{}},
-    },2,this.owners.get(threadId));
+    const accepted=await this.ipc.request('thread-follower-start-turn',{conversationId:threadId,turnStart:{request,context:{}}},2,this.owners.get(threadId));
     const turnId=accepted.result?.result?.turn?.id;
     if(typeof turnId!=='string'||!turnId)throw new OutcomeUnknown('Desktop 未返回原文请求的执行轮次，等待按请求 ID 核对');
     this.store.update(task.id,{turn_id:turnId});
@@ -115,7 +129,7 @@ export class NativeDesktop extends EventEmitter {
   }
   async recoverUnbound(task:Task){
     const session=task.session_id?this.store.session(task.session_id):undefined;
-    if(session?.thread_id){this.store.update(task.id,{thread_id:session.thread_id,...session.workspace_path?{workspace_path:taskWorkspace(session.workspace_path,task.id)}:{}});await this.follow(session.thread_id);return;}
+    if(session?.thread_id){this.store.update(task.id,{thread_id:session.thread_id,...session.workspace_path?{workspace_path:taskWorkspace(this.store,session.workspace_path,task)}:{}});await this.follow(session.thread_id);return;}
     const result=await this.tools!.call('list_threads',{limit:50});
     const entries=[...(result.threads??[]),...(result.pinnedThreads??[])];
     const creationTitle=this.store.eventPayload(task.id,'DESKTOP_SESSION_CREATING')?.title;
@@ -126,7 +140,7 @@ export class NativeDesktop extends EventEmitter {
     this.store.update(task.id,{thread_id:threadId});await this.follow(threadId);
     if(session&&this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST')){
       await this.waitForIdle(threadId);
-      this.store.bindSession(session.id,threadId,sessionDirectory(this.store,session));
+      this.store.bindSession(session.id,threadId,await this.threadWorkspace(threadId));
     }
   }
   async follow(threadId:string){
@@ -181,7 +195,7 @@ export class NativeDesktop extends EventEmitter {
   close(){this.ready=false;this.ipc?.removeAllListeners('disconnected');this.tools?.removeAllListeners('disconnected');this.ipc?.close();this.tools?.close();this.ipc=undefined;this.tools=undefined;this.owners.clear();this.stream.states.clear();}
 }
 export const sessionLabel=(session:{id:string;title?:string|null})=>session.title??`飞书用户会话 ${session.id}`;
-export {sessionDirectory,taskWorkspace} from '../layout.js';
+export {taskWorkspace} from '../layout.js';
 export function taskPrompt(task:Task,store:Store){
   const inputs=store.inputs(task.id);
   if(inputs.some(input=>!input.path))throw Error('附件尚未接收完成');
@@ -192,7 +206,7 @@ export function taskRequest(task:Task,store:Store){
   const text=taskPrompt(task,store),inputs=store.inputs(task.id);
   const additionalContext:Record<string,{kind:'application'|'untrusted';value:string}>={
     lark_delivery_instructions:{kind:'application',value:
-      `Write deliverable files only to: ${task.workspace_path}\nList each deliverable in the final reply as a Markdown link with an absolute path. Copy earlier files into that directory before returning them.`+
+      `Write deliverable files only to: ${task.workspace_path} (create the folder when you have something to deliver)\nList each deliverable in the final reply as a Markdown link with an absolute path. Copy earlier files into that directory before returning them.`+
       (inputs.length?'\nUser attachments are listed in lark_user_attachments.':'')},
   };
   const tools=toolInstructions();if(tools)additionalContext.lark_tool_instructions={kind:'application',value:tools};

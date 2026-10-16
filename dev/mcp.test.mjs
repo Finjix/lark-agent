@@ -10,14 +10,14 @@ import {McpServer,identify,mcpToken} from '../dist/mcp/server.js';
 import {registerMcp,unregisterMcp,mcpRegistered} from '../dist/mcp/register.js';
 import {tools} from '../dist/mcp/tools.js';
 import {toolInstructions} from '../dist/desktop/adapter.js';
-import {sessionDirectory,taskWorkspace,userData} from '../dist/layout.js';
+import {taskWorkspace,userData} from '../dist/layout.js';
 
 const input=u=>({tenant_key:'t',user_id:u,chat_id:'c',source_message_id:`m-${u}`,instruction:'x'});
 /** A user session bound to a Desktop thread with a task running in turn `turn`. */
 function user(store,name,thread,turn='turn-1'){
   const task=store.create(input(name)).task,created=store.sessionFor(task);store.nameSession(created.id,name);
-  const session=store.session(created.id);store.bindSession(session.id,thread,sessionDirectory(store,session));
-  const bound=store.session(session.id),workspace=taskWorkspace(bound.workspace_path,task.id);
+  const session=store.session(created.id);store.bindSession(session.id,thread,path.join(config.user,'chat-'+name));
+  const bound=store.session(session.id),workspace=taskWorkspace(store,bound.workspace_path,store.get(task.id));
   store.transition(task.id,'STARTING',{thread_id:thread,workspace_path:workspace,turn_id:turn});
   return {task,session:bound,workspace,data:userData(store,bound)};
 }

@@ -77,3 +77,16 @@ test('the CLI runs with the user token in its environment, user-only identity, a
   delete process.env.SECRET_SERVICE_VALUE;
 }));
 
+
+test('the task output folder is created for a run and removed again unless the run saved something',()=>withApp(async root=>{
+  config.FEISHU_CLI_PATH=process.execPath;
+  const auth=new FeishuCliAuth();await fs.mkdir(path.join(root,'feishu-cli'),{recursive:true});
+  await fs.writeFile(path.join(root,'feishu-cli','credentials.json'),JSON.stringify({accessToken:'u',expiresAt:Date.now()+3600000,savedAt:0}));
+  const quiet=path.join(root,'quiet.mjs'),saver=path.join(root,'saver.mjs');
+  await fs.writeFile(quiet,"console.log(process.cwd())");await fs.writeFile(saver,"import fs from 'node:fs';fs.writeFileSync('report.txt','x');console.log(process.cwd())");
+  const out=path.join(root,'output','run-1');
+  const first=await runFeishuCli(auth,root,[quiet],out);assert.equal(first.stdout.trim(),out,'the command ran inside the output folder');
+  await assert.rejects(fs.stat(out),{code:'ENOENT'},'a read-only call leaves no empty folder');
+  await runFeishuCli(auth,root,[saver],out);assert.equal(await fs.readFile(path.join(out,'report.txt'),'utf8'),'x','a file saved with a relative path lands in the output folder');
+  await runFeishuCli(auth,root,[quiet],out);assert((await fs.stat(out)).isDirectory(),'a folder that already holds results is kept');
+}));
