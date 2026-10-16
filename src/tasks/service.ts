@@ -110,9 +110,7 @@ export class TaskService {
         const owner=this.store.sessionFor(task);await this.refreshSessionName(owner);
         // Attachments are saved in Codex's own folder for this chat, so the chat has to exist first.
         const root=(await this.desktop.prepareSession(task)).workspace_path!;
-        const output=taskWorkspace(this.store,root,this.store.get(task.id)!);
-        this.store.update(task.id,{workspace_path:output});
-        await prepareInputs(this.store,task,this.downloader,sessionInputs(root),path.basename(output));
+        await prepareInputs(this.store,task,this.downloader,sessionInputs(root));
       }
       const current=this.store.get(task.id)!;
       if(current.cancel_requested||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,'CANCELLED');return;}
@@ -145,7 +143,7 @@ export class TaskService {
       const session=task.session_id?this.store.session(task.session_id):undefined;
       const root=session?.workspace_path??cached?.state.projectlessOutputDirectory??cached?.state.cwd;
       if(session&&root)this.store.bindSession(session.id,threadId,root);
-      this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(this.store,root,task):root)});
+      this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root):root)});
     }
     const progress=view.commentary;
     // Persist images before the terminal transition can release the Desktop subscription.

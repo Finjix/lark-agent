@@ -6,11 +6,6 @@ const clock=new Intl.DateTimeFormat('en-GB',{
 export function displayName(value:string){
   return [...value.replace(/[\x00-\x1f\x7f]/g,' ').replace(/\s+/g,' ').trim()].slice(0,80).join('');
 }
-/** Session folder name, e.g. 20261016_161000 (Beijing time). */
-export function sessionStamp(createdAt:number){
-  const parts=Object.fromEntries(clock.formatToParts(new Date(createdAt)).map(p=>[p.type,p.value]));
-  return `${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}`;
-}
 export function sessionTitle(name:string,createdAt:number){
   const user=displayName(name);if(!user)throw Error('用户显示名为空');
   const date=new Date(createdAt),parts=Object.fromEntries(clock.formatToParts(date).map(p=>[p.type,p.value]));

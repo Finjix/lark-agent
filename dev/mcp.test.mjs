@@ -9,7 +9,6 @@ import {Store} from '../dist/storage/database.js';
 import {McpServer,identify,mcpToken} from '../dist/mcp/server.js';
 import {registerMcp,unregisterMcp,mcpRegistered} from '../dist/mcp/register.js';
 import {tools} from '../dist/mcp/tools.js';
-import {toolInstructions} from '../dist/desktop/adapter.js';
 import {taskWorkspace,userData} from '../dist/layout.js';
 
 const input=u=>({tenant_key:'t',user_id:u,chat_id:'c',source_message_id:`m-${u}`,instruction:'x'});
@@ -17,7 +16,7 @@ const input=u=>({tenant_key:'t',user_id:u,chat_id:'c',source_message_id:`m-${u}`
 function user(store,name,thread,turn='turn-1'){
   const task=store.create(input(name)).task,created=store.sessionFor(task);store.nameSession(created.id,name);
   const session=store.session(created.id);store.bindSession(session.id,thread,path.join(config.user,'chat-'+name));
-  const bound=store.session(session.id),workspace=taskWorkspace(store,bound.workspace_path,store.get(task.id));
+  const bound=store.session(session.id),workspace=taskWorkspace(bound.workspace_path);
   store.transition(task.id,'STARTING',{thread_id:thread,workspace_path:workspace,turn_id:turn});
   return {task,session:bound,workspace,data:userData(store,bound)};
 }
@@ -98,7 +97,10 @@ test('registration writes one marked block into Codex config.toml and nothing el
   await fs.writeFile(file,'[mcp_servers.lark_agent]\ncommand = "mine"\n');assert.throws(()=>registerMcp('t'),/手写/,'a hand-written entry is never overwritten');
 });
 
-test('instructions steer Codex to the MCP tools',()=>{
-  const text=toolInstructions();assert(text.includes('lark_agent')&&text.includes('built-in browser')&&text.includes('browser_open'));
-  assert(!/--key|lark-agent-browser/.test(text),'no per-session secret in the prompt');
+test('Codex learns how to use the tools from the tool descriptions, not from per-turn instructions',async()=>{
+  const {tools}=await import('../dist/mcp/tools.js');
+  assert(tools.every(t=>t.description.length>10),'every tool describes itself');
+  assert(tools.find(t=>t.name==='feishu_cli').description.includes('auth'),'the login flow is part of the feishu_cli description');
+  assert(tools.find(t=>t.name==='browser_open').description.includes('login'),'so is the hint about sites that need a login');
+  assert(tools.find(t=>t.name==='browser_screenshot').description.includes('delivery'),'and where screenshots go');
 });

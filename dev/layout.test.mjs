@@ -39,17 +39,10 @@ test('user directory names cannot escape user/ and fall back to the open id when
   store.close();
 });
 
-test('task folders inside the chat folder are named by arrival time and only exist once something is written',()=>{
-  const store=new Store(':memory:'),chat=path.join(config.user,'..','codex-chat-folder');
-  const stampOf=at=>{const d=new Date(at+8*3600000).toISOString();return `${d.slice(0,10).replace(/-/g,'')}_${d.slice(11,19).replace(/:/g,'')}`;};
-  const first=store.create({...input('ou_1'),source_message_id:'t1'}).task,out=taskWorkspace(store,chat,first);
-  assert.equal(out,path.join(chat,'output',stampOf(first.created_at)));assert.equal(fs.existsSync(out),false,'nothing is created on disk');
-  assert.equal(path.join(sessionInputs(chat),path.basename(out)),path.join(chat,'input',path.basename(out)),'input and output share the name');
-  store.update(first.id,{workspace_path:out});
-  assert.equal(taskWorkspace(store,chat,store.get(first.id)),out,'fixed once stored on the task');
-  const second=store.create({...input('ou_1'),source_message_id:'t2'}).task;store.db.prepare('UPDATE tasks SET created_at=? WHERE id=?').run(first.created_at,second.id);
-  assert.equal(taskWorkspace(store,chat,store.get(second.id)),`${out}_2`,'two messages in the same second do not share a folder');
-  store.close();
+test('files are exchanged in plain input/ and output/ folders of the chat folder, with no naming scheme',()=>{
+  const chat=path.join(config.user,'..','codex-chat-folder');
+  assert.equal(taskWorkspace(chat),path.join(chat,'output'));assert.equal(sessionInputs(chat),path.join(chat,'input'));
+  assert.equal(fs.existsSync(taskWorkspace(chat)),false,'nothing is created on disk by asking for the path');
 });
 
 test('user data outlives a chat: a renewed session shares the same user directory',()=>{

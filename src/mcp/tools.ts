@@ -23,7 +23,7 @@ const browser=(name:string,description:string,inputSchema:object,command:string,
 const TARGET='Element ref number from the last browser_open/browser_snapshot, or a Playwright selector.';
 
 export const tools:Tool[]=[
-  browser('browser_open','Open an http(s) URL in this user\'s private headless browser (cookies and logins persist across tasks) and return the page elements and text. Use this instead of any built-in browser.',
+  browser('browser_open','Open an http(s) URL in this user\'s private headless browser (cookies and logins persist across tasks) and return the page elements and text. If the site needs a login or verification code, ask the user in the final reply.',
     schema({url:text('Full http or https URL')},['url']),'open',a=>[need(a,'url')]),
   browser('browser_snapshot','List the visible interactive elements as [ref] lines plus the page text. Run again after the page changes.',schema(),'snapshot'),
   browser('browser_text','Return the full text of the current page.',schema(),'text'),

@@ -9,25 +9,21 @@ export interface ResourceDownloader {
   getUserName?(userId:string):Promise<string|undefined>;
 }
 export {sessionInputs} from '../layout.js';
-/** One folder per task, named like its output folder (input/20261016_162500). */
-export function inputDirectory(name:string,root:string){
-  if(!/^[0-9A-Za-z_-][0-9A-Za-z_.-]*$/.test(name)||name.includes('..'))throw Error('无效的附件目录名');
-  return path.join(root,name);
+/** Attachments keep the name they were sent with, cleaned so they cannot leave the folder. */
+export function inputFilename(name:string){
+  return path.win32.basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/,'').slice(0,140)||'attachment';
 }
-export function inputFilename(name:string,ordinal:number){
-  const safe=path.win32.basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/,'').slice(0,140)||'attachment';
-  return `${ordinal+1}-${safe}`;
+/** A name already taken by an earlier file gets " (2)", " (3)" ... before the extension. */
+async function freeName(directory:string,name:string){
+  const {name:stem,ext}=path.parse(name);let candidate=name;
+  for(let n=2;;n++){
+    try{await fs.lstat(path.join(directory,candidate));}catch(e:any){if(e.code==='ENOENT')return candidate;throw e;}
+    candidate=`${stem} (${n})${ext}`;
+  }
 }
-async function ownedDirectory(name:string,root:string,create=false){
-  const directory=inputDirectory(name,root);
-  if(create)await fs.mkdir(directory,{recursive:true});
-  const actualRoot=await fs.realpath(root),actual=await fs.realpath(directory);
-  if(actual!==path.join(actualRoot,name))throw Error('附件目录不属于当前任务');
-  return actual;
-}
-export async function prepareInputs(store:Store,task:Task,downloader:ResourceDownloader,root:string,name:string){
+export async function prepareInputs(store:Store,task:Task,downloader:ResourceDownloader,root:string){
   const inputs=store.inputs(task.id);if(!inputs.length)return;
-  const directory=await ownedDirectory(name,root,true);
+  await fs.mkdir(root,{recursive:true});const directory=await fs.realpath(root);
   for(const input of inputs){
     if(input.path){
       const actual=await fs.realpath(input.path),stat=await fs.stat(actual);
@@ -37,18 +33,25 @@ export async function prepareInputs(store:Store,task:Task,downloader:ResourceDow
     const temporary=path.join(directory,`.${randomUUID()}.part`);
     try{
       const downloaded=await downloader.downloadResource(task.source_message_id,input,temporary);
-      let name=inputFilename(input.name,input.ordinal);
+      let name=inputFilename(input.name);
       if(input.kind==='image'){
         const extension=({'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp'} as Record<string,string>)[downloaded.contentType.split(';')[0].trim()];
         if(extension)name=name.replace(/\.[^.]+$/,'')+extension;
       }
-      const destination=path.join(directory,name);
-      try{if(!(await fs.lstat(destination)).isFile())throw Error('附件目标不是普通文件');}catch(e:any){if(e.code!=='ENOENT')throw e;}
+      const destination=path.join(directory,await freeName(directory,name));
       await fs.rename(temporary,destination);store.inputReady(task.id,input.ordinal,destination,downloaded.size);
     }finally{await fs.rm(temporary,{force:true});}
   }
 }
-export async function removeInputs(name:string,root:string){
-  let directory:string;try{directory=await ownedDirectory(name,root);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
-  await fs.rm(directory,{recursive:true,force:false});
+/** Deletes the attachment files received for a task. Only files inside the chat folder's input/ (or the older inputs/) are ever touched. */
+export async function removeInputs(files:string[],chatFolder:string){
+  let root:string;try{root=await fs.realpath(chatFolder);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
+  for(const file of files){
+    let actual:string;try{actual=await fs.realpath(file);}catch(e:any){if(e.code==='ENOENT')continue;throw e;}
+    const parts=path.relative(root,actual).split(path.sep);
+    if(parts[0]==='..'||path.isAbsolute(path.relative(root,actual))||!['input','inputs'].includes(parts[0])||parts.length<2)throw Error('附件不属于当前会话，跳过清理');
+    await fs.rm(actual,{force:false});
+    // Folders of earlier layouts (input/<task>/) go away with their last file.
+    if(parts.length>2)await fs.rmdir(path.dirname(actual)).catch(()=>{});
+  }
 }

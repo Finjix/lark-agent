@@ -237,3 +237,16 @@ test('whatever Codex leaves in the task output folder is delivered even when the
   const many=await fs.mkdtemp(path.join(os.tmpdir(),'lark-scan-many-'));for(let n=0;n<25;n++)await fs.writeFile(path.join(many,`f${String(n).padStart(2,'0')}.txt`),'x');
   assert.equal((await outputFiles(many)).length,10,'capped');await fs.rm(many,{recursive:true});
 });
+
+test('a task owns only the files that appeared in output/ while it ran',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-window-'));await fs.writeFile(path.join(dir,'report.txt'),'r');
+  const now=Date.now(),names=async window=>(await outputFiles(dir,window)).map(f=>path.basename(f));
+  assert.deepEqual(await names({from:now-5000,to:now+5000}),['report.txt'],'created during the task');
+  assert.deepEqual(await names({from:now-60000,to:now-30000}),[],'a file of a later task is not this task\'s');
+  assert.deepEqual(await names({from:now+30000,to:now+60000}),[],'a file from before the task started is not sent again');
+  // A copy keeps the old modification time but is a new file, so asking Codex to resend something still works.
+  const old=path.join(dir,'old.txt');await fs.writeFile(old,'o');const past=new Date(now-86400000);await fs.utimes(old,past,past);
+  const copy=path.join(dir,'copy.txt');await fs.copyFile(old,copy);
+  assert((await names({from:now-5000,to:now+5000})).includes('copy.txt'),'a copied file counts by when it was created here');
+  await fs.rm(dir,{recursive:true});
+});

@@ -84,7 +84,6 @@ export class Store {
       }
     })();
   }
-  taskWorkspaceTaken(directory:string,exceptTaskId:string):boolean{return !!this.db.prepare('SELECT 1 FROM tasks WHERE workspace_path=? AND id<>?').get(directory,exceptTaskId);}
   sessionByThread(threadId:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE thread_id=? AND retired_at IS NULL').get(threadId) as UserSession|undefined;}
   sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){

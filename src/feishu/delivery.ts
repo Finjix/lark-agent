@@ -33,9 +33,12 @@ export async function ownedArtifact(workspace:string,candidate:string){
   if(stat.size>30*1024*1024)throw Error('文件超过当前机器人 30 MB 上传上限');
   return {path:file,name:path.basename(file),size:stat.size};
 }
-/** Files Codex left in the task's own output folder (no dotfiles, no symlinks, a few levels deep, capped so a stray tree cannot flood the chat). */
-const MAX_UNLINKED=10;
-export async function outputFiles(root:string){
+/**
+ * Files Codex put in the output folder while this task ran: new or changed between its start and end (a file copied there counts
+ * by its creation time). No dotfiles or symlinks, a few levels deep, capped so a stray tree cannot flood the chat.
+ */
+const MAX_UNLINKED=10,SLACK_MS=2000;
+export async function outputFiles(root:string,window?:{from:number;to:number}){
   const found:string[]=[];
   const walk=async(directory:string,depth:number):Promise<void>=>{
     let entries;try{entries=await fs.readdir(directory,{withFileTypes:true});}catch{return;}
@@ -43,7 +46,10 @@ export async function outputFiles(root:string){
       if(found.length>=MAX_UNLINKED)return;
       if(entry.name.startsWith('.'))continue;
       const full=path.join(directory,entry.name);
-      if(entry.isFile())found.push(full);else if(entry.isDirectory()&&depth<3)await walk(full,depth+1);
+      if(entry.isFile()){
+        if(window){const stat=await fs.stat(full),at=Math.max(stat.mtimeMs,stat.birthtimeMs);if(at<window.from-SLACK_MS||at>window.to+SLACK_MS)continue;}
+        found.push(full);
+      }else if(entry.isDirectory()&&depth<3)await walk(full,depth+1);
     }
   };
   await walk(root,0);return found;
@@ -165,7 +171,7 @@ ${reason}`});
       }catch(e){reject(path.basename(file),e);}
     }
     // The task's output folder is the delivery folder: whatever Codex left there goes out even if the reply forgot to link it.
-    for(const file of await outputFiles(task.workspace_path))if(!paths.has(file))paths.set(file,/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file');
+    for(const file of await outputFiles(task.workspace_path,{from:task.started_at??task.created_at,to:task.finished_at??Date.now()}))if(!paths.has(file))paths.set(file,/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file');
     for(const [candidate,requestedKind] of paths){
       try{
         const file=await ownedArtifact(task.workspace_path,candidate),id=this.uuid(`${task.id}:${file.path}`);

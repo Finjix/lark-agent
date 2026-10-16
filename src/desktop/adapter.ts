@@ -94,7 +94,7 @@ export class NativeDesktop extends EventEmitter {
     if(!this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST'))this.store.event(task.id,'DESKTOP_RAW_REQUEST',{});
     const session=await this.prepareSession(task);
     if(!session.thread_id||!session.workspace_path)throw Error('用户会话和工作目录尚未确认');
-    const threadId=session.thread_id,workspace=taskWorkspace(this.store,session.workspace_path,task);
+    const threadId=session.thread_id,workspace=taskWorkspace(session.workspace_path);
     this.store.update(task.id,{thread_id:threadId,workspace_path:workspace});
     await this.follow(threadId);await this.waitForIdle(threadId);
     // Persist the stable client ID before the write. Streaming and restart recovery use it,
@@ -129,7 +129,7 @@ export class NativeDesktop extends EventEmitter {
   }
   async recoverUnbound(task:Task){
     const session=task.session_id?this.store.session(task.session_id):undefined;
-    if(session?.thread_id){this.store.update(task.id,{thread_id:session.thread_id,...session.workspace_path?{workspace_path:taskWorkspace(this.store,session.workspace_path,task)}:{}});await this.follow(session.thread_id);return;}
+    if(session?.thread_id){this.store.update(task.id,{thread_id:session.thread_id,...session.workspace_path?{workspace_path:taskWorkspace(session.workspace_path)}:{}});await this.follow(session.thread_id);return;}
     const result=await this.tools!.call('list_threads',{limit:50});
     const entries=[...(result.threads??[]),...(result.pinnedThreads??[])];
     const creationTitle=this.store.eventPayload(task.id,'DESKTOP_SESSION_CREATING')?.title;
@@ -204,23 +204,9 @@ export function taskPrompt(task:Task,store:Store){
 export function taskRequest(task:Task,store:Store){
   if(!task.thread_id||!task.workspace_path)throw Error('用户会话和交付目录尚未确认');
   const text=taskPrompt(task,store),inputs=store.inputs(task.id);
-  const additionalContext:Record<string,{kind:'application'|'untrusted';value:string}>={
-    lark_delivery_instructions:{kind:'application',value:
-      `Write deliverable files only to: ${task.workspace_path} (create the folder when you have something to deliver)\nList each deliverable in the final reply as a Markdown link with an absolute path. Copy earlier files into that directory before returning them.`+
-      (inputs.length?'\nUser attachments are listed in lark_user_attachments.':'')},
-  };
-  const tools=toolInstructions();if(tools)additionalContext.lark_tool_instructions={kind:'application',value:tools};
+  // The standing rules live in the system prompt (prompt/system.md); only the attachment list, which differs per message, travels with the turn.
+  const additionalContext:Record<string,{kind:'application'|'untrusted';value:string}>={};
   if(inputs.length)additionalContext.lark_user_attachments={kind:'untrusted',value:JSON.stringify(inputs.map(({name,kind,path})=>({name,kind,path})))};
   return {threadId:task.thread_id,clientUserMessageId:task.submission_key,
     input:[{type:'text',text,text_elements:[]},...inputs.filter(i=>i.kind==='image').map(i=>({type:'localImage',path:i.path!}))],additionalContext};
-}
-/** Steers web and Feishu work to the lark_agent MCP tools, which resolve the user from the calling thread; the Desktop built-in browser shares one cookie jar across all users. */
-export function toolInstructions(){
-  const browser=config.BROWSER_ENABLED,feishu=config.FEISHU_CLI_ENABLED&&!!config.FEISHU_APP_ID;
-  if(!browser&&!feishu)return;
-  return [
-    browser&&'Do not use the Desktop built-in browser or any other browser tool: it shares cookies between users. For every web task use the lark_agent MCP browser_* tools: a private headless browser for this user whose logins persist across tasks. browser_open and browser_snapshot list elements as [ref]; use those numbers as the target, and snapshot again after the page changes. browser_screenshot saves into the delivery directory.',
-    feishu&&'For Feishu/Lark work (docs, drive, messages, calendar, tasks, sheets, base, wiki, contacts) use the lark_agent MCP tool feishu_cli; it always acts as this user with their own login. If it says the user is not logged in, call it with ["auth","login"], put the link it prints in your final reply and stop; the user authorizes and sends the request again.',
-    'If a site needs a login or verification code, ask the user in the final reply.',
-  ].filter(Boolean).join('\n');
 }
