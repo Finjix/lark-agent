@@ -8,8 +8,7 @@ export interface ResourceDownloader {
   downloadResource(messageId:string,attachment:IncomingAttachment,destination:string):Promise<{size:number;contentType:string}>;
   getUserName?(userId:string):Promise<string|undefined>;
 }
-/** Inbound attachments live beside outputs: user/<session>/inputs/<taskId>. */
-export const sessionInputs=(sessionRoot:string)=>path.join(sessionRoot,'inputs');
+export {sessionInputs} from '../layout.js';
 export function inputDirectory(taskId:string,root:string){
   if(!/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(taskId))throw Error('无效的附件任务标识');
   return path.join(root,taskId);

@@ -6,6 +6,7 @@ import {readJson} from '../http-json.js';
 import {log,safeError} from '../log.js';
 import type {BrowserManager} from '../browser/manager.js';
 import type {FeishuCliAuth} from '../feishu-cli/auth.js';
+import {userData} from '../layout.js';
 import {tools,type ToolContext} from './tools.js';
 
 export const mcpToken=(store:Store):string=>store.meta('mcp_token')??store.meta('mcp_token',randomBytes(32).toString('hex'));
@@ -15,7 +16,7 @@ const PROTOCOL='2025-06-18';
  * Identity comes from the thread metadata Codex attaches to every tools/call (_meta.threadId, x-codex-turn-metadata),
  * which the model cannot edit. The thread must belong to a user session and have a task running in it right now.
  */
-export function identify(store:Store,params:any):{context?:Pick<ToolContext,'root'|'workspace'>;error?:string}{
+export function identify(store:Store,params:any):{context?:Pick<ToolContext,'data'|'workspace'>;error?:string}{
   const meta=params?._meta??{},turn=meta['x-codex-turn-metadata']??{};
   const thread=meta.threadId??turn.thread_id;
   if(typeof thread!=='string'||!thread)return {error:'调用没有带线程标识，已拒绝'};
@@ -25,7 +26,7 @@ export function identify(store:Store,params:any):{context?:Pick<ToolContext,'roo
   const task=store.byThread(thread);
   if(!task?.workspace_path)return {error:'当前没有正在执行的飞书任务，已拒绝'};
   if(turn.turn_id&&task.turn_id&&turn.turn_id!==task.turn_id)return {error:'调用不属于当前任务的执行轮次，已拒绝'};
-  return {context:{root:session.workspace_path,workspace:task.workspace_path}};
+  return {context:{data:userData(store,session),workspace:task.workspace_path}};
 }
 
 const same=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};

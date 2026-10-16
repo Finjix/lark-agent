@@ -26,7 +26,7 @@ export interface PendingInteraction {
   summary: string; payload: Record<string, any>;
 }
 export interface IncomingMessage {
-  tenant: string; user: string; chat: string; message: string; text: string;
+  tenant: string; user: string; chat: string; message: string; text: string; createdAt?: number;
   attachments?: IncomingAttachment[]; error?: string;
 }
 export interface IncomingAttachment {kind:'image'|'file'; key:string; name:string;}

@@ -124,7 +124,7 @@ test('a rich-text event is deduplicated, downloaded, and handed to Desktop with 
   await service.receive(message);await service.receive(message);assert.equal(store.list().length,1);
   const task=store.list()[0];store.transition(task.id,'STARTING');await service.start(store.get(task.id));
   assert.equal(downloads,1);assert.equal(submissions,1);assert.equal(store.get(task.id).thread_id,'thread');
-  const dir=inputDirectory(task.id,sessionInputs(store.session(store.get(task.id).session_id).workspace_path));assert.match(dir,/inputs/);assert(dir.startsWith(config.user));
+  const dir=inputDirectory(task.id,sessionInputs(store.session(store.get(task.id).session_id).workspace_path));assert.equal(path.basename(path.dirname(dir)),'input');assert.equal(path.basename(path.dirname(path.dirname(path.dirname(dir)))),'session');assert(dir.startsWith(config.user));
   await removeInputs(task.id,sessionInputs(store.session(store.get(task.id).session_id).workspace_path));store.close();
 });
 

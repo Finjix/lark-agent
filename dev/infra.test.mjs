@@ -2,16 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {Database} from '../dist/storage/sqlite.js';
-import {sessionDirectory} from '../dist/desktop/adapter.js';
 import {RateGate} from '../dist/feishu/delivery.js';
 import {config} from '../dist/config.js';
-
-test('session directory names cannot escape user/ or contain path separators',()=>{
-  const slash=String.fromCharCode(92);
-  const dir=sessionDirectory({id:'id',title:`a${slash}b:c/d..`});
-  assert.equal(path.dirname(dir),config.user);assert.equal(path.basename(dir),'a_b_c_d');
-  assert.equal(path.basename(sessionDirectory({id:'id',title:null})),'飞书用户会话 id');
-});
 
 test('transaction rolls back on error and nests through savepoints',()=>{
   const db=new Database(':memory:');db.exec('CREATE TABLE t(a)');

@@ -32,11 +32,11 @@ test('frame decoder joins a large frame once and handles a header split across c
   assert.deepEqual(got,[{a:1},{b:2}]);
 });
 
-test('Desktop not ready at submission puts the task back in the queue instead of stranding it as UNKNOWN',async()=>{
+test('Desktop not ready at submission fails the task at once instead of queueing it or stranding it as UNKNOWN',async()=>{
   const s=new Store(':memory:'),task=boundUser(s),d=new NativeDesktop(s,()=>'active'),service=new TaskService(s,d);
   await service.start(s.get(task.id));
-  assert.equal(s.get(task.id).status,'QUEUED');assert.equal(s.get(task.id).turn_id,null);
-  // A cancel that arrived while it was starting wins over re-queueing.
+  assert.equal(s.get(task.id).status,'FAILED');assert.equal(s.get(task.id).turn_id,null);assert.match(s.get(task.id).error,/请稍后重新发送/);
+  // A cancel that arrived while it was starting wins over failing.
   const other=s.create(input('third','u2')).task;s.transition(other.id,'STARTING');s.update(other.id,{cancel_requested:1});
   await service.start(s.get(other.id));assert.equal(s.get(other.id).status,'CANCELLED');s.close();
 });

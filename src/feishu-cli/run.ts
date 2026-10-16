@@ -17,7 +17,7 @@ const inherited=['SystemRoot','windir','ComSpec','PATHEXT','PATH','Path','TEMP',
  * Runs the official lark-cli for one user session. The CLI's own login store is a machine-wide keychain (on Windows the registry),
  * so credentials are injected through the environment from user/<session>/feishu-cli instead, and `auth` is handled here.
  */
-export async function runFeishuCli(auth:FeishuCliAuth,root:string,args:string[],cwd?:string):Promise<CliResult>{
+export async function runFeishuCli(auth:FeishuCliAuth,root:string,args:string[],workdir:string=root):Promise<CliResult>{
   if(!config.FEISHU_APP_ID||!config.FEISHU_APP_SECRET)return note('服务未配置飞书应用凭证');
   const [first,second]=args;
   if(first==='auth'){
@@ -41,9 +41,8 @@ export async function runFeishuCli(auth:FeishuCliAuth,root:string,args:string[],
     LARKSUITE_CLI_STRICT_MODE:'user',LARKSUITE_CLI_DEFAULT_AS:'user',LARKSUITE_CLI_CONFIG_DIR:path.join(state,'config'),LARKSUITE_CLI_LOG_DIR:path.join(state,'logs'),
     LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1',LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1'};
   for(const key of inherited)if(process.env[key])env[key]=process.env[key]!;
-  // Relative file arguments resolve against the caller's directory, as long as that stays inside this user's session.
-  const relative=cwd?path.relative(root,path.resolve(cwd)):'..';
-  const workdir=cwd&&!relative.startsWith('..')&&!path.isAbsolute(relative)&&relative.split(path.sep)[0]!=='feishu-cli'?path.resolve(cwd):root;
+  // Relative file arguments resolve inside the task's output directory.
+  await fs.mkdir(workdir,{recursive:true});
   return new Promise(resolve=>{
     const child=spawn(binary,args,{cwd:workdir,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
     let stdout='',stderr='',done=false;

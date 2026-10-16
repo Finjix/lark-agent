@@ -8,6 +8,7 @@ import {DesktopIPC,OutcomeUnknown,NotSubmitted} from './transport.js';
 import {AppTools,callerCandidates,desktopVersion,desktopThreadStatus,discoverToolEndpoint, type CallerContext} from './context.js';
 import {StreamState,turnsOf} from './stream.js';
 import {log,safeError} from '../log.js';
+import {sessionDirectory,taskWorkspace} from '../layout.js';
 
 export const SESSION_INIT_PROMPT='hi';
 
@@ -69,7 +70,7 @@ export class NativeDesktop extends EventEmitter {
         target:{type:'projectless',directoryName:`lark-${session.id}`},
       });
       if(!result.threadId)throw new OutcomeUnknown('Desktop creation returned no ready thread; reconcile before retrying');
-      const directory=session.workspace_path??sessionDirectory(session);
+      const directory=sessionDirectory(this.store,session);
       this.store.bindSession(session.id,result.threadId,directory);
       session.thread_id=result.threadId;session.workspace_path=directory;
       if(session.title)this.store.sessionTitleApplied(session.id,session.title);
@@ -125,7 +126,7 @@ export class NativeDesktop extends EventEmitter {
     this.store.update(task.id,{thread_id:threadId});await this.follow(threadId);
     if(session&&this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST')){
       await this.waitForIdle(threadId);
-      this.store.bindSession(session.id,threadId,sessionDirectory(session));
+      this.store.bindSession(session.id,threadId,sessionDirectory(this.store,session));
     }
   }
   async follow(threadId:string){
@@ -180,15 +181,7 @@ export class NativeDesktop extends EventEmitter {
   close(){this.ready=false;this.ipc?.removeAllListeners('disconnected');this.tools?.removeAllListeners('disconnected');this.ipc?.close();this.tools?.close();this.ipc=undefined;this.tools=undefined;this.owners.clear();this.stream.states.clear();}
 }
 export const sessionLabel=(session:{id:string;title?:string|null})=>session.title??`飞书用户会话 ${session.id}`;
-/** Per-session delivery root under user/, fixed when the session is bound so later renames do not move files. */
-export function sessionDirectory(session:{id:string;title?:string|null}){
-  const name=sessionLabel(session).replace(/[<>:"/\u005c|?*\x00-\x1f]/g,'_').replace(/[. ]+$/,'')||session.id;
-  return path.join(config.user,name);
-}
-export function taskWorkspace(root:string,taskId:string){
-  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(taskId))throw Error('无效的任务标识');
-  return path.join(root,'tasks',taskId);
-}
+export {sessionDirectory,taskWorkspace} from '../layout.js';
 export function taskPrompt(task:Task,store:Store){
   const inputs=store.inputs(task.id);
   if(inputs.some(input=>!input.path))throw Error('附件尚未接收完成');

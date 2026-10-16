@@ -1,7 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {Store} from '../storage/database.js';
 import {sessionInputs} from '../feishu/inputs.js';
-import {NativeDesktop,taskWorkspace,sessionDirectory} from '../desktop/adapter.js';
+import {NativeDesktop} from '../desktop/adapter.js';
+import {taskWorkspace,sessionDirectory} from '../layout.js';
 import {config} from '../config.js';
 import {terminal,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
@@ -10,7 +11,10 @@ import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
 export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
+export const UNAVAILABLE='Codex Desktop 当前不可用，消息未处理，请稍后重新发送。';
+const STALE_GRACE_MS=5000;
 export class TaskService {
+  private startedAt=Date.now();
   private interruptSent=new Set<string>();
   private starting=new Set<string>();
   constructor(public store:Store,public desktop:NativeDesktop,private downloader?:ResourceDownloader){
@@ -32,11 +36,15 @@ export class TaskService {
     }
   }
   async receive(message:IncomingMessage){
+    // Feishu may redeliver events that arrived while this service was not running; those are stale and must not run now.
+    if(message.createdAt&&message.createdAt<this.startedAt-STALE_GRACE_MS){log.info({message:message.message},'忽略服务启动前发送的消息');return;}
     if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(!this.authorized(message)){this.notice(message,config.tenants.length?'当前企业或会话尚未开放机器人使用权限，请联系管理员。':`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
     if(message.error){this.notice(message,message.error);return;}
     if(message.text.trimStart().startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
+    // Nothing is queued while Desktop is down: the user is told at once and sends it again, instead of a backlog running later and answering many times.
+    if(this.desktop.ready===false&&!this.store.taskForMessage(message.tenant,message.message)){this.notice(message,UNAVAILABLE);return;}
     const resources=config.resources.filter(r=>r.regex.test(message.text)).map(r=>r.key);
     const result=this.store.create({tenant_key:message.tenant,user_id:message.user,chat_id:message.chat,source_message_id:message.message,
       instruction:message.text},resources,message.attachments);
@@ -99,7 +107,7 @@ export class TaskService {
         if(!this.downloader)throw Error('附件下载服务不可用');
         this.store.update(task.id,{progress:'正在接收附件'});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
         const owner=this.store.sessionFor(task);await this.refreshSessionName(owner);
-        const root=this.store.reserveWorkspace(owner.id,sessionDirectory(this.store.session(owner.id)!));
+        const root=this.store.reserveWorkspace(owner.id,sessionDirectory(this.store,this.store.session(owner.id)!));
         await prepareInputs(this.store,task,this.downloader,sessionInputs(root));
       }
       const current=this.store.get(task.id)!;
@@ -114,9 +122,9 @@ export class TaskService {
     }catch(e){
       const current=this.store.get(task.id);
       if(e instanceof NotSubmitted){
-        // Nothing reached Desktop. Cancel if asked to, otherwise wait in the queue for Desktop to come back.
+        // Nothing reached Desktop. Cancel if asked to; otherwise fail now rather than run later, when the user has probably sent it again.
         if(current?.cancel_requested)this.store.transition(task.id,'CANCELLED');
-        else this.store.transition(task.id,'QUEUED',{error:'',progress:'等待 Desktop 就绪',started_at:null});
+        else this.store.transition(task.id,'FAILED',{error:UNAVAILABLE,progress:''});
       }else if(e instanceof RpcRejected&&this.store.submission(task.id)&&!current?.turn_id){
         // Desktop explicitly refused the business request, so it is certain nothing is running.
         this.store.transition(task.id,'FAILED',{error:`Desktop 拒绝了请求，任务未执行：${safeError(e)}`});
@@ -132,7 +140,7 @@ export class TaskService {
     if(!view)return;
     if(!task.turn_id){
       const session=task.session_id?this.store.session(task.session_id):undefined;
-      const root=session?session.workspace_path??sessionDirectory(session):cached?.state.projectlessOutputDirectory??cached?.state.cwd;
+      const root=session?sessionDirectory(this.store,session):cached?.state.projectlessOutputDirectory??cached?.state.cwd;
       if(session&&root)this.store.bindSession(session.id,threadId,root);
       this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root,task.id):root)});
     }

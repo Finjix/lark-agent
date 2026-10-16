@@ -60,8 +60,8 @@ class UserBrowser {
     }catch(e){this.notes.push(`download failed: ${safeError(e)}`);}
   }
   /** Commands for one user run strictly one at a time; the idle timer restarts after each. */
-  run(command:string,args:string[]):Promise<string>{
-    const next=this.chain.then(()=>this.execute(command,args),()=>this.execute(command,args)).finally(()=>this.saveSessionCookies());
+  run(command:string,args:string[],outputRoot?:string):Promise<string>{
+    const next=this.chain.then(()=>this.execute(command,args,outputRoot),()=>this.execute(command,args,outputRoot)).finally(()=>this.saveSessionCookies());
     this.chain=next.catch(()=>{});
     return next.finally(()=>{clearTimeout(this.idle);this.idle=setTimeout(()=>{void this.close();},config.BROWSER_IDLE_MS);this.idle.unref();});
   }
@@ -90,14 +90,14 @@ class UserBrowser {
     const body=normalize(text);
     return `${await this.status(page)}\n\nelements:\n${lines.join('\n')||'(none)'}\n\ntext:\n${body.slice(0,TEXT_LIMIT)}${body.length>TEXT_LIMIT?'\n... (truncated, use the text command for the full page)':''}`;
   }
-  private checkOutput(file:string|undefined){
-    if(!file||!path.isAbsolute(file))throw Error('截图路径必须是绝对路径，并位于交付目录下');
-    const resolved=path.resolve(file),inside=path.relative(this.root,resolved);
-    if(inside.startsWith('..')||path.isAbsolute(inside)||inside.split(path.sep)[0]==='browser')throw Error('截图只能保存在用户会话的交付目录下');
+  private checkOutput(file:string|undefined,outputRoot:string|undefined){
+    if(!file||!path.isAbsolute(file)||!outputRoot)throw Error('截图路径必须是绝对路径，并位于交付目录下');
+    const resolved=path.resolve(file),inside=path.relative(outputRoot,resolved);
+    if(inside.startsWith('..')||path.isAbsolute(inside))throw Error('截图只能保存在当前任务的交付目录下');
     if(!/\.(png|jpe?g)$/i.test(resolved))throw Error('截图文件必须是 .png 或 .jpg');
     return resolved;
   }
-  private async execute(command:string,args:string[]):Promise<string>{
+  private async execute(command:string,args:string[],outputRoot?:string):Promise<string>{
     if(command==='close'){await this.close();return 'browser closed (profile and cookies are kept)';}
     if(command==='tabs')return (await Promise.all(this.pages.map(async(p,i)=>`${p===this.current?'*':' '} ${i} ${p.url()} ${await p.title().catch(()=>'')}`))).join('\n')||'(no tabs)';
     if(command==='tab'){
@@ -130,7 +130,7 @@ class UserBrowser {
         return (text??'undefined').slice(0,TEXT_LIMIT*4);
       }
       case 'screenshot':{
-        const file=this.checkOutput(args.find(a=>!a.startsWith('--')));
+        const file=this.checkOutput(args.find(a=>!a.startsWith('--')),outputRoot);
         await fs.mkdir(path.dirname(file),{recursive:true});await page.screenshot({path:file,fullPage:args.includes('--full')});return `saved: ${file}`;
       }
       default:throw Error(`未知命令 ${command}。支持：open snapshot text click fill select press back wait eval screenshot tabs tab close`);
@@ -141,7 +141,7 @@ class UserBrowser {
 /** One lazily launched headless browser per user session, keyed by the session directory. */
 export class BrowserManager {
   private browsers=new Map<string,Promise<UserBrowser>>();private closed=false;
-  async run(root:string,command:string,args:string[]):Promise<string>{
+  async run(root:string,command:string,args:string[],outputRoot?:string):Promise<string>{
     if(this.closed)throw Error('服务正在停止');
     if(command==='close'&&!this.browsers.has(root))return 'browser was not running';
     let pending=this.browsers.get(root);
@@ -149,7 +149,7 @@ export class BrowserManager {
       pending=UserBrowser.launch(root,()=>{this.browsers.delete(root);});this.browsers.set(root,pending);
       pending.catch(e=>{this.browsers.delete(root);log.warn({error:safeError(e)},'浏览器启动失败');});
     }
-    return (await pending).run(command,args);
+    return (await pending).run(command,args,outputRoot);
   }
   async close(){this.closed=true;await Promise.all([...this.browsers.values()].map(p=>p.then(b=>b.close(),()=>{})));}
 }

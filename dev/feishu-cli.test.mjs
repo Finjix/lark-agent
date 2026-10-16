@@ -65,15 +65,14 @@ test('the CLI runs with the user token in its environment, user-only identity, a
   const missing=await runFeishuCli(auth,root,[script]);assert.equal(missing.code,1);assert(missing.stderr.includes('auth login'));
   await fs.mkdir(path.join(root,'feishu-cli'),{recursive:true});
   await fs.writeFile(path.join(root,'feishu-cli','credentials.json'),JSON.stringify({accessToken:'u-live',expiresAt:Date.now()+3600000,savedAt:0}));
-  const inside=path.join(root,'tasks','t1');await fs.mkdir(inside,{recursive:true});
-  const run=async(...args)=>JSON.parse((await runFeishuCli(auth,root,[script,...args.slice(1)],args[0])).stdout);
+  const inside=path.join(root,'output','t1');
+  const run=async(workdir,...args)=>JSON.parse((await runFeishuCli(auth,root,[script,...args],workdir)).stdout);
   const result=await run(inside,'docs','--help');
   assert.equal(result.cwd,inside);assert.deepEqual(result.args,['docs','--help']);
   assert.equal(result.env.LARKSUITE_CLI_USER_ACCESS_TOKEN,'u-live');assert.equal(result.env.LARKSUITE_CLI_STRICT_MODE,'user');assert.equal(result.env.LARKSUITE_CLI_APP_ID,'cli_test');
   assert(result.env.LARKSUITE_CLI_CONFIG_DIR.startsWith(path.join(root,'feishu-cli')));assert(result.env.USERPROFILE.startsWith(path.join(root,'feishu-cli')));
   assert.equal(result.env.SECRET_SERVICE_VALUE,undefined,'the service environment is not passed on');
-  assert.equal((await run(os.tmpdir(),'x')).cwd,root,'a directory outside the session falls back to the session root');
-  assert.equal((await run(path.join(root,'feishu-cli'),'x')).cwd,root,'the credential directory is never a working directory');
+  assert.equal((await run(undefined,'x')).cwd,root,'without a task directory the user data directory is used');
   for(const bad of [['config','show'],['--profile','x','docs'],['auth','token']]){assert.equal((await runFeishuCli(auth,root,bad)).code,1);}
   delete process.env.SECRET_SERVICE_VALUE;
 }));

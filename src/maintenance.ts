@@ -5,8 +5,8 @@ import {Store} from './storage/database.js';
 import {NativeDesktop} from './desktop/adapter.js';
 import {terminal} from './types.js';
 import {log,safeError} from './log.js';
-import {removeInputs,sessionInputs} from './feishu/inputs.js';
-import {taskWorkspace} from './desktop/adapter.js';
+import {removeInputs} from './feishu/inputs.js';
+import {taskWorkspace,legacyTaskWorkspace,sessionInputs} from './layout.js';
 export async function cleanup(store:Store,desktop:NativeDesktop){
   for(const task of store.list()){
     if(!terminal(task.status)||task.cleaned_at||!task.finished_at||Date.now()-task.finished_at<config.TASK_RETENTION_DAYS*86400000)continue;
@@ -19,7 +19,8 @@ export async function cleanup(store:Store,desktop:NativeDesktop){
         try{actual=await fs.realpath(target);}catch(e:any){if(e.code!=='ENOENT')throw e;}
         const session=task.session_id?store.session(task.session_id):undefined;
         if(actual&&session){
-          if(!session.workspace_path||actual!==target||actual!==taskWorkspace(await fs.realpath(session.workspace_path),task.id))throw Error('目录不满足会话任务所有权检查，跳过清理');
+          const sessionRoot=session.workspace_path?await fs.realpath(session.workspace_path):'';
+          if(!session.workspace_path||actual!==target||![taskWorkspace,legacyTaskWorkspace].some(own=>actual===own(sessionRoot,task.id)))throw Error('目录不满足会话任务所有权检查，跳过清理');
           // A user session stays open; only this message's output directory expires.
           await fs.rm(actual,{recursive:true,force:false});
         }else if(actual){

@@ -10,21 +10,22 @@ import {McpServer,identify,mcpToken} from '../dist/mcp/server.js';
 import {registerMcp,unregisterMcp,mcpRegistered} from '../dist/mcp/register.js';
 import {tools} from '../dist/mcp/tools.js';
 import {toolInstructions} from '../dist/desktop/adapter.js';
+import {sessionDirectory,taskWorkspace,userData} from '../dist/layout.js';
 
 const input=u=>({tenant_key:'t',user_id:u,chat_id:'c',source_message_id:`m-${u}`,instruction:'x'});
 /** A user session bound to a Desktop thread with a task running in turn `turn`. */
 function user(store,name,thread,turn='turn-1'){
-  const task=store.create(input(name)).task,session=store.sessionFor(task);
-  store.bindSession(session.id,thread,path.join(config.user,name));
-  const workspace=path.join(config.user,name,'tasks',task.id);
+  const task=store.create(input(name)).task,created=store.sessionFor(task);store.nameSession(created.id,name);
+  const session=store.session(created.id);store.bindSession(session.id,thread,sessionDirectory(store,session));
+  const bound=store.session(session.id),workspace=taskWorkspace(bound.workspace_path,task.id);
   store.transition(task.id,'STARTING',{thread_id:thread,workspace_path:workspace,turn_id:turn});
-  return {task,session:store.session(session.id),workspace};
+  return {task,session:bound,workspace,data:userData(store,bound)};
 }
 const call=(thread,turn,name,args={})=>({name,arguments:args,_meta:{threadId:thread,'x-codex-turn-metadata':{thread_id:thread,turn_id:turn}}});
 
 test('the caller is identified from Codex thread metadata, and anything else is refused',()=>{
   const store=new Store(':memory:'),a=user(store,'a','thread-a'),b=user(store,'b','thread-b');
-  assert.equal(identify(store,call('thread-a','turn-1','x')).context.root,a.session.workspace_path);
+  assert.equal(identify(store,call('thread-a','turn-1','x')).context.data,a.data);
   assert.equal(identify(store,call('thread-b','turn-1','x')).context.workspace,b.workspace);
   assert.match(identify(store,{name:'x',arguments:{}}).error,/线程标识/,'no metadata');
   assert.match(identify(store,{name:'x',arguments:{user:'b',key:'thread-b'}}).error,/线程标识/,'arguments cannot stand in for the metadata');
@@ -58,7 +59,7 @@ test('MCP endpoint: auth, loopback only, initialize, tool list, and per-user too
   const ok=await run(call('thread-a','turn-1','browser_open',{url:'https://example.com'}));
   assert.equal(ok.isError,false);assert.equal(ok.content[0].text,'ok open');
   await run(call('thread-b','turn-1','browser_click',{target:'3'}));
-  assert.deepEqual(seen.map(x=>[x.root,x.command]),[[a.session.workspace_path,'open'],[b.session.workspace_path,'click']],'each call lands in its own user\'s browser');
+  assert.deepEqual(seen.map(x=>[x.root,x.command]),[[a.data,'open'],[b.data,'click']],'each call lands in its own user\'s browser');
   const shot=await run(call('thread-a','turn-1','browser_screenshot',{name:'..\\..\\evil.png'}));
   assert.equal(shot.isError,false);const [file]=seen.at(-1).args;assert.equal(path.dirname(file),a.workspace,'screenshots go to the task directory whatever name is given');
   const denied=await run({name:'browser_open',arguments:{url:'https://example.com'},_meta:{}});
@@ -73,12 +74,12 @@ test('feishu_cli runs in the caller\'s own session with the task directory as wo
   const store=new Store(':memory:'),a=user(store,'a','thread-a');t.after(()=>{store.close();Object.assign(config,{FEISHU_APP_ID:saved.id,FEISHU_APP_SECRET:saved.secret,FEISHU_CLI_PATH:saved.cli});});
   const tool=tools.find(x=>x.name==='feishu_cli');assert(tool.enabled());
   const script=path.join(os.tmpdir(),`probe-${process.pid}.mjs`);await fs.writeFile(script,'console.log(JSON.stringify({cwd:process.cwd(),token:process.env.LARKSUITE_CLI_USER_ACCESS_TOKEN}))');t.after(()=>fs.rm(script,{force:true}));
-  await fs.mkdir(path.join(a.session.workspace_path,'feishu-cli'),{recursive:true});await fs.mkdir(a.workspace,{recursive:true});
-  await fs.writeFile(path.join(a.session.workspace_path,'feishu-cli','credentials.json'),JSON.stringify({accessToken:'u-a',expiresAt:Date.now()+3600000,savedAt:0}));
+  await fs.mkdir(path.join(a.data,'feishu-cli'),{recursive:true});await fs.mkdir(a.workspace,{recursive:true});
+  await fs.writeFile(path.join(a.data,'feishu-cli','credentials.json'),JSON.stringify({accessToken:'u-a',expiresAt:Date.now()+3600000,savedAt:0}));
   const {FeishuCliAuth}=await import('../dist/feishu-cli/auth.js');
-  const result=await tool.run({root:a.session.workspace_path,workspace:a.workspace,feishu:new FeishuCliAuth()},{args:[script]});
+  const result=await tool.run({data:a.data,workspace:a.workspace,feishu:new FeishuCliAuth()},{args:[script]});
   assert.equal(result.isError,false);const out=JSON.parse(result.text);assert.equal(out.cwd,a.workspace);assert.equal(out.token,'u-a');
-  await assert.rejects(tool.run({root:a.session.workspace_path,workspace:a.workspace,feishu:{}},{args:'docs'}),/args/);
+  await assert.rejects(tool.run({data:a.data,workspace:a.workspace,feishu:{}},{args:'docs'}),/args/);
 });
 
 test('registration writes one marked block into Codex config.toml and nothing else',async t=>{

@@ -49,6 +49,7 @@ export class Store {
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
           thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,UNIQUE(tenant_key,user_id));
+        CREATE TABLE IF NOT EXISTS user_dirs (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,name TEXT NOT NULL UNIQUE COLLATE NOCASE,created_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
         PRAGMA user_version = 4;
       `);
       if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
@@ -71,6 +72,19 @@ export class Store {
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
+  /** The user's directory name under user/: allocated once and never changed; another user with the same name gets 2, 3, ... appended. */
+  userDirName(tenant:string,user:string,wanted:string):string{
+    return this.db.transaction(()=>{
+      const existing=this.db.prepare('SELECT name FROM user_dirs WHERE tenant_key=? AND user_id=?').get(tenant,user) as {name:string}|undefined;
+      if(existing)return existing.name;
+      for(let n=1;;n++){
+        const name=n===1?wanted:`${wanted}${n}`;
+        const taken=this.db.prepare('SELECT 1 FROM user_dirs WHERE name=?').get(name);
+        if(!taken){this.db.prepare('INSERT INTO user_dirs(tenant_key,user_id,name,created_at) VALUES(?,?,?,?)').run(tenant,user,name,Date.now());return name;}
+      }
+    })();
+  }
+  workspaceTaken(directory:string,exceptSessionId:string):boolean{return !!this.db.prepare('SELECT 1 FROM user_sessions WHERE workspace_path=? AND id<>?').get(directory,exceptSessionId);}
   sessionByThread(threadId:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE thread_id=? AND retired_at IS NULL').get(threadId) as UserSession|undefined;}
   sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){
@@ -116,6 +130,7 @@ export class Store {
   /** Started but unfinished tasks. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would keep getting slower. */
   active():Task[]{return this.db.prepare("SELECT * FROM tasks WHERE status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at,rowid").all() as unknown as Task[];}
   recent(tenant:string,user:string,limit:number):Task[]{return this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND user_id=? ORDER BY created_at DESC,rowid DESC LIMIT ?').all(tenant,user,limit) as unknown as Task[];}
+  taskForMessage(tenant:string,messageId:string):Task|undefined{return this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(tenant,messageId) as Task|undefined;}
   create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[],attachments:IncomingAttachment[]=[]){
     return this.db.transaction(()=>{
       const existing=this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(input.tenant_key,input.source_message_id) as Task|undefined;

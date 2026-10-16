@@ -23,9 +23,9 @@ test('each user session gets its own headless profile: cookies never cross over'
   assert((await fs.stat(path.join(a,'browser'))).isDirectory()&&(await fs.stat(path.join(b,'browser'))).isDirectory());
   const snap=await manager.run(a,'snapshot',[]);assert(/\[1\] a/.test(snap)&&/\[2\] input/.test(snap));
   await manager.run(a,'fill',['2','hello']);assert((await manager.run(a,'snapshot',[])).includes('value="hello"'));
-  const shot=path.join(a,'tasks','x','shot.png');assert.equal(await manager.run(a,'screenshot',[shot]),`saved: ${shot}`);assert((await fs.stat(shot)).size>0);
-  await assert.rejects(manager.run(a,'screenshot',[path.join(b,'x.png')]),/交付目录/);
-  await assert.rejects(manager.run(a,'screenshot',[path.join(a,'browser','x.png')]),/交付目录/);
+  const out=path.join(root,'a-output'),shot=path.join(out,'t1','shot.png');assert.equal(await manager.run(a,'screenshot',[shot],out),`saved: ${shot}`);assert((await fs.stat(shot)).size>0);
+  await assert.rejects(manager.run(a,'screenshot',[path.join(b,'x.png')],out),/交付目录/,'outside the task output directory');
+  await assert.rejects(manager.run(a,'screenshot',[shot]),/交付目录/,'no output directory, no screenshot');
   await assert.rejects(manager.run(a,'open',['file:///C:/Windows/win.ini']),/http/);
   // Cookies survive a browser restart because the profile is on disk.
   await manager.run(a,'close',[]);
