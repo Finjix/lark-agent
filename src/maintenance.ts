@@ -5,7 +5,7 @@ import {Store} from './storage/database.js';
 import {NativeDesktop} from './desktop/adapter.js';
 import {terminal} from './types.js';
 import {log,safeError} from './log.js';
-import {removeInputs} from './feishu/inputs.js';
+import {removeInputs,sessionInputs} from './feishu/inputs.js';
 import {taskWorkspace} from './desktop/adapter.js';
 export async function cleanup(store:Store,desktop:NativeDesktop){
   for(const task of store.list()){
@@ -25,7 +25,8 @@ export async function cleanup(store:Store,desktop:NativeDesktop){
           await desktop.archive(task.thread_id);await fs.rm(actual,{recursive:true,force:false});
         }
       }
-      await removeInputs(task.id);
+      const session=task.session_id?store.session(task.session_id):undefined;
+      if(session?.workspace_path)await removeInputs(task.id,sessionInputs(session.workspace_path));
       store.db.prepare('UPDATE task_generated_images SET base64=NULL WHERE task_id=?').run(task.id);
       store.update(task.id,{cleaned_at:Date.now()});store.event(task.id,'CLEANED',{});
     }catch(e){log.warn({taskId:task.id,error:safeError(e)},'保留策略清理已跳过');}

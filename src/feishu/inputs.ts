@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {config} from '../config.js';
 import {Store} from '../storage/database.js';
 import type {IncomingAttachment,Task} from '../types.js';
 
@@ -9,8 +8,9 @@ export interface ResourceDownloader {
   downloadResource(messageId:string,attachment:IncomingAttachment,destination:string):Promise<{size:number;contentType:string}>;
   getUserName?(userId:string):Promise<string|undefined>;
 }
-export const inputRoot=path.join(config.data,'inputs');
-export function inputDirectory(taskId:string,root=inputRoot){
+/** Inbound attachments live beside outputs: user/<session>/inputs/<taskId>. */
+export const sessionInputs=(sessionRoot:string)=>path.join(sessionRoot,'inputs');
+export function inputDirectory(taskId:string,root:string){
   if(!/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(taskId))throw Error('无效的附件任务标识');
   return path.join(root,taskId);
 }
@@ -25,7 +25,7 @@ async function ownedDirectory(taskId:string,root:string,create=false){
   if(actual!==path.join(actualRoot,taskId))throw Error('附件目录不属于当前任务');
   return actual;
 }
-export async function prepareInputs(store:Store,task:Task,downloader:ResourceDownloader,root=inputRoot){
+export async function prepareInputs(store:Store,task:Task,downloader:ResourceDownloader,root:string){
   const inputs=store.inputs(task.id);if(!inputs.length)return;
   const directory=await ownedDirectory(task.id,root,true);
   for(const input of inputs){
@@ -48,7 +48,7 @@ export async function prepareInputs(store:Store,task:Task,downloader:ResourceDow
     }finally{await fs.rm(temporary,{force:true});}
   }
 }
-export async function removeInputs(taskId:string,root=inputRoot){
+export async function removeInputs(taskId:string,root:string){
   let directory:string;try{directory=await ownedDirectory(taskId,root);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
   await fs.rm(directory,{recursive:true,force:false});
 }

@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {Store} from '../storage/database.js';
-import {NativeDesktop,taskWorkspace} from '../desktop/adapter.js';
+import {sessionInputs} from '../feishu/inputs.js';
+import {NativeDesktop,taskWorkspace,sessionDirectory} from '../desktop/adapter.js';
 import {config} from '../config.js';
 import {terminal,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
@@ -91,7 +92,9 @@ export class TaskService {
       if(this.store.inputs(task.id).length){
         if(!this.downloader)throw Error('附件下载服务不可用');
         this.store.update(task.id,{progress:'正在接收附件'});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
-        await prepareInputs(this.store,task,this.downloader);
+        const owner=this.store.sessionFor(task);await this.refreshSessionName(owner);
+        const root=this.store.reserveWorkspace(owner.id,sessionDirectory(this.store.session(owner.id)!));
+        await prepareInputs(this.store,task,this.downloader,sessionInputs(root));
       }
       const current=this.store.get(task.id)!;
       if(current.cancel_requested||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,'CANCELLED');return;}
@@ -113,7 +116,7 @@ export class TaskService {
     if(!view)return;
     if(!task.turn_id){
       const session=task.session_id?this.store.session(task.session_id):undefined;
-      const root=session?.workspace_path??cached?.state.projectlessOutputDirectory??cached?.state.cwd;
+      const root=session?session.workspace_path??sessionDirectory(session):cached?.state.projectlessOutputDirectory??cached?.state.cwd;
       if(session&&root)this.store.bindSession(session.id,threadId,root);
       this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root,task.id):root)});
     }

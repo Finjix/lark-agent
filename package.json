@@ -3,13 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": "24.21.0" },
+  "engines": { "node": ">=24" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "doctor": "node dist/main.js doctor",
-    "test": "npm run build && node --test tests/*.test.mjs",
-    "pack:offline": "node scripts/pack.mjs"
+    "test": "npm run build && node --import ./dev/setup.mjs --test dev/*.test.mjs"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.75.0",

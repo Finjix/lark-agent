@@ -9,7 +9,8 @@ import Database from 'better-sqlite3';
 import {Store} from '../dist/storage/database.js';
 import {incomingMessage} from '../dist/feishu/incoming.js';
 import {FeishuClient,MAX_INPUT_BYTES,downloadError} from '../dist/feishu/client.js';
-import {prepareInputs,removeInputs,inputDirectory,inputFilename} from '../dist/feishu/inputs.js';
+import {config} from '../dist/config.js';
+import {prepareInputs,removeInputs,inputDirectory,inputFilename,sessionInputs} from '../dist/feishu/inputs.js';
 import {taskPrompt,taskRequest} from '../dist/desktop/adapter.js';
 import {TaskService} from '../dist/tasks/service.js';
 
@@ -123,7 +124,8 @@ test('a rich-text event is deduplicated, downloaded, and handed to Desktop with 
   await service.receive(message);await service.receive(message);assert.equal(store.list().length,1);
   const task=store.list()[0];store.transition(task.id,'STARTING');await service.start(store.get(task.id));
   assert.equal(downloads,1);assert.equal(submissions,1);assert.equal(store.get(task.id).thread_id,'thread');
-  await removeInputs(task.id);store.close();
+  const dir=inputDirectory(task.id,sessionInputs(store.session(store.get(task.id).session_id).workspace_path));assert.match(dir,/inputs/);assert(dir.startsWith(config.user));
+  await removeInputs(task.id,sessionInputs(store.session(store.get(task.id).session_id).workspace_path));store.close();
 });
 
 test('failed and cancelled downloads do not submit a Desktop task, and partial files are removed',async()=>{
@@ -132,11 +134,12 @@ test('failed and cancelled downloads do not submit a Desktop task, and partial f
   const service=new TaskService(store,d,{downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'partial');throw Error('缺少 im:resource 权限');}});
   store.transition(task.id,'STARTING');await service.start(store.get(task.id));
   assert.equal(store.get(task.id).status,'FAILED');assert.match(store.get(task.id).error,/im:resource/);assert.equal(submissions,0);
-  const folder=inputDirectory(task.id);assert.deepEqual(await fs.readdir(folder),[]);await removeInputs(task.id);
+  const rootOf=t=>sessionInputs(store.session(store.get(t.id).session_id).workspace_path);
+  const folder=inputDirectory(task.id,rootOf(task));assert.deepEqual(await fs.readdir(folder),[]);await removeInputs(task.id,rootOf(task));
   const cancelled=store.create({...input,source_message_id:'cancelled'},[],[image]).task;
   service.downloader={downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'data');store.update(cancelled.id,{cancel_requested:1});return {size:4,contentType:'image/png'};}};
   store.transition(cancelled.id,'STARTING');await service.start(store.get(cancelled.id));
-  assert.equal(store.get(cancelled.id).status,'CANCELLED');assert.equal(submissions,0);await removeInputs(cancelled.id);store.close();
+  assert.equal(store.get(cancelled.id).status,'CANCELLED');assert.equal(submissions,0);await removeInputs(cancelled.id,rootOf(cancelled));store.close();
 });
 
 test('reconciliation retries only attachment preparation that has not reached Desktop submission',async()=>{

@@ -20,7 +20,7 @@ const raw = schema.parse(process.env);
 const list=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);
 const locks = z.record(z.string(),z.string()).parse(JSON.parse(raw.RESOURCE_LOCKS));
 export const config = {...raw, root, database: path.resolve(root,raw.DATABASE_PATH),
-  data:path.join(root,'data'), codexHome:process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),
+  data:path.join(root,'data'), user:path.join(root,'user'), codexHome:process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),
   users:list(raw.ALLOWED_USERS), admins:list(raw.ADMIN_USERS), chats:list(raw.ALLOWED_CHATS), tenants:list(raw.ALLOWED_TENANTS),
   versions:list(raw.DESKTOP_SUPPORTED_VERSIONS), resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
 };

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
+import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
 import {NativeDesktop,taskPrompt,taskWorkspace,SESSION_INIT_PROMPT} from '../dist/desktop/adapter.js';
 import {TaskService} from '../dist/tasks/service.js';
@@ -31,6 +32,7 @@ test('Desktop creates one user thread and sends subsequent messages to that same
   const a=s.create(input()).task;s.sessionFor(a);const first=await desktop.startTask(s.get(a.id));
   const b=s.create(input('two')).task;s.sessionFor(b);const second=await desktop.startTask(s.get(b.id));
   assert.equal(first.threadId,second.threadId);assert.notEqual(first.workspace,second.workspace);
+  assert(first.workspace.startsWith(config.user+path.sep)&&second.workspace.startsWith(first.workspace.split('tasks')[0]),'outputs live under user/<session name>/tasks');
   assert.deepEqual(calls.map(c=>c.name),['create_thread','thread-follower-start-turn','thread-follower-start-turn']);
   assert.equal(calls[0].args.prompt,SESSION_INIT_PROMPT);
   assert.equal(calls[1].args.turnStart.request.input[0].text,'one');

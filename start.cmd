@@ -1,5 +1,10 @@
 @echo off
-setlocal
 cd /d "%~dp0"
-"%~dp0runtime\node\node.exe" "%~dp0dist\main.js" %*
-if errorlevel 1 pause
+if not exist node_modules call npm ci || goto :fail
+call npm run build || goto :fail
+node dist\main.js %*
+if errorlevel 1 goto :fail
+exit /b 0
+:fail
+pause
+exit /b 1

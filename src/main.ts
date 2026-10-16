@@ -31,7 +31,7 @@ async function main(){
     const file=path.join(config.data,`backup-${Date.now()}.sqlite`);await store.db.backup(file);store.close();console.log(file);return;
   }
   if(action==='doctor'){
-    const checks:any={runtime:{ok:process.version==='v24.21.0'&&process.arch==='x64',version:process.version,executable:process.execPath},
+    const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
       sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
     try{checks.desktop=await desktop.probe();}catch(e){checks.desktop={ready:false,error:safeError(e)};}
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
