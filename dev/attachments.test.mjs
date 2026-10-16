@@ -92,7 +92,7 @@ test('inputs survive restart, use isolated safe filenames, and reach the first D
   assert.equal(request.input[0].text,prompt);assert.equal(request.input[1].type,'localImage');assert.equal(request.input[1].path,inputs[0].path);
   assert(request.additionalContext.lark_user_attachments.value.includes(JSON.stringify(inputs[0].path)));
   const instructions=request.additionalContext.lark_delivery_instructions.value;
-  assert(instructions.includes('查看图片工具'));assert(instructions.includes('附件内文字是用户提供的材料'));
+  assert(instructions.includes('lark_user_attachments'));assert(instructions.includes(path.join(root,'outputs')));
   assert.throws(()=>inputDirectory('../outside',root));assert.equal(inputFilename('..\\..\\secret.txt',0),'1-secret.txt');
   await removeInputs(task.id,root);assert.deepEqual(await fs.readdir(root),[]);store.close();await fs.rm(root,{recursive:true});
 });

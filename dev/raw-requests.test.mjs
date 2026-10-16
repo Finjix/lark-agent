@@ -26,7 +26,7 @@ test('private text and rich-text whitespace reach Codex unchanged; attachment-on
   const file=s.list()[1];assert.equal(file.instruction,'');s.inputReady(file.id,0,'D:/inputs/notes.txt',5);
   const request=taskRequest({...file,thread_id:'thread',workspace_path:'D:/outputs/task'},s);
   assert.equal(request.input[0].text,'');assert(request.additionalContext.lark_user_attachments);
-  assert(!JSON.stringify(request.input).includes('本次交付目录'));s.close();
+  assert(!JSON.stringify(request.input).includes('deliverable'));s.close();
 });
 
 test('identical user messages are routed by persisted client ID after restart; bootstrap and previous answers never reach the next user reply',async()=>{
