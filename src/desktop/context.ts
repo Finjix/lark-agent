@@ -54,7 +54,8 @@ export class AppTools extends FramedPipe {
   }
 }
 export async function discoverToolEndpoint(){
-  const candidates=fs.readdirSync('\\\\.\\pipe\\').filter(x=>/^codex-browser-use-[0-9a-f-]+$/.test(x));
+  // Older Desktop builds serve the codex_app tools on codex-browser-use-*, newer ones (26.1013) on codex-app-tools-*; the tool check below picks the right one.
+  const candidates=fs.readdirSync('\\\\.\\pipe\\').filter(x=>/^codex-(browser-use|app-tools)-[0-9a-f-]+$/.test(x));
   const results=await Promise.allSettled(candidates.map(async name=>{
     const pipe=new FramedPipe('\\\\.\\pipe\\'+name,1500);
     try{await pipe.connect();const r=await pipe.roundTrip({jsonrpc:'2.0',id:randomUUID(),method:'tools/list',params:{threadStartKind:'all'}},1500);
