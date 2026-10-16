@@ -22,6 +22,7 @@ test('private text and rich-text whitespace reach Codex unchanged; attachment-on
   assert.equal(taskPrompt(s.list()[0],s),input('m').instruction);
   const rich=incomingMessage({...event,message:{...event.message,message_type:'post',content:JSON.stringify({title:'',content:[[{tag:'text',text:'  第一行  '}],[{tag:'text',text:''}],[{tag:'text',text:'第三行\n'}]]})}},'bot');
   assert.equal(rich.text,'  第一行  \n\n第三行\n');
+  s.transition(s.list()[0].id,'COMPLETED');
   await service.receive({...incoming,message:'file-only',text:'',attachments:[{kind:'file',key:'key',name:'notes.txt'}]});
   const file=s.list()[1];assert.equal(file.instruction,'');s.inputReady(file.id,0,'D:/inputs/notes.txt',5);
   const request=taskRequest({...file,thread_id:'thread',workspace_path:'D:/outputs/task'},s);

@@ -106,3 +106,16 @@ test('v3 migration preserves file artifacts while adding image metadata and imag
   client.sdk.im.image.create=async({data})=>{received={type:data.image_type,bytes:Buffer.concat(await Array.fromAsync(data.image))};return {code:0,data:{image_key:'img-test'}};};
   assert.deepEqual(await client.uploadImage(source),{image_key:'img-test'});assert.deepEqual(received,{type:'message',bytes:png});client.close();await fs.rm(root,{recursive:true});
 });
+
+test('a reply that links the generated image by its cache path does not raise a rejection beside the staged copy',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-image-link-')),oldHome=config.codexHome;config.codexHome=root;
+  const store=new Store(':memory:'),client=fakeFeishu(),delivery=new Delivery(store,client);
+  try{
+    const source=path.join(root,'generated_images','thread',`${image.id}.png`);await fs.mkdir(path.dirname(source),{recursive:true});await fs.writeFile(source,png);
+    const task=store.create(input).task;store.recordImages(task.id,[{id:image.id,savedPath:source,base64:null}]);
+    store.transition(task.id,'COMPLETED',{thread_id:'thread',workspace_path:path.join(root,'workspace'),result:`![番薯](${source})`});
+    await delivery.tick();await delivery.tick();await delivery.tick();
+    assert.equal(store.db.prepare("SELECT count(*) n FROM delivery_outbox WHERE kind='NOTICE'").get().n,0,'no "附件未发送" notice');
+    assert.equal(client.sent.filter(x=>x.type==='image').length,1,'the image is still sent, once');
+  }finally{config.codexHome=oldHome;await delivery.stop();store.close();await fs.rm(root,{recursive:true});}
+});

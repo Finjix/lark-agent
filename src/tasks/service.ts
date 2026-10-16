@@ -13,7 +13,8 @@ import {authorized} from '../access.js';
 
 export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
 export const UNAVAILABLE=BOT_DOWN;
-const STALE_GRACE_MS=5000;
+// Clock skew allowance for the start check, and how late a message may arrive: live ones take a second or two, Feishu's redeliveries of what was missed while the service was down take much longer.
+const STALE_GRACE_MS=1000,MAX_DELIVERY_LAG_MS=30000;
 export class TaskService {
   private startedAt=Date.now();
   private interruptSent=new Set<string>();
@@ -38,12 +39,15 @@ export class TaskService {
   }
   async receive(message:IncomingMessage){
     // Feishu may redeliver events that arrived while this service was not running; those are stale and must not run now.
-    if(message.createdAt&&message.createdAt<this.startedAt-STALE_GRACE_MS){log.info({message:message.message},'忽略服务启动前发送的消息');return;}
+    if(message.createdAt&&(message.createdAt<this.startedAt-STALE_GRACE_MS||Date.now()-message.createdAt>MAX_DELIVERY_LAG_MS)){log.info({message:message.message,lagMs:Date.now()-message.createdAt},'忽略服务不可用期间发送、事后才送达的消息');return;}
     if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(!this.authorized(message)){this.notice(message,config.tenants.length?'当前企业或会话尚未开放机器人使用权限，请联系管理员。':`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
     if(message.error){this.notice(message,message.error);return;}
     if(message.text.trimStart().startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
+    // One input runs at a time. Anything sent while the user's previous input is still unfinished gets no result back, so it is not an input at all:
+    // it is dropped without a reply and never queued. (A redelivered event of the message already running lands here too and is equally harmless.)
+    if(this.store.busy(message.tenant,message.user)){log.info({message:message.message,user:message.user},'忽略执行期间收到的输入');return;}
     // Nothing is queued while Desktop is down: the user is told at once and sends it again, instead of a backlog running later and answering many times.
     if(this.desktop.ready===false&&!this.store.taskForMessage(message.tenant,message.message)){this.notice(message,UNAVAILABLE);return;}
     const resources=config.resources.filter(r=>r.regex.test(message.text)).map(r=>r.key);

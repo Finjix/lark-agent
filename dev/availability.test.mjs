@@ -23,10 +23,10 @@ test('while Desktop is unavailable nothing is queued; the user gets one plain re
   store.close();
 });
 
-test('with Desktop ready nothing extra is sent, even for several messages from one user',async()=>{
+test('with Desktop ready nothing extra is sent, for one user or several',async()=>{
   const {store,service}=setup(true);
-  await service.receive(message('a1'));await service.receive(message('a2'));await service.receive(message('a3'));await service.receive(message('b1','u2'));
-  assert.equal(store.list().length,4);assert.equal(notices(store).length,0);
+  await service.receive(message('a1'));await service.receive(message('b1','u2'));await service.receive(message('c1','u3'));
+  assert.equal(store.list().length,3);assert.equal(notices(store).length,0);
   store.close();
 });
 
@@ -41,7 +41,7 @@ test('messages sent before this service started are ignored, later ones run',asy
   const {store,service}=setup(true),now=Date.now();
   await service.receive(message('old',undefined,{createdAt:now-60000}));
   assert.equal(store.list().length,0);assert.equal(notices(store).length,0,'silent: it is a stale redelivery, not a new request');
-  await service.receive(message('fresh',undefined,{createdAt:now}));await service.receive(message('unknown-age'));
+  await service.receive(message('fresh',undefined,{createdAt:now}));await service.receive(message('unknown-age','u2'));
   assert.equal(store.list().length,2);
   store.close();
 });
@@ -123,4 +123,51 @@ test('on start, tasks that never sent their input are cancelled silently; ones t
   assert.equal(store.get(unsent.id).status,'CANCELLED');assert.equal(store.get(sent.id).status,'UNKNOWN');
   assert(!store.due().some(r=>r.task_id===unsent.id),'and says nothing about it');
   store.close();
+});
+
+test('the bot-down reply is that sentence alone, with no "执行失败" after it',async()=>{
+  const {renderTask}=await import('../dist/feishu/cards.js'),{BOT_DOWN}=await import('../dist/types.js');
+  assert.equal(renderTask({status:'FAILED',progress:'',result:'',error:BOT_DOWN}),BOT_DOWN);
+  assert.equal(renderTask({status:'UNKNOWN',progress:'',result:'',error:BOT_DOWN}),BOT_DOWN);
+  assert(renderTask({status:'FAILED',progress:'',result:'',error:'模型出错'}).endsWith('执行失败'),'other failures keep their label');
+});
+
+test('a chat no Desktop window has loaded is opened before a task is sent, but never by background following',async()=>{
+  const {NativeDesktop}=await import('../dist/desktop/adapter.js'),{RpcRejected}=await import('../dist/desktop/transport.js');
+  const make=()=>{
+    const store=new Store(':memory:'),d=new NativeDesktop(store),calls=[];let loaded=false;
+    Object.assign(d,{ready:true,openRetryMs:1,tools:{call:async(tool)=>{calls.push(tool);if(tool==='navigate_to_codex_page')loaded=true;return {};}},
+      ipc:{follow(){},request:async(method)=>{if(method==='thread-owner-discovery'){if(!loaded)throw new RpcRejected('no-client-found');return {handledByClientId:'win'};}return {};}}});
+    return {store,d,calls};
+  };
+  const a=make();await a.d.follow('t',true);
+  assert.deepEqual(a.calls,['read_thread','navigate_to_codex_page']);assert.equal(a.d.owners.get('t'),'win');a.store.close();
+  const b=make();await assert.rejects(b.d.follow('t'),/no-client-found/);assert(!b.calls.includes('navigate_to_codex_page'),'reconcile and refresh never move the user\'s window');b.store.close();
+});
+
+test('a message Feishu delivers long after it was sent is stale even if it was sent just after the service started',async()=>{
+  const {store,service}=setup(true),now=Date.now();
+  await service.receive(message('late',undefined,{createdAt:now-50000}));
+  assert.equal(store.list().length,0);assert.equal(notices(store).length,0);
+  await service.receive(message('live',undefined,{createdAt:now-500}));assert.equal(store.list().length,1,'a message sent after the start with a normal delay still runs');
+  store.close();
+});
+
+test('only one input runs at a time: anything sent while the previous one is unfinished is dropped silently, and works again once it ends',async()=>{
+  const {store,service}=setup(true);
+  await service.receive(message('first'));assert.equal(store.list().length,1);
+  await service.receive(message('second'));await service.receive(message('third','u1',{attachments:[{kind:'file',key:'k',name:'a.pdf'}]}));
+  assert.equal(store.list().length,1,'nothing is queued');assert.equal(notices(store).length,0,'and the user hears nothing');
+  await service.receive(message('other-user','u2'));assert.equal(store.list().length,2,'another user is not affected');
+  store.transition(store.list()[0].id,'RUNNING',{started_at:Date.now()});await service.receive(message('while-running'));assert.equal(store.list().length,2,'still dropped while running');
+  store.transition(store.list()[0].id,'COMPLETED');await service.receive(message('after'));assert.equal(store.list().length,3,'accepted again once the result is back');
+  await service.receive({...message('cmd'),text:'/tasks'});assert(notices(store).length>0,'commands still work while a task runs');
+  store.close();
+});
+
+test('a web address in an image link stays a plain link, so the reply is never an empty "done"',async()=>{
+  const {renderTask}=await import('../dist/feishu/cards.js');
+  const text=renderTask({status:'COMPLETED',progress:'',result:'![蓝色图片](https://example.com/a.png?x=1&y=2)',error:''});
+  assert.equal(text,'[蓝色图片](https://example.com/a.png?x=1&y=2)');
+  assert.equal(renderTask({status:'COMPLETED',progress:'',result:'![x](data:image/png;base64,AAAA)',error:''}),'本轮已完成。');
 });

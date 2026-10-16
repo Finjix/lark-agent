@@ -154,7 +154,9 @@ ${reason}`});
     };
     const images=this.store.images(task.id);
     if(!task.workspace_path){for(const image of images)reject(`codex-image-${image.id}.png`,Error('生成图片缺少交付目录'));return;}
-    const paths=new Map(artifactLinks(task.result).map(p=>[p,'file']));
+    // A reply often shows a generated image by its path in Desktop's image cache. That image is already delivered from its staged copy, so the link is not a second file.
+    const sources=new Set(images.flatMap(i=>i.savedPath?[path.resolve(i.savedPath).toLowerCase()]:[]));
+    const paths=new Map(artifactLinks(task.result).filter(p=>!sources.has(path.resolve(p).toLowerCase())).map(p=>[p,'file']));
     for(const image of images){
       const name=`codex-image-${image.id}.png`;
       try{

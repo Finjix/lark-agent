@@ -1,4 +1,4 @@
-import {terminal,type Task,type PendingInteraction} from '../types.js';
+import {terminal,BOT_DOWN,type Task,type PendingInteraction} from '../types.js';
 export const labels:Record<string,string>={QUEUED:'排队中',STARTING:'正在启动',RUNNING:'执行中',WAITING_APPROVAL:'等待你的确认',COMPLETED:'已完成',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'已中断',UNKNOWN:'等待核对 Desktop'};
 export function limitText(text:string,bytes=18000){
   if(Buffer.byteLength(text,'utf8')<=bytes)return text;
@@ -6,8 +6,11 @@ export function limitText(text:string,bytes=18000){
 }
 export const working=(task:Task)=>task.status==='STARTING'||task.status==='RUNNING';
 export function elapsedSeconds(task:Task,now=Date.now()){return Math.max(0,Math.floor((now-(task.started_at??task.created_at))/1000));}
-/** Feishu rejects the whole card if a markdown image is anything but one of its own image keys (Codex writes data: URIs and local paths); images are sent as separate messages. */
-export const withoutImages=(text:string)=>text.replace(/!\[[^\]]*\]\((?:<[^>\n]*>|[^)\n]*)\)/g,'').replace(/\n{3,}/g,'\n\n').trim();
+/** Feishu rejects the whole card if a markdown image is anything but one of its own image keys (Codex writes data: URIs, local paths and web addresses); generated images are sent as separate messages. */
+export const withoutImages=(text:string)=>text.replace(/!\[([^\]]*)\]\((<[^>\n]*>|[^)\n]*)\)/g,(_all,alt:string,url:string)=>{
+  // A web address stays as a plain link (Feishu cannot show it as an image but the user can open it); data: URIs and local paths are dropped.
+  const target=url.replace(/^<|>$/g,'').trim();return /^https?:\/\//i.test(target)?`[${alt||target}](${target})`:'';
+}).replace(/\n{3,}/g,'\n\n').trim();
 export function renderTask(task:Task,requests:PendingInteraction[]=[]){
   const parts:string[]=[];
   if(withoutImages(task.progress))parts.push(limitText(withoutImages(task.progress),7000));
@@ -15,7 +18,8 @@ export function renderTask(task:Task,requests:PendingInteraction[]=[]){
   if(task.error)parts.push(limitText(task.error,1500));
   for(const r of requests){parts.push(`**需要${r.kind==='input'?'补充信息':'确认'}：${r.id}**\n${limitText(r.summary,2500)}\n`+
     (r.kind==='input'?`\`/answer ${task.id} ${r.id} 回答或JSON\``:`\`/approve ${task.id} ${r.id}\`\n\`/deny ${task.id} ${r.id}\``));}
-  if(['FAILED','CANCELLED','INTERRUPTED'].includes(task.status))parts.push(labels[task.status]);
+  // The bot-down sentence stands alone: no status label after it.
+  if(['FAILED','CANCELLED','INTERRUPTED'].includes(task.status)&&task.error!==BOT_DOWN)parts.push(labels[task.status]);
   if(!parts.length&&task.status==='COMPLETED')parts.push('本轮已完成。');
   return limitText(parts.join('\n\n'),24000);
 }

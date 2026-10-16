@@ -16,7 +16,7 @@ export const SESSION_INIT_PROMPT='hi';
 export class NativeDesktop extends EventEmitter {
   ready=false; version=''; error=''; stream=new StreamState(); private ipc?:DesktopIPC; private tools?:AppTools;
   private owners=new Map<string,string>(); private connecting?:Promise<Record<string,unknown>>;
-  private resyncing=new Set<string>();
+  private resyncing=new Set<string>(); openRetryMs=500;
   constructor(private store:Store,private threadStatus=desktopThreadStatus){super();this.stream.on('state',id=>this.emit('state',id));this.stream.on('resync',id=>{
     if(!this.resyncing.has(id)){this.resyncing.add(id);void this.readTask(id).catch(()=>{}).finally(()=>this.resyncing.delete(id));}
   });}
@@ -97,7 +97,7 @@ export class NativeDesktop extends EventEmitter {
     if(!session.thread_id||!session.workspace_path)throw Error('用户会话和工作目录尚未确认');
     const threadId=session.thread_id,workspace=taskWorkspace(session.workspace_path);
     this.store.update(task.id,{thread_id:threadId,workspace_path:workspace});
-    await this.follow(threadId);await this.waitForIdle(threadId);
+    await this.follow(threadId,true);await this.waitForIdle(threadId);
     // Persist the stable client ID before the write. Streaming and restart recovery use it,
     // rather than matching text (the user may send exactly the same message twice).
     const request=taskRequest(this.store.get(task.id)!,this.store);
@@ -144,11 +144,24 @@ export class NativeDesktop extends EventEmitter {
       this.store.bindSession(session.id,threadId,await this.threadWorkspace(threadId));
     }
   }
-  async follow(threadId:string){
+  /**
+   * Joins the Desktop window that hosts this chat. With `open`, a chat that no window has loaded (after Desktop restarts, for example) is first
+   * shown in the most recently focused window, which loads it; that moves the user's Desktop view, so only a task about to be sent does it.
+   */
+  async follow(threadId:string,open=false){
     if(!this.ready||!this.ipc)throw Error('Desktop unavailable');
+    const discover=()=>this.ipc!.request('thread-owner-discovery',{hostId:'local',conversationId:threadId},1);
     let owner;
-    try{owner=await this.ipc.request('thread-owner-discovery',{hostId:'local',conversationId:threadId},1);}
-    catch{await this.tools!.call('read_thread',{threadId,turnLimit:1});owner=await this.ipc.request('thread-owner-discovery',{hostId:'local',conversationId:threadId},1);}
+    try{owner=await discover();}
+    catch{
+      await this.tools!.call('read_thread',{threadId,turnLimit:1});
+      try{owner=await discover();}
+      catch(e){
+        if(!open||!/no-client-found/.test(String((e as Error).message)))throw e;
+        await this.tools!.call('navigate_to_codex_page',{threadId},15000);
+        for(let attempt=1;;attempt++){try{owner=await discover();break;}catch(e2){if(attempt>=6)throw e2;await new Promise(r=>setTimeout(r,this.openRetryMs));}}
+      }
+    }
     if(!owner.handledByClientId)throw Error('Desktop thread owner unavailable');
     this.owners.set(threadId,owner.handledByClientId);this.ipc.follow(threadId,owner.handledByClientId);
     await this.ipc.request('thread-follower-load-complete-history',{conversationId:threadId},1,owner.handledByClientId);
