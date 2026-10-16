@@ -4,16 +4,22 @@ import {randomUUID} from 'node:crypto';
 
 export class OutcomeUnknown extends Error {}
 export class RpcRejected extends Error {}
+/** Nothing was sent to Desktop, so the task can safely be queued again. */
+export class NotSubmitted extends Error {}
 export class FrameDecoder {
-  private buffer=Buffer.alloc(0);
+  // Chunks are only joined once a whole frame has arrived, so a large frame is copied once, not once per chunk.
+  private chunks:Buffer[]=[];private length=0;
   constructor(private maxBytes=268435456){}
   push(chunk:Buffer):any[]{
-    this.buffer=Buffer.concat([this.buffer,chunk]); const messages=[];
-    while(this.buffer.length>=4){
-      const size=this.buffer.readUInt32LE(0);
+    this.chunks.push(chunk);this.length+=chunk.length;const messages=[];
+    while(this.length>=4){
+      if(this.chunks[0].length<4)this.chunks=[Buffer.concat(this.chunks)];
+      const size=this.chunks[0].readUInt32LE(0);
       if(!size||size>this.maxBytes)throw Error('Invalid Desktop frame length');
-      if(this.buffer.length<size+4)break;
-      messages.push(JSON.parse(this.buffer.subarray(4,size+4).toString('utf8')));this.buffer=this.buffer.subarray(size+4);
+      if(this.length<size+4)break;
+      const all=this.chunks.length>1?Buffer.concat(this.chunks):this.chunks[0];
+      messages.push(JSON.parse(all.subarray(4,size+4).toString('utf8')));
+      const rest=all.subarray(size+4);this.chunks=rest.length?[rest]:[];this.length=rest.length;
     }
     return messages;
   }

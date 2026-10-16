@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {Database} from '../storage/sqlite.js';
 import {FramedPipe,RpcRejected} from './transport.js';
 import {config} from '../config.js';
@@ -16,9 +17,11 @@ export function desktopThreadStatus(threadId:string,home=config.codexHome):Deskt
     return !thread?'missing':thread.archived?'archived':'active';
   }finally{db.close();}
 }
-export function desktopVersion(){
+const run=promisify(execFile);
+// Asynchronous on purpose: PowerShell needs about a second to start and must not block the event loop.
+export async function desktopVersion(){
   if(process.platform!=='win32')throw Error('Only Windows x64 is supported');
-  return execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"(Get-AppxPackage OpenAI.Codex | Select-Object -First 1).Version"],{encoding:'utf8',windowsHide:true,timeout:10000}).trim();
+  return (await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',"(Get-AppxPackage OpenAI.Codex | Select-Object -First 1).Version"],{encoding:'utf8',windowsHide:true,timeout:10000})).stdout.trim();
 }
 export function callerCandidates(home=config.codexHome):CallerContext[]{
   const files=fs.readdirSync(home).filter(x=>/^state_\d+\.sqlite$/.test(x)).sort((a,b)=>Number(b.match(/\d+/)![0])-Number(a.match(/\d+/)![0]));

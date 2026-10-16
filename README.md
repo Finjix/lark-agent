@@ -52,7 +52,7 @@ start.cmd backup                :: 备份数据库到 data/
 start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任务
 ```
 
-健康检查 `http://127.0.0.1:8765/health`，就绪 `/ready`（未就绪 503）。重启会核对执行中任务并恢复队列和投递；没有自动重跑 `UNKNOWN` 任务的入口。
+健康检查 `http://127.0.0.1:8765/health`（`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建。日志在 `data/logs`，保留 14 天；`.env` 可选 `CODEX_HOME`、`LOG_LEVEL`。重启会核对执行中任务并恢复队列和投递；没有自动重跑 `UNKNOWN` 任务的入口；对从未被 Desktop 确认执行轮次的 `UNKNOWN` 任务，任务本人或管理员可用 `/cancel` 结束它，释放该用户的队列（若请求已到达 Desktop，它仍可能继续执行）。Desktop 暂时不可用时尚未提交的任务会回到队列等待。
 
 ## 兼容性
 

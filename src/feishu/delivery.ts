@@ -45,7 +45,8 @@ export class Delivery {
   constructor(private store:Store,private feishu:FeishuClient){}
   start(){this.timer=setInterval(()=>{void this.tick();},config.CARD_UPDATE_INTERVAL_MS);void this.tick();}
   async tick(){
-    if(this.busy||this.stopping||!this.feishu.connected)return;this.busy=true;
+    // Replies go out over REST, so a reconnecting long connection must not hold them back; only wait until the client has started.
+    if(this.busy||this.stopping||this.feishu.started===false)return;this.busy=true;
     try{
       // Refresh the timer even when Desktop has no new text. Preserve retry backoff and failures.
       for(const task of this.store.active())if(working(task)&&this.renderedSeconds.get(task.id)!==elapsedSeconds(task)){
@@ -56,7 +57,8 @@ export class Delivery {
       try{await this.deliver(row);this.store.ack(row.id,row.version);}
       catch(e){const error=safeError(e);const permanent=e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code);
         this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
-    }}finally{this.busy=false;}
+    }}catch(e){log.error({error:safeError(e)},'投递轮询失败，下一轮重试');}
+    finally{this.busy=false;}
   }
   private async api<T>(fn:()=>Promise<T>):Promise<T>{return await this.gate.add(fn);}
   private async deliver(row:any){
@@ -96,7 +98,7 @@ export class Delivery {
       this.store.db.prepare('UPDATE task_messages SET message_id=? WHERE task_id=?').run(sent.message_id,task.id);
     }
     // Feishu streaming sessions close after 10 minutes. Switch to full-card updates before that limit.
-    const closeStream=terminal(task.status)||Date.now()-task.created_at>9*60*1000;
+    const closeStream=terminal(task.status)||Date.now()-(task.started_at??task.created_at)>9*60*1000;
     if(working(task)&&!message.finalized&&!closeStream){
       // The colored header is outside the text element, so refresh the full card with the stream open.
       const {sequence}=this.store.nextSequence(task.id);
@@ -121,17 +123,30 @@ export class Delivery {
     if(working(task))this.renderedSeconds.set(task.id,elapsedSeconds(task,now));else this.renderedSeconds.delete(task.id);
   }
   private async collectArtifacts(task:Task){
+    // A file that cannot be staged or validated must never hold back the final reply: tell the user and carry on.
+    const reject=(name:string,e:unknown,key=name)=>{
+      const id=`artifact-rejected:${task.id}:${this.uuid(key)}`,reason=safeError(e);
+      if(this.store.db.prepare('SELECT 1 FROM delivery_outbox WHERE id=?').get(id))return;
+      this.store.event(task.id,'ARTIFACT_REJECTED',{name,reason});
+      this.store.enqueue(id,task.id,'NOTICE',{chat:task.chat_id,message:task.source_message_id,text:`任务 ${task.id} 的附件未发送：${name}
+${reason}`});
+    };
     const images=this.store.images(task.id);
-    if(!task.workspace_path){if(images.length)throw Error('生成图片缺少交付目录');return;}
+    if(!task.workspace_path){for(const image of images)reject(`codex-image-${image.id}.png`,Error('生成图片缺少交付目录'));return;}
     const paths=new Map(artifactLinks(task.result).map(p=>[p,'file']));
     for(const image of images){
-      const staged=this.store.db.prepare('SELECT path FROM task_artifacts WHERE task_id=? AND name=?').get(task.id,`codex-image-${image.id}.png`) as {path:string}|undefined;
-      const file=staged?.path??await stageGeneratedImage(task,image);
-      paths.set(file,'image');
+      const name=`codex-image-${image.id}.png`;
+      try{
+        const staged=this.store.db.prepare('SELECT path FROM task_artifacts WHERE task_id=? AND name=?').get(task.id,name) as {path:string}|undefined;
+        paths.set(staged?.path??await stageGeneratedImage(task,image),'image');
+      }catch(e){reject(name,e);}
     }
     if(Buffer.byteLength(task.result)>12000){
       const file=path.join(task.workspace_path,`lark-result-${task.id}.md`);
-      try{await fs.writeFile(file,task.result,{flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}paths.set(file,'file');
+      try{
+        try{await fs.writeFile(file,task.result,{flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}
+        paths.set(file,'file');
+      }catch(e){reject(path.basename(file),e);}
     }
     for(const [candidate,requestedKind] of paths){
       try{
@@ -141,13 +156,7 @@ export class Delivery {
         this.store.db.transaction(()=>{this.store.db.prepare('INSERT OR IGNORE INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run(id,task.id,file.path,file.name,file.size,kind);
           const artifact=this.store.db.prepare('SELECT message_id FROM task_artifacts WHERE id=?').get(id) as any;
           if(!artifact.message_id)this.store.enqueue(`file:${id}`,task.id,'FILE',{artifactId:id});})();
-      }catch(e){
-        const reason=safeError(e),name=path.basename(candidate);this.store.event(task.id,'ARTIFACT_REJECTED',{name,reason});
-        const id=`artifact-rejected:${task.id}:${this.uuid(candidate)}`;
-        if(!this.store.db.prepare('SELECT 1 FROM delivery_outbox WHERE id=?').get(id))this.store.enqueue(id,task.id,'NOTICE',{
-          chat:task.chat_id,message:task.source_message_id,text:`任务 ${task.id} 的附件未发送：${name}\n${reason}`,
-        });
-      }
+      }catch(e){reject(path.basename(candidate),e,candidate);}
     }
   }
   async stop(){this.stopping=true;clearInterval(this.timer);while(this.busy)await new Promise(r=>setTimeout(r,50));await this.gate.onIdle();}

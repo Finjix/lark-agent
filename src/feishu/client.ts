@@ -35,20 +35,18 @@ export async function downloadError(error:any){
   return result;
 }
 export class FeishuClient {
-  sdk:lark.Client; ws?:lark.WSClient; connected=false; botId='';lastError='';
+  sdk:lark.Client; ws?:lark.WSClient; started=false; botId='';lastError='';
   private appId:string; private appSecret:string;
   private userNames=new Map<string,{name:string|undefined;expires:number}>();
   private userNameRequests=new Map<string,Promise<string|undefined>>();
+  // The SDK's own logs are discarded (they can carry request details); connection state comes from its status API and callbacks.
   private logger={
-    error:(...args:any[])=>{this.updateWsState(args);this.lastError='飞书 SDK 连接或请求异常';log.warn('飞书 SDK 报告连接或请求异常（详情已脱敏）');},
-    warn:(...args:any[])=>{this.updateWsState(args);},info:(...args:any[])=>{this.updateWsState(args);},debug:(..._args:any[])=>{},trace:(..._args:any[])=>{},
+    error:(..._args:any[])=>{this.lastError='飞书 SDK 连接或请求异常';log.warn('飞书 SDK 报告连接或请求异常（详情已脱敏）');},
+    warn:(..._args:any[])=>{},info:(..._args:any[])=>{},debug:(..._args:any[])=>{},trace:(..._args:any[])=>{},
   };
-  private updateWsState(args:any[]){
-    const text=args.flat(Infinity).filter(x=>typeof x==='string').join(' ');
-    if(!/\bws\b|websocket/i.test(text))return;
-    if(/disconnected|closed|reconnecting|connect.*fail|connect.*error/i.test(text))this.connected=false;
-    else if(/connect.*success|\bconnected\b|client ready/i.test(text)){this.connected=true;this.lastError='';}
-  }
+  /** Live state of the long connection: idle, connecting, connected, reconnecting or failed. */
+  get state(){return this.ws?.getConnectionStatus().state??'idle';}
+  get connected(){return this.state==='connected';}
   constructor(credentials={appId:config.FEISHU_APP_ID,appSecret:config.FEISHU_APP_SECRET}){
     this.appId=credentials.appId;this.appSecret=credentials.appSecret;lark.defaultHttpInstance.defaults.timeout=30000;
     this.sdk=new lark.Client({appId:this.appId,appSecret:this.appSecret,appType:lark.AppType.SelfBuild,domain:lark.Domain.Feishu,logger:this.logger});
@@ -76,13 +74,15 @@ export class FeishuClient {
   async start(receive:(message:IncomingMessage)=>Promise<void>){
     if(!this.appId||!this.appSecret)throw Error('请先在项目 .env 中配置飞书 App ID 和 App Secret');
     const info=await this.raw('GET','/open-apis/bot/v3/info');this.botId=info.bot?.open_id??info.open_id??'';
-    this.ws=new lark.WSClient({appId:this.appId,appSecret:this.appSecret,domain:lark.Domain.Feishu,logger:this.logger});
+    const recovered=()=>{this.lastError='';};
+    this.ws=new lark.WSClient({appId:this.appId,appSecret:this.appSecret,domain:lark.Domain.Feishu,logger:this.logger,
+      onReady:recovered,onReconnected:recovered,onError:error=>{this.lastError=safeError(error);}});
     await this.ws.start({eventDispatcher:new lark.EventDispatcher({}).register({'im.message.receive_v1':async(event:any)=>{
       const message=incomingMessage(event,this.botId);if(!message)return;
       // Let persistence errors reject: SDK may retry, while the unique message key prevents duplicates.
       await receive(message);
     }})});
-    this.connected=true;this.lastError='';
+    this.started=true;
   }
   async reply(messageId:string,chatId:string,type:string,content:unknown,uuid:string){
     if(messageId)return this.protect(()=>this.sdk.im.message.reply({path:{message_id:messageId},data:{msg_type:type,content:JSON.stringify(content),uuid,reply_in_thread:false}}));
@@ -101,5 +101,5 @@ export class FeishuClient {
       return {size,contentType:String(resource.headers['content-type']??'')};
     }catch(e){throw await downloadError(e);}
   }
-  close(){this.connected=false;this.ws?.close({force:true});}
+  close(){this.started=false;this.ws?.close({force:true});this.ws=undefined;}
 }

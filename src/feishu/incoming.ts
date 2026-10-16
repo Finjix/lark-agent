@@ -7,7 +7,7 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
   const isGroup=msg.chat_type==='group',mentions=Array.isArray(msg.mentions)?msg.mentions:[];
   if(isGroup&&(!botId||!mentions.some((m:any)=>m.id?.open_id===botId)))return;
   const message:IncomingMessage={tenant:event.tenant_key??sender.tenant_key??'',user:sender.sender_id?.open_id??'',
-    chat:msg.chat_id,message:msg.message_id,text:'',isGroup,attachments:[]};
+    chat:msg.chat_id,message:msg.message_id,text:'',attachments:[]};
   if(!message.tenant||!message.user)return;
   const attachments=message.attachments!;
   const add=(kind:IncomingAttachment['kind'],key:unknown,name:unknown)=>{

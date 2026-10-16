@@ -5,7 +5,7 @@ import {NativeDesktop,taskWorkspace,sessionDirectory} from '../desktop/adapter.j
 import {config} from '../config.js';
 import {terminal,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
-import {OutcomeUnknown} from '../desktop/transport.js';
+import {OutcomeUnknown,NotSubmitted,RpcRejected} from '../desktop/transport.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
@@ -52,7 +52,7 @@ export class TaskService {
     try{
       if(command==='/help'){this.notice(message,HELP);return;}
       if(command==='/tasks'){
-        const tasks=this.store.list().filter(t=>t.tenant_key===message.tenant&&t.user_id===message.user).slice(-10).reverse();
+        const tasks=this.store.recent(message.tenant,message.user,10);
         this.notice(message,tasks.length?tasks.map(t=>`${t.id} ${t.status}`).join('\n'):'暂无任务');return;
       }
       if(!['/status','/cancel','/approve','/deny','/answer'].includes(command)){this.notice(message,HELP);return;}
@@ -60,6 +60,11 @@ export class TaskService {
       if(command==='/status'){this.notice(message,`任务：${task.id}\n状态：${task.status}\n${task.error||task.result||task.progress||'等待执行'}`.slice(0,15000));return;}
       if(command==='/cancel'){
         if(task.status==='QUEUED')this.store.transition(task.id,'CANCELLED');
+        else if(task.status==='UNKNOWN'&&!task.turn_id&&!this.starting.has(task.id)){
+          // Desktop never confirmed this task, so nothing can resolve it later. Release the user's queue instead of waiting forever.
+          this.store.transition(task.id,'CANCELLED',{error:''});
+          this.notice(message,this.store.submission(task.id)?'任务已取消。如果 Desktop 已收到该请求，它仍可能继续执行。':'任务已取消。');return;
+        }
         else if(!terminal(task.status)){
           this.store.update(task.id,{cancel_requested:1});
           if(task.thread_id&&task.turn_id)await this.interrupt(task);
@@ -69,6 +74,7 @@ export class TaskService {
       if(terminal(task.status))throw Error('任务已经结束');
       const row=this.store.db.prepare("SELECT * FROM pending_requests WHERE task_id=? AND request_id=? AND status='PENDING'").get(task.id,requestId) as any;
       if(!row||row.expires_at<Date.now())throw Error('交互请求不存在、已处理或已过期');
+      if(row.kind==='input'&&command!=='/answer')throw Error('此请求需要回答，请使用 /answer；也可用 /cancel 中断任务');
       if(!task.thread_id||!task.turn_id)throw Error('Desktop 执行关联尚未确认');
       // Persist before sending. A repeated Feishu event must not repeat an approval write.
       const claimed=this.store.db.prepare("UPDATE pending_requests SET status='RESPONDING' WHERE task_id=? AND request_id=? AND status='PENDING'").run(task.id,requestId);
@@ -105,7 +111,17 @@ export class TaskService {
       const created=await this.desktop.startTask(this.store.get(task.id)!);
       this.store.update(task.id,{thread_id:created.threadId,workspace_path:created.workspace});
       await this.desktop.follow(created.threadId);
-    }catch(e){this.store.transition(task.id,submitting?'UNKNOWN':'FAILED',{error:submitting?`需要核对 Desktop：${safeError(e)}`:`附件接收失败，任务未提交给 Codex：${safeError(e)}`});}
+    }catch(e){
+      const current=this.store.get(task.id);
+      if(e instanceof NotSubmitted){
+        // Nothing reached Desktop. Cancel if asked to, otherwise wait in the queue for Desktop to come back.
+        if(current?.cancel_requested)this.store.transition(task.id,'CANCELLED');
+        else this.store.transition(task.id,'QUEUED',{error:'',progress:'等待 Desktop 就绪',started_at:null});
+      }else if(e instanceof RpcRejected&&this.store.submission(task.id)&&!current?.turn_id){
+        // Desktop explicitly refused the business request, so it is certain nothing is running.
+        this.store.transition(task.id,'FAILED',{error:`Desktop 拒绝了请求，任务未执行：${safeError(e)}`});
+      }else this.store.transition(task.id,submitting?'UNKNOWN':'FAILED',{error:submitting?`需要核对 Desktop：${safeError(e)}`:`附件接收失败，任务未提交给 Codex：${safeError(e)}`});
+    }
     finally{this.starting.delete(task.id);}
   }
   onState(threadId:string){
@@ -136,28 +152,26 @@ export class TaskService {
   async interrupt(task:Task){
     if(!task.thread_id||!task.turn_id)return;
     const key=`${task.id}:${task.turn_id}`;if(this.interruptSent.has(key))return;
-    this.interruptSent.add(key);await this.desktop.interrupt(task.thread_id,task.turn_id);
+    this.interruptSent.add(key);
+    // Forget a failed attempt so /cancel and the next state update can retry it.
+    try{await this.desktop.interrupt(task.thread_id,task.turn_id);}catch(e){this.interruptSent.delete(key);throw e;}
   }
   async reconcile(){
+    const queueAgain=(id:string,progress:string)=>this.store.transition(id,'QUEUED',{error:'',progress,started_at:null});
     for(const task of this.store.active()){
       if(this.starting.has(task.id))continue;
       try{
-        // Preparation never sent the business input. Requeue before following an old
-        // thread so startTask can replace an archived or missing session safely.
-        if(this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST')&&!this.store.submission(task.id)&&!task.turn_id&&
-          task.session_id&&this.store.session(task.session_id)?.thread_id&&this.store.session(task.session_id)?.workspace_path){
-          this.store.transition(task.id,'QUEUED',{error:'',progress:'等待提交用户原文',started_at:null});
-          continue;
-        }
+        const session=task.session_id?this.store.session(task.session_id):undefined;
+        // Only a persisted send attempt makes the outcome uncertain. Without one the business input never left,
+        // so queue it again before following an old thread; startTask can then replace an archived or missing session.
+        if(!this.store.submission(task.id)&&!task.turn_id&&session?.thread_id&&session.workspace_path){queueAgain(task.id,'等待提交用户原文');continue;}
         if(task.thread_id)await this.desktop.follow(task.thread_id);
-        else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))this.store.transition(task.id,'QUEUED',{error:'',progress:'等待恢复附件接收',started_at:null});
+        else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))queueAgain(task.id,'等待恢复附件接收');
         else{this.store.transition(task.id,'UNKNOWN',{error:'服务重启或提交结果不明，正在核对'});await this.desktop.recoverUnbound(task);}
-        // Initialization is separate from the business turn. Only preparation with no
-        // persisted send attempt can be queued again; uncertain raw writes stay UNKNOWN.
+        // recoverUnbound may have bound the session after a lost creation response; an unsent input can then go out.
         const current=this.store.get(task.id)!;
-        if(!terminal(current.status)&&this.store.eventPayload(task.id,'DESKTOP_RAW_REQUEST')&&!this.store.submission(task.id)&&
-          current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path){
-          this.store.transition(task.id,'QUEUED',{error:'',progress:'等待提交用户原文',started_at:null});
+        if(!terminal(current.status)&&current.status!=='QUEUED'&&!this.store.submission(task.id)&&!current.turn_id&&current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path){
+          queueAgain(task.id,'等待提交用户原文');
         }
       }catch(e){this.store.transition(task.id,'UNKNOWN',{error:safeError(e)});}
     }

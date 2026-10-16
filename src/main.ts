@@ -39,6 +39,9 @@ async function main(){
     if(!checks.runtime.ok||!checks.desktop.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;
   }
   if(action!=='start')throw Error('支持命令：start、doctor、stop、backup、retry-delivery');
+  // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
+  process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
+  process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
   let stopping=false;let poll:NodeJS.Timeout|undefined,refresh:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
   let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0,lastNameSync=0,nameSync:Promise<void>|undefined;
   const token=randomBytes(32).toString('hex');
@@ -53,7 +56,7 @@ async function main(){
     }
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
     const ready=desktop.ready&&feishu.connected&&accessConfigured();
-    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},desktop:{ready:desktop.ready,version:desktop.version,error:desktop.error},feishu:{connected:feishu.connected,error:feishu.lastError},...store.stats()}));
+    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},desktop:{ready:desktop.ready,version:desktop.version,error:desktop.error},feishu:{connected:feishu.connected,state:feishu.state,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(refresh);clearInterval(maintain);server.close();
@@ -74,17 +77,19 @@ async function main(){
     try{
       if(!desktop.ready){try{await desktop.probe();await service.reconcile();lastReconcile=Date.now();}catch(e){log.warn({error:safeError(e)},'等待 Desktop 就绪');}}
       else if(Date.now()-lastReconcile>30000){await service.reconcile();lastReconcile=Date.now();}
+      // The SDK gives up after a non-retryable error (for example rejected credentials); build a fresh client instead of staying deaf.
+      if(feishuStarted&&feishu.state==='failed'){log.warn({error:feishu.lastError},'飞书长连接已失效，正在重建');feishu.close();feishuStarted=false;lastFeishuAttempt=0;}
       if(!feishuStarted&&Date.now()-lastFeishuAttempt>15000){lastFeishuAttempt=Date.now();
         try{await feishu.start(message=>service.receive(message));feishuStarted=true;log.info('飞书长连接已启动');}
         catch(e){feishu.close();feishu.lastError=safeError(e);log.warn({error:feishu.lastError},'等待飞书配置或连接');}}
-      if(!nameSync&&desktop.ready&&feishu.connected&&Date.now()-lastNameSync>60000){
+      if(!nameSync&&desktop.ready&&feishuStarted&&Date.now()-lastNameSync>60000){
         lastNameSync=Date.now();nameSync=service.syncSessionNames().catch(e=>log.warn({error:safeError(e)},'会话命名检查失败')).finally(()=>{nameSync=undefined;});
       }
     }finally{polling=false;}
   };
   poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);
   refresh=setInterval(()=>{if(desktop.ready)for(const task of store.active())if(task.thread_id)void desktop.readTask(task.thread_id).catch(()=>{});},3000);
-  maintain=setInterval(()=>{if(desktop.ready)void cleanup(store,desktop);},3600000);
+  maintain=setInterval(()=>{if(desktop.ready)void cleanup(store,desktop).catch(e=>log.warn({error:safeError(e)},'保留策略清理失败'));},3600000);
   log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书 Desktop 机器人已启动');
   if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭，可通过 /whoami 获取租户和 Open ID');
   await reconnect();

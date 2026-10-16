@@ -16,6 +16,10 @@ export class Scheduler {
   start(){this.timer=setInterval(()=>this.tick(),500);this.tick();}
   tick(){
     if(this.stopped||!this.service.desktop.ready)return;
+    // A database hiccup must cost one round, not the whole process: this runs inside a timer callback.
+    try{this.schedule();}catch(e){log.error({error:safeError(e)},'调度轮询失败，下一轮重试');}
+  }
+  private schedule(){
     const blocked=new Set<string>();
     const active=this.service.store.active();
     for(const task of this.service.store.list('QUEUED')){

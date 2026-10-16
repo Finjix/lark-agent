@@ -1,8 +1,11 @@
-import {mkdirSync,createWriteStream} from 'node:fs';
+import {mkdirSync,createWriteStream,readdirSync,statSync,rmSync,type WriteStream} from 'node:fs';
 import path from 'node:path';
 import {config} from './config.js';
 const directory=path.join(config.data,'logs');mkdirSync(directory,{recursive:true});
-const file=createWriteStream(path.join(directory,`${new Date().toISOString().slice(0,10)}-${process.pid}.jsonl`),{flags:'a'});
+// One file per process start would pile up forever, so drop old ones; and open lazily so short CLI commands leave no empty file.
+try{for(const name of readdirSync(directory)){const old=path.join(directory,name);if(name.endsWith('.jsonl')&&Date.now()-statSync(old).mtimeMs>14*86400000)rmSync(old,{force:true});}}catch{}
+let stream:WriteStream|undefined;
+const file={write:(line:string)=>(stream??=createWriteStream(path.join(directory,`${new Date().toISOString().slice(0,10)}-${process.pid}.jsonl`),{flags:'a'})).write(line)};
 const levels={debug:20,info:30,warn:40,error:50};
 const threshold=levels[process.env.LOG_LEVEL as keyof typeof levels]??levels.info;
 const secret=new Set(['secret','token','appSecret','headers','FEISHU_APP_SECRET']);

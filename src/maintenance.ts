@@ -14,13 +14,15 @@ export async function cleanup(store:Store,desktop:NativeDesktop){
     if((!task.workspace_path||!task.thread_id)&&!store.inputs(task.id).length)continue;
     try{
       if(task.workspace_path&&task.thread_id){
-        const target=path.resolve(task.workspace_path),actual=await fs.realpath(target);
+        const target=path.resolve(task.workspace_path);let actual:string|undefined;
+        // A directory that is already gone needs no removal, but the task must still be marked cleaned or it is retried (and logged) forever.
+        try{actual=await fs.realpath(target);}catch(e:any){if(e.code!=='ENOENT')throw e;}
         const session=task.session_id?store.session(task.session_id):undefined;
-        if(session){
+        if(actual&&session){
           if(!session.workspace_path||actual!==target||actual!==taskWorkspace(await fs.realpath(session.workspace_path),task.id))throw Error('目录不满足会话任务所有权检查，跳过清理');
           // A user session stays open; only this message's output directory expires.
           await fs.rm(actual,{recursive:true,force:false});
-        }else{
+        }else if(actual){
           if(actual!==target||path.basename(target)!=='outputs'||path.basename(path.dirname(target))!==`lark-${task.id}`)throw Error('目录不满足机器人所有权检查，跳过清理');
           await desktop.archive(task.thread_id);await fs.rm(actual,{recursive:true,force:false});
         }

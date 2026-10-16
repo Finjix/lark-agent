@@ -15,7 +15,7 @@
     "@larksuiteoapi/node-sdk": "1.75.0"
   },
   "devDependencies": {
-    "@types/node": "24.10.0",
+    "@types/node": "24.19.2",
     "typescript": "7.0.2"
   }
 }

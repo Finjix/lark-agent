@@ -3,44 +3,50 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {config} from '../config.js';
 import {Store} from '../storage/database.js';
-import type {Task,PendingInteraction,DesktopAdapter} from '../types.js';
-import {DesktopIPC,OutcomeUnknown} from './transport.js';
+import type {Task,PendingInteraction} from '../types.js';
+import {DesktopIPC,OutcomeUnknown,NotSubmitted} from './transport.js';
 import {AppTools,callerCandidates,desktopVersion,desktopThreadStatus,discoverToolEndpoint, type CallerContext} from './context.js';
 import {StreamState,turnsOf} from './stream.js';
 import {log,safeError} from '../log.js';
 
 export const SESSION_INIT_PROMPT='这是飞书机器人通信会话初始化。请只回复 READY，不要调用工具或执行其他任务。后续用户请求会单独发送。';
 
-export class NativeDesktop extends EventEmitter implements DesktopAdapter {
+export class NativeDesktop extends EventEmitter {
   ready=false; version=''; error=''; stream=new StreamState(); private ipc?:DesktopIPC; private tools?:AppTools;
   private owners=new Map<string,string>(); private connecting?:Promise<Record<string,unknown>>;
-  private resyncing=new Set<string>(); private versionChecked=0;
+  private resyncing=new Set<string>();
   constructor(private store:Store,private threadStatus=desktopThreadStatus){super();this.stream.on('state',id=>this.emit('state',id));this.stream.on('resync',id=>{
     if(!this.resyncing.has(id)){this.resyncing.add(id);void this.readTask(id).catch(()=>{}).finally(()=>this.resyncing.delete(id));}
   });}
-  async probe(){if(this.ready){if(Date.now()-this.versionChecked>60000){this.versionChecked=Date.now();if(desktopVersion()!==this.version)this.close();}if(this.ready)return {ready:true,version:this.version};}if(this.connecting)return this.connecting;
+  async probe(){
+    if(this.ready)return {ready:true,version:this.version};
+    if(this.connecting)return this.connecting;
     this.connecting=this.connect();try{return await this.connecting;}finally{this.connecting=undefined;}}
   private async connect(){
     this.close();
     try{
-      this.version=desktopVersion();if(!config.versions.includes(this.version))throw Error(`Desktop ${this.version||'未安装'} 不在已验证兼容版本列表`);
+      // Endpoint discovery is cheap and fails fast while Desktop is not running; check the version only once it is.
       const endpoint=await discoverToolEndpoint();
+      this.version=await desktopVersion();if(!config.versions.includes(this.version))throw Error(`Desktop ${this.version||'未安装'} 不在已验证兼容版本列表`);
       const saved=this.store.meta('desktop_caller') as CallerContext|undefined;
-      const candidates=[...saved?[saved]:[],...callerCandidates()].filter((c,i,a)=>a.findIndex(x=>x.threadId===c.threadId)===i);
-      for(const caller of candidates.slice(0,8)){
+      const attempt=async(caller:CallerContext)=>{
         const tool=new AppTools(endpoint,caller);
-        try{await tool.connect();await tool.call('list_threads',{limit:1},5000);this.tools=tool;this.store.meta('desktop_caller',caller);break;}catch{tool.close();}
+        try{await tool.connect();await tool.call('list_threads',{limit:1},5000);this.tools=tool;this.store.meta('desktop_caller',caller);return true;}catch{tool.close();return false;}
+      };
+      // Scanning Desktop's rollout files is expensive, so only do it when the saved context no longer works.
+      if(!(saved&&await attempt(saved))){
+        for(const caller of callerCandidates().filter(c=>c.threadId!==saved?.threadId).slice(0,8))if(await attempt(caller))break;
       }
       if(!this.tools)throw Error('没有有效的 Desktop 调用上下文，请先创建并完成一个本地聊天');
       this.ipc=new DesktopIPC(config.DESKTOP_CONNECT_TIMEOUT_MS);
       this.ipc.on('message',m=>this.stream.receive(m));
       const disconnected=()=>{this.ready=false;this.error='Desktop 连接断开';this.emit('offline');};
       this.ipc.on('disconnected',disconnected);this.tools.on('disconnected',disconnected);
-      await this.ipc.connect();this.versionChecked=Date.now();this.ready=true;this.error='';this.emit('online');return {ready:true,version:this.version,standaloneContext:true};
+      await this.ipc.connect();this.ready=true;this.error='';this.emit('online');return {ready:true,version:this.version,standaloneContext:true};
     }catch(e){this.error=(e as Error).message;this.close();throw e;}
   }
   async startTask(task:Task){
-    if(!this.ready||!this.tools||!this.ipc)throw Error('Desktop 尚未就绪');
+    if(!this.ready||!this.tools||!this.ipc)throw new NotSubmitted('Desktop 尚未就绪');
     let session=this.store.sessionFor(task);
     taskPrompt(task,this.store); // Validate downloaded inputs before creating or submitting anything.
     if(this.store.submission(task.id))throw new OutcomeUnknown('用户原文已尝试提交，必须核对原轮次，不能重复发送');
@@ -77,7 +83,7 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
     // Persist the stable client ID before the write. Streaming and restart recovery use it,
     // rather than matching text (the user may send exactly the same message twice).
     const request=taskRequest(this.store.get(task.id)!,this.store);
-    if(this.store.get(task.id)?.cancel_requested)throw Error('任务已请求取消，用户原文未提交');
+    if(this.store.get(task.id)?.cancel_requested)throw new NotSubmitted('任务已请求取消，用户原文未提交');
     this.store.event(task.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:task.submission_key});
     const accepted=await this.ipc.request('thread-follower-start-turn',{
       conversationId:threadId,turnStart:{request,context:{}},
@@ -151,7 +157,9 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
       method='thread-follower-permissions-request-approval-response';params={...base,response:{permissions:response==='accept'?request.payload.permissions??{}:{},scope:'turn'}};
     }else if(request.kind==='input'){
       method='thread-follower-submit-user-input';let parsed:any;
-      try{parsed=JSON.parse(response);}catch{
+      // Only a JSON object maps answers to question IDs; "42", "true" or "null" are ordinary free-text answers.
+      try{const value=JSON.parse(response);if(value&&typeof value==='object'&&!Array.isArray(value))parsed=value;}catch{}
+      if(!parsed){
         const questions=request.payload.questions??[];if(questions.length!==1)throw Error('多问题请提交 JSON：{"问题ID":"回答"}');parsed={[questions[0].id]:response};
       }
       const answers:any={};for(const q of request.payload.questions??[]){const value=parsed[q.id];if(typeof value!=='string'||!value.trim())throw Error(`缺少问题 ${q.id} 的回答`);answers[q.id]={answers:[value]};}
@@ -159,7 +167,11 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
     }else{
       method='thread-follower-submit-mcp-server-elicitation-response';
       if(response==='decline')params={...base,response:{action:'decline',content:null}};
-      else{if(request.payload.mode==='url')throw Error('此请求需要在 Desktop 完成网页登录');params={...base,response:{action:'accept',content:JSON.parse(response)}};}
+      else{
+        if(request.payload.mode==='url')throw Error('此请求需要在 Desktop 完成网页登录');
+        let content:unknown;try{content=JSON.parse(response);}catch{throw Error('请用 /answer 提交 JSON 内容，或用 /deny 拒绝');}
+        params={...base,response:{action:'accept',content}};
+      }
     }
     await this.ipc!.request(method,params,1,this.owners.get(threadId));
   }

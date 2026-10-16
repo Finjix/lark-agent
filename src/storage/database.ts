@@ -4,7 +4,7 @@ import {terminal, type Task, type TaskStatus, type PendingInteraction,type Incom
 import {displayName,sessionTitle} from '../sessions/naming.js';
 
 export class Store {
-  db: Database;
+  db: Database; private columns?:Set<string>;
   constructor(file:string){
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
@@ -112,7 +112,9 @@ export class Store {
     this.db.prepare('UPDATE user_sessions SET thread_id=?,workspace_path=COALESCE(?,workspace_path) WHERE id=?').run(threadId,workspace??null,id);
   }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
-  active(){return this.list().filter(t=>!terminal(t.status)&&t.status!=='QUEUED');}
+  /** Started but unfinished tasks. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would keep getting slower. */
+  active():Task[]{return this.db.prepare("SELECT * FROM tasks WHERE status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at,rowid").all() as unknown as Task[];}
+  recent(tenant:string,user:string,limit:number):Task[]{return this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND user_id=? ORDER BY created_at DESC,rowid DESC LIMIT ?').all(tenant,user,limit) as unknown as Task[];}
   create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[],attachments:IncomingAttachment[]=[]){
     return this.db.transaction(()=>{
       const existing=this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(input.tenant_key,input.source_message_id) as Task|undefined;
@@ -139,7 +141,7 @@ export class Store {
   }
   inputReady(taskId:string,ordinal:number,path:string,size:number){this.db.prepare('UPDATE task_inputs SET path=?,size=? WHERE task_id=? AND ordinal=?').run(path,size,taskId,ordinal);}
   update(id:string,patch:Partial<Task>){
-    const columns = new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((r:any)=>r.name));
+    const columns=this.columns??=new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((r:any)=>r.name as string));
     const entries=Object.entries(patch).filter(([k,v])=>columns.has(k)&&k!=='id'&&v!==undefined);
     if(entries.length)this.db.prepare(`UPDATE tasks SET ${entries.map(([k])=>`${k}=?`).join(',')} WHERE id=?`).run(...entries.map(([,v])=>v),id);
   }

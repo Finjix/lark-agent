@@ -11,10 +11,11 @@ export class Database extends DatabaseSync {
   /** Returns a function that runs `fn` atomically; nested calls become savepoints. */
   transaction<T>(fn:()=>T):()=>T{
     return ()=>{
-      const name=`sp${this.depth++}`;
-      this.exec(this.depth===1?'BEGIN IMMEDIATE':`SAVEPOINT ${name}`);
-      try{const result=fn();this.exec(this.depth===1?'COMMIT':`RELEASE ${name}`);return result;}
-      catch(e){this.exec(this.depth===1?'ROLLBACK':`ROLLBACK TO ${name}; RELEASE ${name}`);throw e;}
+      const nested=this.depth>0,name=`sp${this.depth}`;
+      // Count the level only once BEGIN/SAVEPOINT has succeeded, so a lock timeout does not leave the depth raised.
+      this.exec(nested?`SAVEPOINT ${name}`:'BEGIN IMMEDIATE');this.depth++;
+      try{const result=fn();this.exec(nested?`RELEASE ${name}`:'COMMIT');return result;}
+      catch(e){this.exec(nested?`ROLLBACK TO ${name}; RELEASE ${name}`:'ROLLBACK');throw e;}
       finally{this.depth--;}
     };
   }

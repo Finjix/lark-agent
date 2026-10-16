@@ -26,20 +26,8 @@ export interface PendingInteraction {
   summary: string; payload: Record<string, any>;
 }
 export interface IncomingMessage {
-  tenant: string; user: string; chat: string; message: string; text: string; isGroup: boolean;
+  tenant: string; user: string; chat: string; message: string; text: string;
   attachments?: IncomingAttachment[]; error?: string;
 }
 export interface IncomingAttachment {kind:'image'|'file'; key:string; name:string;}
 export interface TaskInput extends IncomingAttachment {ordinal:number; path:string|null; size:number|null;}
-export interface DesktopAdapter {
-  ready: boolean;
-  probe(): Promise<Record<string, unknown>>;
-  startTask(task: Task): Promise<{threadId: string; workspace: string}>;
-  follow(threadId: string): Promise<void>;
-  readTask(threadId: string): Promise<void>;
-  interrupt(threadId: string, turnId: string): Promise<void>;
-  respond(threadId: string, turnId: string, request: PendingInteraction, response: string): Promise<void>;
-  archive(threadId: string): Promise<void>;
-  unfollow(threadId: string): void;
-  close(): void;
-}
