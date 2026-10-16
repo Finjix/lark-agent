@@ -10,7 +10,7 @@ Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 �
 2. `.env.example` 复制为 `.env`，填凭证和访问范围。
 3. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译）。日志出现“飞书长连接已启动”即可用。
 
-必须与 Desktop 在同一 Windows 用户下运行。`.npmrc` 设了 `ignore-scripts=true`，因为 better-sqlite3 自带预编译二进制，无需 C++ 工具链。
+必须与 Desktop 在同一 Windows 用户下运行。数据库用 Node 内置 `node:sqlite`，运行时依赖只有飞书官方 SDK。
 
 ## 目录
 

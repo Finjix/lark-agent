@@ -28,7 +28,7 @@ async function main(){
     store.close();console.log(`已恢复 ${result.changes} 条投递，不会重新执行任务`);return;
   }
   if(action==='backup'){
-    const file=path.join(config.data,`backup-${Date.now()}.sqlite`);await store.db.backup(file);store.close();console.log(file);return;
+    const file=path.join(config.data,`backup-${Date.now()}.sqlite`);await store.db.backupTo(file);store.close();console.log(file);return;
   }
   if(action==='doctor'){
     const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},

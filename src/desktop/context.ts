@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import Database from 'better-sqlite3';
+import {Database} from '../storage/sqlite.js';
 import {FramedPipe,RpcRejected} from './transport.js';
 import {config} from '../config.js';
 export interface CallerContext {threadId:string;turnId:string;}
@@ -10,7 +10,7 @@ export type DesktopThreadStatus='active'|'archived'|'missing';
 export function desktopThreadStatus(threadId:string,home=config.codexHome):DesktopThreadStatus{
   const files=fs.readdirSync(home).filter(x=>/^state_\d+\.sqlite$/.test(x)).sort((a,b)=>Number(b.match(/\d+/)![0])-Number(a.match(/\d+/)![0]));
   if(!files.length)throw Error('未找到 Desktop 本地聊天索引，暂不能确认会话状态');
-  const db=new Database(path.join(home,files[0]),{readonly:true,fileMustExist:true});
+  const db=new Database(path.join(home,files[0]),{readOnly:true});
   try{
     const thread=db.prepare('SELECT archived FROM threads WHERE id=?').get(threadId) as {archived:number}|undefined;
     return !thread?'missing':thread.archived?'archived':'active';
@@ -23,7 +23,7 @@ export function desktopVersion(){
 export function callerCandidates(home=config.codexHome):CallerContext[]{
   const files=fs.readdirSync(home).filter(x=>/^state_\d+\.sqlite$/.test(x)).sort((a,b)=>Number(b.match(/\d+/)![0])-Number(a.match(/\d+/)![0]));
   if(!files.length)throw Error('未找到 Desktop 本地聊天索引，请先在 Desktop 创建一个本地聊天');
-  const db=new Database(path.join(home,files[0]),{readonly:true,fileMustExist:true});
+  const db=new Database(path.join(home,files[0]),{readOnly:true});
   try{return (db.prepare('SELECT id,rollout_path FROM threads WHERE rollout_path IS NOT NULL ORDER BY updated_at DESC LIMIT 30').all() as any[]).flatMap(row=>{
     try{
       const fd=fs.openSync(row.rollout_path,'r');let text='';

@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
-import PQueue from 'p-queue';
 import {Store} from '../storage/database.js';
 import {config} from '../config.js';
 import {terminal,type Task} from '../types.js';
@@ -10,6 +9,23 @@ import {cardJson,renderTask,messageSummary,working,elapsedSeconds} from './cards
 import {safeError,log} from '../log.js';
 import {stageGeneratedImage} from './images.js';
 
+/** Runs calls one at a time, at most `cap` starts per sliding `interval` ms. */
+export class RateGate {
+  private tail:Promise<unknown>=Promise.resolve(); private starts:number[]=[];
+  constructor(private cap:number,private interval:number){}
+  add<T>(fn:()=>Promise<T>):Promise<T>{
+    const run=this.tail.then(async()=>{
+      for(;;){
+        const now=Date.now();this.starts=this.starts.filter(t=>now-t<this.interval);
+        if(this.starts.length<this.cap)break;
+        await new Promise(r=>setTimeout(r,this.starts[0]+this.interval-now));
+      }
+      this.starts.push(Date.now());return fn();
+    });
+    this.tail=run.catch(()=>{});return run;
+  }
+  onIdle(){return this.tail;}
+}
 export async function ownedArtifact(workspace:string,candidate:string){
   const root=await fs.realpath(workspace),file=await fs.realpath(candidate),relative=path.relative(root,file);
   if(!relative||relative.startsWith('..'+path.sep)||relative==='..'||path.isAbsolute(relative))throw Error('交付文件不属于当前任务目录');
@@ -25,7 +41,7 @@ export function artifactLinks(text:string){
 export class Delivery {
   private timer?:NodeJS.Timeout;private busy=false;private stopping=false;
   private renderedSeconds=new Map<string,number>();
-  private gate=new PQueue({concurrency:1,intervalCap:5,interval:1000,strict:true});
+  private gate=new RateGate(5,1000);
   constructor(private store:Store,private feishu:FeishuClient){}
   start(){this.timer=setInterval(()=>{void this.tick();},config.CARD_UPDATE_INTERVAL_MS);void this.tick();}
   async tick(){
@@ -42,7 +58,7 @@ export class Delivery {
         this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
     }}finally{this.busy=false;}
   }
-  private async api<T>(fn:()=>Promise<T>):Promise<T>{return (await this.gate.add(fn)) as T;}
+  private async api<T>(fn:()=>Promise<T>):Promise<T>{return await this.gate.add(fn);}
   private async deliver(row:any){
     const payload=JSON.parse(row.payload);
     if(row.kind==='NOTICE'){

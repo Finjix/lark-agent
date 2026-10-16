@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {EventEmitter} from 'node:events';
-import Database from 'better-sqlite3';
+import {Database} from '../dist/storage/sqlite.js';
 import {Store} from '../dist/storage/database.js';
 import {NativeDesktop} from '../dist/desktop/adapter.js';
 import {TaskService} from '../dist/tasks/service.js';

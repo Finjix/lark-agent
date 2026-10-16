@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import {Database} from '../dist/storage/sqlite.js';
 import {EventEmitter} from 'node:events';
 import {Store} from '../dist/storage/database.js';
 import {NativeDesktop,SESSION_INIT_PROMPT} from '../dist/desktop/adapter.js';

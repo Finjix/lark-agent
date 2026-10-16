@@ -170,7 +170,7 @@ export class NativeDesktop extends EventEmitter implements DesktopAdapter {
 export const sessionLabel=(session:{id:string;title?:string|null})=>session.title??`飞书用户会话 ${session.id}`;
 /** Per-session delivery root under user/, fixed when the session is bound so later renames do not move files. */
 export function sessionDirectory(session:{id:string;title?:string|null}){
-  const name=sessionLabel(session).replace(/[<>:"/\|?* -]/g,'_').replace(/[. ]+$/,'')||session.id;
+  const name=sessionLabel(session).replace(/[<>:"/\u005c|?*\x00-\x1f]/g,'_').replace(/[. ]+$/,'')||session.id;
   return path.join(config.user,name);
 }
 export function taskWorkspace(root:string,taskId:string){

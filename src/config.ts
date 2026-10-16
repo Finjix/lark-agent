@@ -3,26 +3,24 @@ import path from 'node:path';
 import {mkdirSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import os from 'node:os';
-import dotenv from 'dotenv';
-import {z} from 'zod';
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-dotenv.config({path: path.join(root,'.env'), quiet: true});
-const number = (value: number, min = 0) => z.coerce.number().int().min(min).default(value);
-const schema = z.object({
-  FEISHU_APP_ID: z.string().default(''), FEISHU_APP_SECRET: z.string().default(''),
-  ALLOWED_USERS: z.string().default(''), ADMIN_USERS: z.string().default(''), ALLOWED_CHATS: z.string().default(''), ALLOWED_TENANTS:z.string().default(''),
-  DATABASE_PATH:z.string().default('./data/agent.sqlite'),
-  CARD_UPDATE_INTERVAL_MS:number(1000,250), DESKTOP_CONNECT_TIMEOUT_MS:number(10000,500),
-  TASK_TIMEOUT_MS:number(0), TASK_RETENTION_DAYS:number(30,1), HEALTH_PORT:z.coerce.number().int().min(1).max(65535).default(8765),
-  RESOURCE_LOCKS:z.string().default('{}'), DESKTOP_SUPPORTED_VERSIONS:z.string().default('26.1007.9446.0'),
-});
-const raw = schema.parse(process.env);
+try{process.loadEnvFile(path.join(root,'.env'));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
+const text=(key:string,fallback='')=>process.env[key]??fallback;
+const int=(key:string,fallback:number,min=0,max=Number.MAX_SAFE_INTEGER)=>{
+  const raw=process.env[key];if(raw===undefined||raw.trim()==='')return fallback;
+  const value=Number(raw);if(!Number.isInteger(value)||value<min||value>max)throw Error(`${key} 必须是 ${min} 到 ${max} 之间的整数`);return value;
+};
 const list=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);
-const locks = z.record(z.string(),z.string()).parse(JSON.parse(raw.RESOURCE_LOCKS));
-export const config = {...raw, root, database: path.resolve(root,raw.DATABASE_PATH),
+const locks:Record<string,string>=JSON.parse(text('RESOURCE_LOCKS','{}'));
+if(!locks||typeof locks!=='object'||Object.values(locks).some(x=>typeof x!=='string'))throw Error('RESOURCE_LOCKS 必须是资源名到正则字符串的 JSON 对象');
+export const config = {
+  FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
+  CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250), DESKTOP_CONNECT_TIMEOUT_MS:int('DESKTOP_CONNECT_TIMEOUT_MS',10000,500),
+  TASK_TIMEOUT_MS:int('TASK_TIMEOUT_MS',0), TASK_RETENTION_DAYS:int('TASK_RETENTION_DAYS',30,1), HEALTH_PORT:int('HEALTH_PORT',8765,1,65535),
+  root, database: path.resolve(root,text('DATABASE_PATH','./data/agent.sqlite')),
   data:path.join(root,'data'), user:path.join(root,'user'), codexHome:process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),
-  users:list(raw.ALLOWED_USERS), admins:list(raw.ADMIN_USERS), chats:list(raw.ALLOWED_CHATS), tenants:list(raw.ALLOWED_TENANTS),
-  versions:list(raw.DESKTOP_SUPPORTED_VERSIONS), resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
+  users:list(text('ALLOWED_USERS')), admins:list(text('ADMIN_USERS')), chats:list(text('ALLOWED_CHATS')), tenants:list(text('ALLOWED_TENANTS')),
+  versions:list(text('DESKTOP_SUPPORTED_VERSIONS','26.1007.9446.0')), resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
 };
 export function restrictSecret(file:string){
   if(process.platform!=='win32'||!existsSync(file))return;

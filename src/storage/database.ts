@@ -1,10 +1,10 @@
-import Database from 'better-sqlite3';
+import {Database} from './sqlite.js';
 import {randomUUID} from 'node:crypto';
 import {terminal, type Task, type TaskStatus, type PendingInteraction,type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
 import {displayName,sessionTitle} from '../sessions/naming.js';
 
 export class Store {
-  db: Database.Database;
+  db: Database;
   constructor(file:string){
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
@@ -71,7 +71,7 @@ export class Store {
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
-  sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as UserSession[];}
+  sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
     const normalized=displayName(name);if(!normalized)return session;
@@ -111,7 +111,7 @@ export class Store {
     if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他 Desktop 聊天');
     this.db.prepare('UPDATE user_sessions SET thread_id=?,workspace_path=COALESCE(?,workspace_path) WHERE id=?').run(threadId,workspace??null,id);
   }
-  list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as Task[];}
+  list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
   active(){return this.list().filter(t=>!terminal(t.status)&&t.status!=='QUEUED');}
   create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[],attachments:IncomingAttachment[]=[]){
     return this.db.transaction(()=>{
@@ -126,14 +126,14 @@ export class Store {
       return {task:this.get(id)!,created:true};
     })();
   }
-  inputs(taskId:string):TaskInput[]{return this.db.prepare('SELECT ordinal,kind,key,name,path,size FROM task_inputs WHERE task_id=? ORDER BY ordinal').all(taskId) as TaskInput[];}
-  images(taskId:string):GeneratedImage[]{return this.db.prepare('SELECT item_id AS id,saved_path AS savedPath,base64 FROM task_generated_images WHERE task_id=? ORDER BY rowid').all(taskId) as GeneratedImage[];}
+  inputs(taskId:string):TaskInput[]{return this.db.prepare('SELECT ordinal,kind,key,name,path,size FROM task_inputs WHERE task_id=? ORDER BY ordinal').all(taskId) as unknown as TaskInput[];}
+  images(taskId:string):GeneratedImage[]{return this.db.prepare('SELECT item_id AS id,saved_path AS savedPath,base64 FROM task_generated_images WHERE task_id=? ORDER BY rowid').all(taskId) as unknown as GeneratedImage[];}
   recordImages(taskId:string,images:GeneratedImage[]){
     return this.db.transaction(()=>{
       let changed=0;
-      for(const image of images)changed+=this.db.prepare(`INSERT INTO task_generated_images(task_id,item_id,saved_path,base64) VALUES(?,?,?,?)
+      for(const image of images)changed+=Number(this.db.prepare(`INSERT INTO task_generated_images(task_id,item_id,saved_path,base64) VALUES(?,?,?,?)
         ON CONFLICT(task_id,item_id) DO UPDATE SET saved_path=excluded.saved_path,base64=excluded.base64
-        WHERE saved_path IS NOT excluded.saved_path OR base64 IS NOT excluded.base64`).run(taskId,image.id,image.savedPath,image.base64).changes;
+        WHERE saved_path IS NOT excluded.saved_path OR base64 IS NOT excluded.base64`).run(taskId,image.id,image.savedPath,image.base64).changes);
       return changed>0;
     })();
   }
