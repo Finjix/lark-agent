@@ -17,7 +17,6 @@ import {accessConfigured} from './access.js';
 import {BrowserManager} from './browser/manager.js';
 import {McpServer,mcpToken} from './mcp/server.js';
 import {registerMcp,unregisterMcp,mcpRegistered} from './mcp/register.js';
-import {setPrompt,removePrompt,promptCurrent} from './prompt.js';
 import {feishuCliBinary} from './feishu-cli/run.js';
 import {FeishuCliAuth} from './feishu-cli/auth.js';
 
@@ -27,11 +26,6 @@ async function main(){
     const token=await fs.readFile(path.join(config.data,'control.token'),'utf8');
     const response=await fetch(`http://127.0.0.1:${config.HEALTH_PORT}/shutdown`,{method:'POST',headers:{authorization:`Bearer ${token}`}});
     if(!response.ok)throw Error(`停止请求失败：${response.status}`);console.log('已请求安全停止');return;
-  }
-  if(action==='set-prompt'){
-    // Writes prompt/system.md into Codex's global instructions as one marked block; `set-prompt remove` takes it out again.
-    if(process.argv[3]==='remove'){console.log(`Codex 系统提示词：${removePrompt()}`);return;}
-    console.log(`Codex 系统提示词：${setPrompt()}（${path.join(config.codexHome,'AGENTS.md')}）\n来源：prompt/system.md，修改后再运行一次即可更新。`);return;
   }
   if(action==='register-mcp'){
     // The only place that edits Codex's config.toml: explicit, idempotent, and reversible with `register-mcp remove`.
@@ -52,15 +46,15 @@ async function main(){
   }
   if(action==='doctor'){
     const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
-      sqlite:{ok:true},tools:{feishuCli:existsSync(feishuCliBinary()),playwright:existsSync(path.join(config.root,'node_modules','playwright-core'))},prompt:{set:promptCurrent()},mcp:{registered:mcpRegistered(mcpToken(store)),url:`http://127.0.0.1:${config.HEALTH_PORT}/mcp`},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
+      sqlite:{ok:true},tools:{feishuCli:existsSync(feishuCliBinary()),playwright:existsSync(path.join(config.root,'node_modules','playwright-core'))},mcp:{registered:mcpRegistered(mcpToken(store)),url:`http://127.0.0.1:${config.HEALTH_PORT}/mcp`},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
     try{checks.desktop=await desktop.probe();}catch(e){checks.desktop={ready:false,error:safeError(e)};}
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     desktop.close();store.close();console.log(JSON.stringify(checks,null,2));
-    const toolsOk=checks.tools.feishuCli&&checks.tools.playwright&&checks.mcp.registered&&checks.prompt.set;
+    const toolsOk=checks.tools.feishuCli&&checks.tools.playwright&&checks.mcp.registered;
     if(!checks.runtime.ok||!toolsOk||!checks.desktop.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;
   }
-  if(action!=='start')throw Error('支持命令：start、register-mcp、set-prompt、doctor、stop、backup、retry-delivery');
-  try{if(!mcpRegistered(mcpToken(store)))log.warn('Codex 尚未注册或需更新 MCP 工具（浏览器、飞书 CLI），请运行 register-mcp.cmd 后重启 Codex Desktop');if(!promptCurrent())log.warn('Codex 系统提示词未设置或需更新（交付目录等约定写在里面），请运行 set-prompt.cmd');}catch(e){log.warn({error:safeError(e)},'无法读取 Codex 配置');}
+  if(action!=='start')throw Error('支持命令：start、register-mcp、doctor、stop、backup、retry-delivery');
+  try{if(!mcpRegistered(mcpToken(store)))log.warn('Codex 尚未注册或需更新 MCP 工具（浏览器、飞书 CLI），请运行 register-mcp.cmd 后重启 Codex Desktop');}catch(e){log.warn({error:safeError(e)},'无法读取 Codex 配置');}
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));

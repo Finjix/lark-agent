@@ -8,12 +8,12 @@ Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 �
 
 1. 飞书后台配置应用，见 [docs/feishu.md](docs/feishu.md)。
 2. `.env.example` 复制为 `.env`，填凭证和访问范围。
-3. 双击或运行 `register-mcp.cmd`，一键把浏览器和飞书 CLI 工具注册给 Codex（见下）；再运行 `set-prompt.cmd`，把系统提示词（`prompt/system.md`）写进 Codex 的全局指令，然后重启 Codex Desktop。
+3. 双击或运行 `register-mcp.cmd`，一键把浏览器和飞书 CLI 工具注册给 Codex（见下）；再把系统提示词（`prompt/system.md`）手动复制到 Codex Desktop“个性化”的自定义指令里，然后重启 Codex Desktop。
 4. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译）。日志出现“飞书长连接已启动”即可用。
 
 必须与 Desktop 在同一 Windows 用户下运行。数据库用 Node 内置 `node:sqlite`；依赖有飞书官方 SDK、`playwright-core`（浏览器引擎，使用系统已装的 Edge 或 Chrome，不下载浏览器）和官方飞书 CLI `@larksuite/cli`，都由 `npm ci` 按 lockfile 装进项目。
 
-**系统提示词**：每轮不再向 Codex 注入任何说明。固定约定只有一句，写在 `prompt/system.md`：Codex 在名为 `lark-*` 的聊天目录里时，把要发给用户的文件放进 `output/`。用户发来的附件不靠提示词：每轮按 Desktop 自己“拖入文件”的原生格式写入（`# Files mentioned by the user:` 加 `## 文件名: 路径`），图片另以 `localImage` 输入让模型直接看到画面；Desktop 对话里会显示成文件标签。非图片文件在 Desktop 协议里只有路径这一种输入，由模型用工具打开。飞书语音消息按文件接收（`语音消息.opus`）；wav/mp3/m4a/webm/ogg 音频文件仅当 Desktop 提供的所有模型都支持音频输入（读 `~/.codex/models_cache.json`）时才另以 `localAudio` 原生输入，目前没有模型支持，所以实际仍是路径。`set-prompt.cmd` 把它作为带标记的一段写入 `%USERPROFILE%\.codex\AGENTS.md`（Desktop“个性化”里的自定义指令文件）：保留你已有的内容，首次修改会备份为 `AGENTS.md.lark-agent.bak`，改了 `system.md` 后再运行一次即可更新，`set-prompt.cmd remove` 撤销。只在 `lark-` 目录里生效，不影响你自己的聊天。每轮唯一随消息携带的是附件清单（每条消息都不同）。
+**系统提示词**：每轮不再向 Codex 注入任何说明。固定约定只有一句，写在 `prompt/system.md`：Codex 在名为 `lark-*` 的聊天目录里时，把要发给用户的文件放进 `output/`。用户发来的附件不靠提示词：每轮按 Desktop 自己“拖入文件”的原生格式写入（`# Files mentioned by the user:` 加 `## 文件名: 路径`），图片另以 `localImage` 输入让模型直接看到画面；Desktop 对话里会显示成文件标签。非图片文件在 Desktop 协议里只有路径这一种输入，由模型用工具打开。飞书语音消息按文件接收（`语音消息.opus`）；wav/mp3/m4a/webm/ogg 音频文件仅当 Desktop 提供的所有模型都支持音频输入（读 `~/.codex/models_cache.json`）时才另以 `localAudio` 原生输入，目前没有模型支持，所以实际仍是路径。需要你手动复制到 Codex Desktop“个性化”的自定义指令里（服务不会改动 `AGENTS.md`，也不检查是否已设置）。只在 `lark-` 目录里生效，不影响你自己的聊天。每轮唯一随消息携带的是附件清单（每条消息都不同）。
 
 **MCP 注册**：Codex 通过本服务的 MCP 服务器 `lark_agent`（`http://127.0.0.1:8765/mcp`）使用浏览器和飞书 CLI。`register-mcp.cmd` 会（必要时先 `npm ci` 和编译）在 Codex 的 `config.toml`（`CODEX_HOME`，默认 `~/.codex`）里写入一段带标记的配置，幂等，不动其他内容，首次修改会备份为 `config.toml.lark-agent.bak`；若已有手写的同名条目则拒绝覆盖。`register-mcp.cmd remove` 撤销。这是唯一会修改 Codex 配置的操作，服务启动时不会改，只会在未注册时打印提醒。
 
