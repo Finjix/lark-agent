@@ -35,7 +35,7 @@ test('frame decoder joins a large frame once and handles a header split across c
 test('Desktop not ready at submission fails the task at once instead of queueing it or stranding it as UNKNOWN',async()=>{
   const s=new Store(':memory:'),task=boundUser(s),d=new NativeDesktop(s,()=>'active'),service=new TaskService(s,d);
   await service.start(s.get(task.id));
-  assert.equal(s.get(task.id).status,'FAILED');assert.equal(s.get(task.id).turn_id,null);assert.match(s.get(task.id).error,/请稍后重新发送/);
+  assert.equal(s.get(task.id).status,'FAILED');assert.equal(s.get(task.id).turn_id,null);assert.equal(s.get(task.id).error,'机器人罢工了，请联系 @钟丰骏-实习生');
   // A cancel that arrived while it was starting wins over failing.
   const other=s.create(input('third','u2')).task;s.transition(other.id,'STARTING');s.update(other.id,{cancel_requested:1});
   await service.start(s.get(other.id));assert.equal(s.get(other.id).status,'CANCELLED');s.close();
@@ -44,7 +44,7 @@ test('Desktop not ready at submission fails the task at once instead of queueing
 test('an explicit Desktop rejection of the business request fails the task, an unknown outcome does not',async()=>{
   const s=new Store(':memory:'),task=boundUser(s),d=Object.assign(new EventEmitter(),{follow:async()=>{}}),service=new TaskService(s,d);
   d.startTask=async t=>{s.event(t.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:t.id});throw new RpcRejected('thread busy');};
-  await service.start(s.get(task.id));assert.equal(s.get(task.id).status,'FAILED');assert.match(s.get(task.id).error,/任务未执行/);
+  await service.start(s.get(task.id));assert.equal(s.get(task.id).status,'FAILED');assert.equal(s.get(task.id).error,'机器人罢工了，请联系 @钟丰骏-实习生');
   const next=s.create(input('third')).task;s.transition(next.id,'STARTING');
   d.startTask=async t=>{s.event(t.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:t.id});throw new OutcomeUnknown('lost');};
   await service.start(s.get(next.id));assert.equal(s.get(next.id).status,'UNKNOWN');s.close();

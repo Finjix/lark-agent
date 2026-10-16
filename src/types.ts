@@ -1,6 +1,8 @@
 export const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED', 'INTERRUPTED'] as const;
 export type TaskStatus = 'QUEUED'|'STARTING'|'RUNNING'|'WAITING_APPROVAL'|'COMPLETED'|'FAILED'|'CANCELLED'|'INTERRUPTED'|'UNKNOWN';
 export const terminal = (status: string) => (terminalStates as readonly string[]).includes(status);
+/** The one thing users are told whenever the bot cannot do its job (Desktop down, lost or refusing, attachments failing); the cause goes to the log. */
+export const BOT_DOWN = '机器人罢工了，请联系 @钟丰骏-实习生';
 export interface Task {
   id: string; tenant_key: string; user_id: string; chat_id: string; source_message_id: string;
   instruction: string; desktop_host_id: string; thread_id: string|null; turn_id: string|null;

@@ -161,7 +161,7 @@ test('failed and cancelled downloads do not submit a Desktop task, and partial f
   const task=store.create(input,[],[image]).task;
   const service=new TaskService(store,d,{downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'partial');throw Error('缺少 im:resource 权限');}});
   store.transition(task.id,'STARTING');await service.start(store.get(task.id));
-  assert.equal(store.get(task.id).status,'FAILED');assert.match(store.get(task.id).error,/im:resource/);assert.equal(submissions,0);
+  assert.equal(store.get(task.id).status,'FAILED');assert.equal(store.get(task.id).error,'机器人罢工了，请联系 @钟丰骏-实习生');assert.equal(submissions,0);
   const folder=sessionInputs(store.session(store.get(task.id).session_id).workspace_path);assert.deepEqual(await fs.readdir(folder),[],'the partial download is gone');
   const cancelled=store.create({...input,source_message_id:'cancelled'},[],[image]).task;
   service.downloader={downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'data');store.update(cancelled.id,{cancel_requested:1});return {size:4,contentType:'image/png'};}};

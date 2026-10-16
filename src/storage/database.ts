@@ -182,6 +182,19 @@ export class Store {
     this.db.prepare(`UPDATE delivery_outbox SET attempts=attempts+1,status=?,error=?,next_attempt_at=? WHERE id=? AND version=?`).run(
       permanent?'FAILED':'RETRYING',error,Date.now()+Math.min(300000,1000*2**Math.min(8,(this.db.prepare('SELECT attempts FROM delivery_outbox WHERE id=?').get(id) as any)?.attempts??0))+Math.random()*500,id,version);
   }
+  /**
+   * Called once when the service starts. Whatever the previous run left behind is dead: a message that never started is cancelled,
+   * and undelivered notices and replies of finished tasks are dropped, so starting the service never speaks to users about the past.
+   * Dropped rows stay as FAILED, so `retry-delivery` can still resend one on purpose. Tasks still running are untouched.
+   */
+  discardLeftovers(){
+    return this.db.transaction(()=>{
+      const cancelled=this.db.prepare("UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status='QUEUED'").run(Date.now()).changes;
+      const dropped=this.db.prepare(`UPDATE delivery_outbox SET status='FAILED',error='服务重启，已丢弃重启前未送达的消息'
+        WHERE status IN ('PENDING','RETRYING') AND (kind='NOTICE' OR task_id IN (SELECT id FROM tasks WHERE status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED')))`).run().changes;
+      return {cancelled:Number(cancelled),dropped:Number(dropped)};
+    })();
+  }
   messages(taskId:string):any{return this.db.prepare('SELECT * FROM task_messages WHERE task_id=?').get(taskId);}
   nextSequence(taskId:string){return this.db.prepare('UPDATE task_messages SET sequence=sequence+1 WHERE task_id=? RETURNING sequence').get(taskId) as {sequence:number};}
   pending(taskId:string):PendingInteraction[]{return this.db.prepare("SELECT request_id AS id,kind,summary,payload FROM pending_requests WHERE task_id=? AND status='PENDING'").all(taskId).map((r:any)=>({...r,payload:JSON.parse(r.payload)}));}

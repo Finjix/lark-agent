@@ -12,6 +12,7 @@ import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
 import {Delivery} from './feishu/delivery.js';
 import {cleanup} from './maintenance.js';
+import {BOT_DOWN} from './types.js';
 import {accessConfigured} from './access.js';
 import {BrowserManager} from './browser/manager.js';
 import {McpServer,mcpToken} from './mcp/server.js';
@@ -91,7 +92,9 @@ async function main(){
   await fs.writeFile(path.join(config.data,'control.token'),token,{mode:0o600});
   restrictSecret(path.join(config.data,'control.token'));
   process.once('SIGINT',()=>{void stop();});process.once('SIGTERM',()=>{void stop();});
-  desktop.on('offline',()=>{for(const task of store.active())store.transition(task.id,'UNKNOWN',{error:'Desktop 连接中断，等待核对'});});
+  desktop.on('offline',()=>{for(const task of store.active())store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});});
+  // Before anything can run or send: what the previous run left unfinished is void and must not reach users now.
+  const leftovers=store.discardLeftovers();if(leftovers.cancelled||leftovers.dropped)log.info(leftovers,'已作废上次运行遗留的排队任务和未送达消息');
   scheduler.start();delivery.start();
   let polling=false;
   const reconnect=async()=>{

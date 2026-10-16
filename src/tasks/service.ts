@@ -5,14 +5,14 @@ import {sessionInputs} from '../feishu/inputs.js';
 import {NativeDesktop} from '../desktop/adapter.js';
 import {taskWorkspace} from '../layout.js';
 import {config} from '../config.js';
-import {terminal,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
+import {terminal,BOT_DOWN,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
 import {OutcomeUnknown,NotSubmitted,RpcRejected} from '../desktop/transport.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
 export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
-export const UNAVAILABLE='Codex Desktop 当前不可用，消息未处理，请稍后重新发送。';
+export const UNAVAILABLE=BOT_DOWN;
 const STALE_GRACE_MS=5000;
 export class TaskService {
   private startedAt=Date.now();
@@ -97,7 +97,11 @@ export class TaskService {
         if(!(e instanceof OutcomeUnknown))this.store.db.prepare("UPDATE pending_requests SET status='PENDING' WHERE task_id=? AND request_id=?").run(task.id,requestId);
         throw e;
       }
-    }catch(e){this.notice(message,safeError(e));}
+    }catch(e){
+      const desktopDown=e instanceof OutcomeUnknown||e instanceof NotSubmitted||e instanceof RpcRejected||/^Desktop/.test(safeError(e));
+      if(desktopDown)log.warn({error:safeError(e)},'命令无法送达 Desktop');
+      this.notice(message,desktopDown?BOT_DOWN:safeError(e));
+    }
   }
   async start(task:Task){
     if(this.starting.has(task.id))return;this.starting.add(task.id);
@@ -128,8 +132,12 @@ export class TaskService {
         else this.store.transition(task.id,'FAILED',{error:UNAVAILABLE,progress:''});
       }else if(e instanceof RpcRejected&&this.store.submission(task.id)&&!current?.turn_id){
         // Desktop explicitly refused the business request, so it is certain nothing is running.
-        this.store.transition(task.id,'FAILED',{error:`Desktop 拒绝了请求，任务未执行：${safeError(e)}`});
-      }else this.store.transition(task.id,submitting?'UNKNOWN':'FAILED',{error:submitting?`需要核对 Desktop：${safeError(e)}`:`附件接收失败，任务未提交给 Codex：${safeError(e)}`});
+        log.warn({taskId:task.id,error:safeError(e)},'Desktop 拒绝了请求，任务未执行');
+        this.store.transition(task.id,'FAILED',{error:BOT_DOWN});
+      }else{
+        log.warn({taskId:task.id,submitting,error:safeError(e)},submitting?'提交结果不明，需要核对 Desktop':'任务未提交给 Codex（附件接收失败）');
+        this.store.transition(task.id,submitting?'UNKNOWN':'FAILED',{error:BOT_DOWN});
+      }
     }
     finally{this.starting.delete(task.id);}
   }
@@ -176,13 +184,13 @@ export class TaskService {
         if(!this.store.submission(task.id)&&!task.turn_id&&session?.thread_id&&session.workspace_path){queueAgain(task.id,'等待提交用户原文');continue;}
         if(task.thread_id)await this.desktop.follow(task.thread_id);
         else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))queueAgain(task.id,'等待恢复附件接收');
-        else{this.store.transition(task.id,'UNKNOWN',{error:'服务重启或提交结果不明，正在核对'});await this.desktop.recoverUnbound(task);}
+        else{this.store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});await this.desktop.recoverUnbound(task);}
         // recoverUnbound may have bound the session after a lost creation response; an unsent input can then go out.
         const current=this.store.get(task.id)!;
         if(!terminal(current.status)&&current.status!=='QUEUED'&&!this.store.submission(task.id)&&!current.turn_id&&current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path){
           queueAgain(task.id,'等待提交用户原文');
         }
-      }catch(e){this.store.transition(task.id,'UNKNOWN',{error:safeError(e)});}
+      }catch(e){log.warn({taskId:task.id,error:safeError(e)},'核对 Desktop 失败');this.store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});}
     }
   }
 }

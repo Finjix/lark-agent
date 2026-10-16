@@ -63,3 +63,42 @@ test('there is no global concurrency cap: different users start together, one us
   assert.equal(canSchedule(mk('user-0',1),active),false,'the same user waits for the previous message in the same chat');
   store.close();
 });
+
+test('starting the service voids what the last run left behind: queued tasks, undelivered notices, replies of finished tasks',()=>{
+  const store=new Store(':memory:'),mk=n=>store.create({tenant_key:'t',user_id:'u',chat_id:'c',source_message_id:n,instruction:'x'}).task;
+  const queued=mk('q'),done=mk('d'),running=mk('r');
+  store.transition(done.id,'COMPLETED');store.transition(running.id,'RUNNING');
+  store.enqueue('notice:1',null,'NOTICE',{chat:'c',message:'q',text:'late'});
+  store.enqueue(`file:${done.id}`,done.id,'FILE',{});store.db.prepare("UPDATE delivery_outbox SET status='RETRYING' WHERE id=?").run(`view:${done.id}`);
+  const result=store.discardLeftovers();
+  assert.equal(result.cancelled,1);assert.equal(store.get(queued.id).status,'CANCELLED');assert.equal(store.get(running.id).status,'RUNNING');
+  const status=id=>store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(id).status;
+  assert.equal(status('notice:1'),'FAILED');assert.equal(status(`file:${done.id}`),'FAILED');assert.equal(status(`view:${done.id}`),'FAILED');
+  assert.equal(status(`view:${running.id}`),'PENDING','a task that is still running keeps reporting');
+  assert.equal(store.due().filter(r=>r.kind!=='VIEW'||r.task_id===running.id).length,store.due().length);
+  assert(!store.due().some(r=>r.id==='notice:1'||r.task_id===done.id||r.task_id===queued.id),'nothing from before the start is sent');
+  store.close();
+});
+
+test('markdown images never reach a card: Feishu rejects the whole card for a data: URI or a local path',async()=>{
+  const {renderTask}=await import('../dist/feishu/cards.js');
+  const task={status:'COMPLETED',progress:'我会生成图片。',result:'![绿色](data:image/png;base64,)\n\n![x](<C:/a b/x.png>) 完成 [文件](C:/a/f.txt)',error:''};
+  const text=renderTask(task);
+  assert(!/!\[/.test(text)&&!text.includes('data:image'));assert(text.includes('我会生成图片。')&&text.includes('完成')&&text.includes('[文件](C:/a/f.txt)'),'text and ordinary links stay');
+  assert.equal(renderTask({status:'COMPLETED',progress:'',result:'![a](data:image/png;base64,AAAA)',error:''}),'本轮已完成。');
+});
+
+test('every unavailable case tells the user the same one sentence, and nothing about Desktop internals',async()=>{
+  const {BOT_DOWN}=await import('../dist/types.js');
+  assert.equal(BOT_DOWN,'机器人罢工了，请联系 @钟丰骏-实习生');assert.equal(UNAVAILABLE,BOT_DOWN);
+  const {store,desktop,service}=setup(true);
+  Object.assign(desktop,{startTask:async()=>{throw new NotSubmitted('Desktop 尚未就绪');},follow:async()=>{}});
+  await service.receive(message('m1'));const [task]=store.list();
+  store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
+  assert.equal(store.get(task.id).error,BOT_DOWN);
+  desktop.reconcileFail=true;Object.assign(desktop,{follow:async()=>{throw Error('boom');}});
+  const t2=store.create({tenant_key:'t',user_id:'u9',chat_id:'c',source_message_id:'x',instruction:'x'}).task;
+  store.transition(t2.id,'STARTING',{thread_id:'th'});await service.reconcile();
+  assert.equal(store.get(t2.id).status,'UNKNOWN');assert.equal(store.get(t2.id).error,BOT_DOWN);
+  store.close();
+});

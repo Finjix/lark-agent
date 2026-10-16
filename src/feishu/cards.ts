@@ -6,10 +6,12 @@ export function limitText(text:string,bytes=18000){
 }
 export const working=(task:Task)=>task.status==='STARTING'||task.status==='RUNNING';
 export function elapsedSeconds(task:Task,now=Date.now()){return Math.max(0,Math.floor((now-(task.started_at??task.created_at))/1000));}
+/** Feishu rejects the whole card if a markdown image is anything but one of its own image keys (Codex writes data: URIs and local paths); images are sent as separate messages. */
+export const withoutImages=(text:string)=>text.replace(/!\[[^\]]*\]\((?:<[^>\n]*>|[^)\n]*)\)/g,'').replace(/\n{3,}/g,'\n\n').trim();
 export function renderTask(task:Task,requests:PendingInteraction[]=[]){
   const parts:string[]=[];
-  if(task.progress)parts.push(limitText(task.progress,7000));
-  if(task.result)parts.push(limitText(task.result,12000));
+  if(withoutImages(task.progress))parts.push(limitText(withoutImages(task.progress),7000));
+  if(withoutImages(task.result))parts.push(limitText(withoutImages(task.result),12000));
   if(task.error)parts.push(limitText(task.error,1500));
   for(const r of requests){parts.push(`**需要${r.kind==='input'?'补充信息':'确认'}：${r.id}**\n${limitText(r.summary,2500)}\n`+
     (r.kind==='input'?`\`/answer ${task.id} ${r.id} 回答或JSON\``:`\`/approve ${task.id} ${r.id}\`\n\`/deny ${task.id} ${r.id}\``));}
