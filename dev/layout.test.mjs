@@ -39,9 +39,9 @@ test('user directory names cannot escape user/ and fall back to the open id when
   store.close();
 });
 
-test('files are exchanged in plain input/ and output/ folders of the chat folder, with no naming scheme',()=>{
+test('files are exchanged in plain input/ and outputs/ folders of the chat folder, with no naming scheme',()=>{
   const chat=path.join(config.user,'..','codex-chat-folder');
-  assert.equal(taskWorkspace(chat),path.join(chat,'output'));assert.equal(sessionInputs(chat),path.join(chat,'input'));
+  assert.equal(taskWorkspace(chat),path.join(chat,'outputs'));assert.equal(sessionInputs(chat),path.join(chat,'input'));
   assert.equal(fs.existsSync(taskWorkspace(chat)),false,'nothing is created on disk by asking for the path');
 });
 

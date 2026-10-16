@@ -60,7 +60,7 @@ test('MCP endpoint: auth, loopback only, initialize, tool list, and per-user too
   await run(call('thread-b','turn-1','browser_click',{target:'3'}));
   assert.deepEqual(seen.map(x=>[x.root,x.command]),[[a.data,'open'],[b.data,'click']],'each call lands in its own user\'s browser');
   const shot=await run(call('thread-a','turn-1','browser_screenshot',{name:'..\\..\\evil.png'}));
-  assert.equal(shot.isError,false);const [file]=seen.at(-1).args;assert.equal(path.dirname(file),a.workspace,'screenshots go to the task directory whatever name is given');
+  assert.equal(shot.isError,false);const [file]=seen.at(-1).args;assert.equal(path.dirname(file),path.join(a.workspace,'.screenshots'),'screenshots stay in a hidden folder of the task directory whatever name is given, so they are only sent when linked');
   const denied=await run({name:'browser_open',arguments:{url:'https://example.com'},_meta:{}});
   assert.equal(denied.isError,true);assert.equal(seen.length,3,'a call without thread metadata never reaches the browser');
   const missing=await run(call('thread-a','turn-1','browser_open',{}));assert.equal(missing.isError,true);assert.match(missing.content[0].text,/url/);
@@ -102,5 +102,5 @@ test('Codex learns how to use the tools from the tool descriptions, not from per
   assert(tools.every(t=>t.description.length>10),'every tool describes itself');
   assert(tools.find(t=>t.name==='feishu_cli').description.includes('auth'),'the login flow is part of the feishu_cli description');
   assert(tools.find(t=>t.name==='browser_open').description.includes('login'),'so is the hint about sites that need a login');
-  assert(tools.find(t=>t.name==='browser_screenshot').description.includes('delivery'),'and where screenshots go');
+  assert(tools.find(t=>t.name==='browser_screenshot').description.includes('link that path'),'and that a screenshot is only sent when linked');
 });

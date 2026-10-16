@@ -1,11 +1,12 @@
+import {FeishuClient} from '../dist/feishu/client.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {config} from '../dist/config.js';
-import {FeishuCliAuth,loadCredentials} from '../dist/feishu-cli/auth.js';
-import {runFeishuCli} from '../dist/feishu-cli/run.js';
+import {FeishuCliAuth,loadCredentials,DEFAULT_SCOPES} from '../dist/feishu-cli/auth.js';
+import {runFeishuCli,loginScopes} from '../dist/feishu-cli/run.js';
 
 const originalFetch=globalThis.fetch;
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
@@ -18,6 +19,57 @@ async function withApp(fn){
     await fs.rm(root,{recursive:true,force:true});
   }
 }
+
+test('the granted user scopes come from the app scope list: user type, granted only',async()=>{
+  const client=Object.create(FeishuClient.prototype);
+  client.raw=async()=>({scopes:[{scope_name:'docx:document',scope_type:'user',grant_status:1},{scope_name:'drive:drive',scope_type:'user',grant_status:2},{scope_name:'im:message',scope_type:'tenant',grant_status:1},{scope_name:'calendar:calendar',scope_type:'user',grant_status:1}]});
+  assert.deepEqual(await client.grantedUserScopes(),['docx:document','calendar:calendar']);
+  client.raw=async()=>({});assert.deepEqual(await client.grantedUserScopes(),[]);
+});
+
+const authorizationServer=bodies=>async(url,init)=>{bodies.push(Object.fromEntries(new URLSearchParams(String(init.body))));return json({device_code:'d',user_code:'U',verification_uri_complete:'https://example/auth?c='+bodies.length,expires_in:240,interval:1});};
+
+test('with no scopes configured, login asks for documents, calendar read and mailbox read; `all` asks for everything the app has',()=>withApp(async root=>{
+  config.FEISHU_CLI_SCOPES=[];const bodies=[];globalThis.fetch=authorizationServer(bodies);
+  const auth=new FeishuCliAuth(async()=>['docx:document','drive:drive','offline_access']);await auth.login(root);
+  assert.equal(bodies[0].scope,['offline_access',...DEFAULT_SCOPES].join(' '));
+  assert(DEFAULT_SCOPES.some(s=>s.startsWith('docx:'))&&DEFAULT_SCOPES.some(s=>s==='calendar:calendar:readonly')&&DEFAULT_SCOPES.some(s=>s==='mail:user_mailbox.message.body:read'));
+  assert(!DEFAULT_SCOPES.some(s=>/(:write|:create)$/.test(s)&&!s.startsWith('docx:')),'calendar and mailbox stay read-only');
+  await auth.logout(root);config.FEISHU_CLI_SCOPES=['all'];await auth.login(root);
+  assert.equal(bodies[1].scope,'offline_access docx:document drive:drive');await auth.logout(root);
+  // A failed lookup must not stop the login: it falls back to the default scopes.
+  bodies.length=0;const broken=new FeishuCliAuth(async()=>{throw new Error('lookup failed');});await broken.login(root);
+  assert.equal(bodies[0].scope,['offline_access',...DEFAULT_SCOPES].join(' '));await broken.logout(root);
+}));
+
+test('a login that asks for one more scope keeps what the user already allowed, and replaces a pending login for other scopes',()=>withApp(async root=>{
+  config.FEISHU_CLI_SCOPES=['docx:document'];const bodies=[];globalThis.fetch=authorizationServer(bodies);
+  await fs.mkdir(path.join(root,'feishu-cli'),{recursive:true});
+  await fs.writeFile(path.join(root,'feishu-cli','credentials.json'),JSON.stringify({accessToken:'u',expiresAt:Date.now()+3600000,savedAt:0,scope:'docx:document offline_access calendar:calendar:readonly'}));
+  const auth=new FeishuCliAuth();const first=await auth.login(root,['drive:drive']);
+  assert.equal(bodies[0].scope,'offline_access docx:document calendar:calendar:readonly drive:drive');
+  assert.equal(await auth.login(root,['drive:drive']),first,'the same request reuses the pending login');assert.equal(bodies.length,1);
+  await auth.login(root,['task:task']);assert.equal(bodies.length,2,'a different request starts a new one');assert(bodies[1].scope.endsWith('task:task'));
+  await auth.logout(root);
+}));
+
+test('auth login takes only --scope, with sane permission names',()=>{
+  assert.deepEqual(loginScopes([]),[]);assert.deepEqual(loginScopes(['--scope','a:b,c:d e:f']),['a:b','c:d','e:f']);assert.deepEqual(loginScopes(['--scope=x:y']),['x:y']);
+  for(const bad of [['--recommend'],['--domain','docs'],['--scope'],['--scope','a b;rm'],['--no-wait']])assert.throws(()=>loginScopes(bad));
+});
+
+test('login through the tool returns the link and puts a QR image of it in the task folder, replacing an older one',()=>withApp(async root=>{
+  config.FEISHU_CLI_PATH='';globalThis.fetch=authorizationServer([]);
+  const auth=new FeishuCliAuth(),out=path.join(root,'outputs');await fs.mkdir(out);await fs.writeFile(path.join(out,'feishu-login-qr.png'),'stale');
+  const result=await runFeishuCli(auth,root,['auth','login'],out);
+  assert.equal(result.code,0);assert(result.stdout.includes('https://example/auth'));assert(result.stdout.includes('feishu-login-qr.png'));
+  const png=await fs.readFile(path.join(out,'feishu-login-qr.png'));assert.equal(png.subarray(1,4).toString(),'PNG','a real PNG, not the stale file');
+  const bad=await runFeishuCli(auth,root,['auth','login','--recommend'],out);assert.equal(bad.code,1);assert(bad.stderr.includes('--scope'));
+  // No QR tool (or it fails): the link alone still works.
+  config.FEISHU_CLI_PATH=process.execPath;await fs.rm(path.join(out,'feishu-login-qr.png'));
+  const plain=await runFeishuCli(auth,root,['auth','login'],out);assert.equal(plain.code,0);assert(!plain.stdout.includes('二维码'));await assert.rejects(fs.stat(path.join(out,'feishu-login-qr.png')),{code:'ENOENT'});
+  await auth.logout(root);
+}));
 
 test('device login stores the user token inside the session directory',()=>withApp(async root=>{
   const calls=[];let polls=0;

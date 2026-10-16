@@ -11,12 +11,14 @@ import {OutcomeUnknown,NotSubmitted,RpcRejected} from '../desktop/transport.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
-export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
+export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID（无响应时再发一次强制结束）\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
 export const UNAVAILABLE=BOT_DOWN;
 // Clock skew allowance for the start check, and how late a message may arrive: live ones take a second or two, Feishu's redeliveries of what was missed while the service was down take much longer.
 const STALE_GRACE_MS=1000,MAX_DELIVERY_LAG_MS=30000;
 export class TaskService {
   private startedAt=Date.now();
+  /** Feishu's clock minus this machine's (ms), kept current by the main loop; message times are Feishu's. */
+  clockOffsetMs=0;
   private interruptSent=new Set<string>();
   private starting=new Set<string>();
   constructor(public store:Store,public desktop:NativeDesktop,private downloader?:ResourceDownloader){
@@ -25,6 +27,8 @@ export class TaskService {
   }
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
   authorized(message:IncomingMessage){return authorized(message);}
+  /** Marks a task as awaiting reconciliation once; repeating it on every pass would rewrite its events and card forever. */
+  private markUnknown(id:string){const task=this.store.get(id);if(task&&(task.status!=='UNKNOWN'||task.error!==BOT_DOWN))this.store.transition(id,'UNKNOWN',{error:BOT_DOWN});}
   private async refreshSessionName(session:UserSession){
     if(!this.downloader?.getUserName)return;
     try{const name=await this.downloader.getUserName(session.user_id);if(name)this.store.nameSession(session.id,name);}
@@ -39,7 +43,8 @@ export class TaskService {
   }
   async receive(message:IncomingMessage){
     // Feishu may redeliver events that arrived while this service was not running; those are stale and must not run now.
-    if(message.createdAt&&(message.createdAt<this.startedAt-STALE_GRACE_MS||Date.now()-message.createdAt>MAX_DELIVERY_LAG_MS)){log.info({message:message.message,lagMs:Date.now()-message.createdAt},'忽略服务不可用期间发送、事后才送达的消息');return;}
+    const lagMs=Date.now()+this.clockOffsetMs-(message.createdAt??0);
+    if(message.createdAt&&(message.createdAt<this.startedAt+this.clockOffsetMs-STALE_GRACE_MS||lagMs>MAX_DELIVERY_LAG_MS)){log.info({message:message.message,lagMs},'忽略服务不可用期间发送、事后才送达的消息');return;}
     if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(!this.authorized(message)){this.notice(message,config.tenants.length?'当前企业或会话尚未开放机器人使用权限，请联系管理员。':`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
     if(message.error){this.notice(message,message.error);return;}
@@ -78,11 +83,19 @@ export class TaskService {
           this.store.transition(task.id,'CANCELLED',{error:''});
           this.notice(message,this.store.submission(task.id)?'任务已取消。如果 Desktop 已收到该请求，它仍可能继续执行。':'任务已取消。');return;
         }
+        else if(!terminal(task.status)&&task.cancel_requested){
+          // Asked before and Desktop has still not confirmed the interrupt (it may have crashed mid-turn). Waiting longer helps nobody and
+          // would keep the user's queue blocked for good, so the task ends here; Desktop is told once more, best effort.
+          this.store.transition(task.id,'CANCELLED',{error:'',progress:''});
+          if(task.thread_id&&task.turn_id)void this.interrupt(task).catch(e=>log.warn({taskId:task.id,error:safeError(e)},'强制结束后中断仍未确认'));
+          this.notice(message,'已强制结束任务。如果 Desktop 仍在执行，它可能继续运行，结果不会再回传。');return;
+        }
         else if(!terminal(task.status)){
           this.store.update(task.id,{cancel_requested:1});
-          if(task.thread_id&&task.turn_id)await this.interrupt(task);
+          // An interrupt that cannot be confirmed now is retried on the next state update; the user is not told the bot is down for it.
+          if(task.thread_id&&task.turn_id)await this.interrupt(task).catch(e=>log.warn({taskId:task.id,error:safeError(e)},'中断尚未确认'));
         }
-        this.notice(message,terminal(task.status)||task.status==='QUEUED'?'任务已结束或已取消。':'已请求中断，等待 Desktop 确认。');return;
+        this.notice(message,terminal(task.status)||task.status==='QUEUED'?'任务已结束或已取消。':'已请求中断，等待 Desktop 确认。若长时间没有结果，再发一次 /cancel 可强制结束。');return;
       }
       if(terminal(task.status))throw Error('任务已经结束');
       const row=this.store.db.prepare("SELECT * FROM pending_requests WHERE task_id=? AND request_id=? AND status='PENDING'").get(task.id,requestId) as any;
@@ -151,7 +164,7 @@ export class TaskService {
     const task=this.store.byThread(threadId);if(!task||terminal(task.status))return;
     const cached=this.desktop.stream.states.get(threadId);
     const submission=this.store.submission(task.id);
-    const view=this.desktop.stream.view(threadId,task.turn_id,submission?undefined:`[LARK_TASK_ID:${task.submission_key}]`,submission?.clientUserMessageId);
+    const view=this.desktop.stream.view(threadId,task.turn_id,submission?.clientUserMessageId);
     if(!view)return;
     if(!task.turn_id){
       const session=task.session_id?this.store.session(task.session_id):undefined;
@@ -191,11 +204,11 @@ export class TaskService {
         if(!this.store.submission(task.id)&&!task.turn_id&&session?.thread_id&&session.workspace_path){voidTask(task.id);continue;}
         if(task.thread_id)await this.desktop.follow(task.thread_id);
         else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))voidTask(task.id);
-        else{this.store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});await this.desktop.recoverUnbound(task);}
+        else{this.markUnknown(task.id);await this.desktop.recoverUnbound(task);}
         // recoverUnbound may have bound the session after a lost creation response; an input that never went out is void like any other.
         const current=this.store.get(task.id)!;
         if(!terminal(current.status)&&!this.store.submission(task.id)&&!current.turn_id&&current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path)voidTask(task.id);
-      }catch(e){log.warn({taskId:task.id,error:safeError(e)},'核对 Desktop 失败');this.store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});}
+      }catch(e){log.warn({taskId:task.id,error:safeError(e)},'核对 Desktop 失败');this.markUnknown(task.id);}
     }
   }
 }

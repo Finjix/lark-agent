@@ -33,7 +33,7 @@ test('Desktop creates one user thread and sends subsequent messages to that same
   const a=s.create(input()).task;s.sessionFor(a);const first=await desktop.startTask(s.get(a.id));
   const b=s.create(input('two')).task;s.sessionFor(b);const second=await desktop.startTask(s.get(b.id));
   assert.equal(first.threadId,second.threadId);assert.equal(first.workspace,second.workspace,'one plain output folder per chat');
-  assert.equal(first.workspace,path.join(root,'output'),"outputs live in Codex's own chat folder, not under user/");
+  assert.equal(first.workspace,path.join(root,'outputs'),"outputs live in Codex's own chat folder, not under user/");
   await assert.rejects(fs.stat(first.workspace),{code:'ENOENT'},'the output folder is not created until something is written');
   const real=calls.filter(c=>c.name!=='read_thread');
   assert.deepEqual(real.map(c=>c.name),['create_thread','thread-follower-start-turn','thread-follower-start-turn']);
@@ -50,8 +50,8 @@ test('stream updates route to the active message and never reuse the previous tu
   const s=new Store(':memory:'),desktop=Object.assign(new EventEmitter(),{stream:new StreamState(),unfollow:()=>{}}),service=new TaskService(s,desktop);
   const old=s.create(input()).task,session=s.sessionFor(old);s.bindSession(session.id,'thread','workspace');
   s.transition(old.id,'COMPLETED',{thread_id:'thread',turn_id:'old',result:'previous answer'});
-  const next=s.create(input('new message')).task;s.sessionFor(next);s.transition(next.id,'STARTING',{thread_id:'thread'});
-  const turn=(id,task,answer)=>({turnId:id,status:'completed',params:{input:[{type:'text',text:`[LARK_TASK_ID:${task.id}]`}]},items:[{type:'agentMessage',phase:'final_answer',text:answer}]});
+  const next=s.create(input('new message')).task;s.sessionFor(next);s.transition(next.id,'STARTING',{thread_id:'thread'});s.event(next.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:next.id});
+  const turn=(id,task,answer)=>({turnId:id,status:'completed',params:{clientUserMessageId:task.id},items:[{type:'agentMessage',phase:'final_answer',text:answer}]});
   desktop.stream.receive({type:'broadcast',method:'thread-stream-state-changed',params:{hostId:'local',conversationId:'thread',change:{type:'snapshot',revision:1,conversationState:{turns:[turn('old',old,'previous answer')]}}}});
   service.onState('thread');assert.equal(s.get(next.id).status,'STARTING');assert.equal(s.get(next.id).result,'');
   desktop.stream.receive({type:'broadcast',method:'thread-stream-state-changed',params:{hostId:'local',conversationId:'thread',change:{type:'snapshot',revision:2,conversationState:{turns:[turn('old',old,'previous answer'),turn('new',next,'new answer')]}}}});
@@ -100,4 +100,17 @@ test("the chat folder is whatever Desktop says it is, and a stored folder follow
   await assert.rejects(desktop.prepareSession(s.get(fresh.id)),/工作目录/);
   const bound=s.sessionFor(s.get(fresh.id));assert.equal(bound.thread_id,'new-thread');assert.equal(bound.workspace_path,null);
   s.close();
+});
+
+test('a task recorded under the earlier folder name output is still cleaned up, and only its own files go',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-legacy-')),s=new Store(':memory:');
+  const old=s.create(input()).task,session=s.sessionFor(old);s.bindSession(session.id,'thread',root);
+  const output=path.join(root,'output');await fs.mkdir(output,{recursive:true});
+  const oldFile=path.join(output,'old.txt'),laterFile=path.join(output,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
+  s.transition(old.id,'COMPLETED',{thread_id:'thread',workspace_path:output});s.update(old.id,{finished_at:1});
+  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,oldFile,'old.txt',3,'file');
+  const row=s.due()[0];s.ack(row.id,row.version);
+  await cleanup(s,{archive:async()=>assert.fail('the chat is not archived')});
+  assert(s.get(old.id).cleaned_at);await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');
+  s.close();await fs.rm(root,{recursive:true});
 });

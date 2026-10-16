@@ -42,19 +42,18 @@ export class StreamState extends EventEmitter {
     else if(change.type==='patches'){
       if(old&&change.revision<=old.revision)return;
       if(!old||change.baseRevision!==old.revision){this.emit('resync',id);return;}
-      try{const state=structuredClone(old.state);for(const p of change.patches??[])applyPatch(state,p);this.states.set(id,{revision:change.revision,state});}
-      catch{this.emit('resync',id);return;}
+      // Applied in place: copying the whole chat for every streamed token costs more the longer the user's one chat gets.
+      // A batch that fails halfway leaves the state half-changed, so it is dropped and read again from Desktop.
+      try{for(const p of change.patches??[])applyPatch(old.state,p);old.revision=change.revision;}
+      catch{this.states.delete(id);this.emit('resync',id);return;}
     }else return;
     this.emit('state',id);
   }
-  view(threadId:string,turnId?:string|null,marker?:string,clientUserMessageId?:string):TaskView|undefined {
+  view(threadId:string,turnId?:string|null,clientUserMessageId?:string):TaskView|undefined {
     const cached=this.states.get(threadId);if(!cached)return;
     const turns=turnsOf(cached.state);
     const matching=clientUserMessageId?turns.filter(t=>t.params?.clientUserMessageId===clientUserMessageId):[];
-    const turn=turnId?turns.find(t=>t.turnId===turnId):clientUserMessageId?(matching.length===1?matching[0]:undefined):turns.find(t=>
-      JSON.stringify(t.params?.input??[]).includes(marker??'__never__')||
-      (typeof t.params?.toolOutput?.output==='string'&&t.params.toolOutput.output.includes(marker??'__never__'))||
-      (t.items??[]).some((i:any)=>i.type==='userMessage'&&JSON.stringify(i.content??i.text??'').includes(marker??'__never__')));
+    const turn=turnId?turns.find(t=>t.turnId===turnId):clientUserMessageId&&matching.length===1?matching[0]:undefined;
     if(!turn)return;
     const items=turn.items??[],messages=items.filter((i:any)=>i.type==='agentMessage'&&typeof i.text==='string');
     return {threadId,turnId:turn.turnId,revision:cached.revision,status:turn.status,

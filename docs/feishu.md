@@ -28,6 +28,17 @@
 - 下载用户附件：`im:message:readonly`（只有 `im:resource` 会被拒绝）
 - 会话命名查显示名：`contact:contact.base:readonly`、`contact:user.base:readonly`（缺后者时接口成功但无姓名）
 
+飞书 CLI 以用户本人身份操作，用户登录时才获得权限。默认登录申请下面这组 `user` 权限，应用要先在后台开通并发布，否则用户在授权页会被拒绝（上面的 JSON 里 `user` 目前是空的）：
+
+```
+docx:document  docx:document:create  docs:document.content:read
+calendar:calendar:readonly  calendar:calendar.event:read  calendar:calendar.free_busy:read
+mail:user_mailbox.message:readonly  mail:user_mailbox.message.subject:read
+mail:user_mailbox.message.address:read  mail:user_mailbox.message.body:read  mail:user_mailbox.folder:read
+```
+
+其他能力（云盘、表格、知识库、任务等）在用户用到、命令提示缺权限时才增量授权，同样要先在后台为应用开通。
+
 机器人只处理订阅收到的消息，不扫描聊天历史或通讯录。应用可用范围需包含目标成员；缺少姓名时任务照常执行，会话沿用默认名称。
 
 ## 事件与发布

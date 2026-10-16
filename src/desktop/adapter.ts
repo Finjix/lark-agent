@@ -218,7 +218,7 @@ export function taskPrompt(task:Task,store:Store){
 export function taskRequest(task:Task,store:Store){
   if(!task.thread_id||!task.workspace_path)throw Error('用户会话和交付目录尚未确认');
   const instruction=taskPrompt(task,store),inputs=store.inputs(task.id);
-  // The standing rules live in the system prompt (prompt/system.md). Attachments are written the way Desktop writes a file dropped into its own
+  // The standing rules live in the system prompt (system.md). Attachments are written the way Desktop writes a file dropped into its own
   // composer, so Codex treats them identically and Desktop shows them as file chips: images also go in as localImage (the model sees the pixels),
   // every other file is a path the model opens with its tools; there is no other file input in Desktop's protocol.
   const text=inputs.length?nativeAttachmentText(inputs,instruction):instruction;

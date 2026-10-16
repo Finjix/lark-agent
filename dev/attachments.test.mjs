@@ -197,3 +197,9 @@ test('voice messages arrive as a file; audio files go in natively only when ever
     await write([{visibility:'list',input_modalities:['text','audio']},{visibility:'hide',input_modalities:['text']}]);assert.equal(audioSupported(home),true);
   }finally{await fs.rm(home,{recursive:true,force:true});}
 });
+
+test('in a group, other people mentioned in plain text keep their names instead of @_user_N placeholders',()=>{
+  const mentions=[{key:'@_user_1',id:{open_id:'bot'},name:'机器人'},{key:'@_user_2',id:{open_id:'ou_x'},name:'小王'}];
+  const message=incomingMessage(event('text',{text:'@_user_1 帮我问问 @_user_2 的进度'},{chat_type:'group',mentions}),'bot');
+  assert.equal(message.text,' 帮我问问 @小王 的进度');
+});

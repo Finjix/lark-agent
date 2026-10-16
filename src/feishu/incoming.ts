@@ -51,7 +51,11 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
       }
       for(const image of Array.isArray(post.images)?post.images:Array.isArray(content.images)?content.images:[])add('image',image?.image_key,undefined);
     }else message.error='暂不支持此消息类型，请发送文字、图片、文件、语音或图文消息。';
-    for(const mention of mentions)if(mention.id?.open_id===botId&&typeof mention.key==='string')message.text=message.text.replaceAll(mention.key,'');
+    for(const mention of mentions){
+      if(typeof mention.key!=='string')continue;
+      if(mention.id?.open_id===botId)message.text=message.text.replaceAll(mention.key,'');
+      else if(typeof mention.name==='string'&&mention.name)message.text=message.text.replaceAll(mention.key,`@${mention.name}`);
+    }
     if(attachments.length>MAX_INPUT_FILES)throw Error(`每条消息最多接收 ${MAX_INPUT_FILES} 个附件，请分批发送`);
   }catch(e){message.error=e instanceof SyntaxError?'无法解析消息，请重新发送。':(e as Error).message;}
   if(!message.text&&!attachments.length&&!message.error)return;

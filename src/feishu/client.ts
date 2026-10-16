@@ -53,6 +53,11 @@ export class FeishuClient {
   }
   private async protect<T>(fn:()=>Promise<T>){try{return checked(await fn());}catch(e){throw sanitizedFeishuError(e);}}
   async raw(method:string,url:string,data?:any){return this.protect(()=>this.sdk.request({method,url:`https://open.feishu.cn${url}`,data}));}
+  /** User permissions the app has been granted (enabled and published in the developer console). */
+  async grantedUserScopes():Promise<string[]>{
+    const response=await this.raw('GET','/open-apis/application/v6/scopes');
+    return (Array.isArray(response.scopes)?response.scopes:[]).filter((s:any)=>s?.scope_type==='user'&&s.grant_status===1&&typeof s.scope_name==='string').map((s:any)=>s.scope_name as string);
+  }
   async getUserName(userId:string):Promise<string|undefined>{
     const cached=this.userNames.get(userId);if(cached&&cached.expires>Date.now())return cached.name;
     const pending=this.userNameRequests.get(userId);if(pending)return pending;

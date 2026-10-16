@@ -5,6 +5,7 @@ import {Store} from '../dist/storage/database.js';
 import {TaskService,UNAVAILABLE} from '../dist/tasks/service.js';
 import {Scheduler,canSchedule} from '../dist/tasks/scheduler.js';
 import {NotSubmitted} from '../dist/desktop/transport.js';
+import {clockOffset} from '../dist/feishu/clock.js';
 
 const message=(id,user='u1',extra={})=>({tenant:'t',user,chat:'c',message:id,text:'hi',isGroup:false,...extra});
 const notices=store=>store.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE' ORDER BY rowid").all().map(r=>JSON.parse(r.payload));
@@ -143,6 +144,17 @@ test('a chat no Desktop window has loaded is opened before a task is sent, but n
   const a=make();await a.d.follow('t',true);
   assert.deepEqual(a.calls,['read_thread','navigate_to_codex_page']);assert.equal(a.d.owners.get('t'),'win');a.store.close();
   const b=make();await assert.rejects(b.d.follow('t'),/no-client-found/);assert(!b.calls.includes('navigate_to_codex_page'),'reconcile and refresh never move the user\'s window');b.store.close();
+});
+
+test("stale checks run on Feishu's clock, so a machine whose clock runs fast still hears live messages",async()=>{
+  const {store,service}=setup(true),now=Date.now();
+  service.clockOffsetMs=-60000; // this machine is a minute ahead of Feishu
+  await service.receive(message('live',undefined,{createdAt:now-60500}));assert.equal(store.list().length,1,'sent half a second ago by the Feishu clock');
+  await service.receive(message('old','u2',{createdAt:now-120000}));assert.equal(store.list().length,1,'a minute old by the Feishu clock is still stale');
+  const offset=await clockOffset(async()=>new Response(null,{headers:{date:new Date(Date.now()+60000).toUTCString()}}));
+  assert(Math.abs(offset-60000)<2000,`offset ${offset}`);
+  await assert.rejects(clockOffset(async()=>new Response(null)),/时间/);
+  store.close();
 });
 
 test('a message Feishu delivers long after it was sent is stale even if it was sent just after the service started',async()=>{

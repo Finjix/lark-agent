@@ -54,34 +54,59 @@ export async function outputFiles(root:string,window?:{from:number;to:number}){
   };
   await walk(root,0);return found;
 }
+/** Local file targets of the markdown links in a reply. Parentheses inside a path ("report (2).pdf") are balanced, not taken for the end of the link. */
 export function artifactLinks(text:string){
-  return [...text.matchAll(/\]\(<?((?:[A-Za-z]:[\\/]|\/)[^\n)<>]*?)>?\)/g)].map(m=>{
-    try{return decodeURIComponent(m[1]).replace(/:\d+$/,'');}catch{return m[1];}
-  });
+  const links:string[]=[];
+  for(const open of text.matchAll(/\]\(/g)){
+    const start=open.index!+2;let target:string;
+    if(text[start]==='<'){const end=text.indexOf('>',start);if(end<0||text[end+1]!==')')continue;target=text.slice(start+1,end);}
+    else{let depth=0,end=start;for(;end<text.length&&text[end]!=='\n';end++){if(text[end]==='(')depth++;else if(text[end]===')'&&!depth--)break;}if(text[end]!==')')continue;target=text.slice(start,end);}
+    if(target.includes('\n')||!/^(?:[A-Za-z]:[\\/]|\/)/.test(target))continue;
+    try{links.push(decodeURIComponent(target).replace(/:\d+$/,''));}catch{links.push(target);}
+  }
+  return links;
+}
+/** True when the path lies, as written, inside the folder. Links elsewhere (the user's own attachments, site paths like /docs/x) are not deliverables. */
+export async function lexicallyInside(workspace:string,candidate:string){
+  const roots=[path.resolve(workspace),await fs.realpath(workspace).catch(()=>'')].filter(Boolean);
+  return roots.some(root=>{const relative=path.relative(root,path.resolve(candidate));return !!relative&&relative!=='..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative);});
 }
 export class Delivery {
-  private timer?:NodeJS.Timeout;private busy=false;private stopping=false;
+  private timer?:NodeJS.Timeout;private busy=false;private filesBusy=false;private stopping=false;
   private renderedSeconds=new Map<string,number>();
   private gate=new RateGate(5,1000);
+  // Uploads wait on their own gate and loop: a large file on a slow link must not hold up everyone's streaming cards.
+  private fileGate=new RateGate(2,1000);
   constructor(private store:Store,private feishu:FeishuClient){}
   start(){this.timer=setInterval(()=>{void this.tick();},config.CARD_UPDATE_INTERVAL_MS);void this.tick();}
   async tick(){
     // Replies go out over REST, so a reconnecting long connection must not hold them back; only wait until the client has started.
-    if(this.busy||this.stopping||this.feishu.started===false)return;this.busy=true;
+    if(this.stopping||this.feishu.started===false)return;
+    const files=this.pumpFiles();
+    if(this.busy){await files;return;}this.busy=true;
     try{
       // Refresh the timer even when Desktop has no new text. Preserve retry backoff and failures.
       for(const task of this.store.active())if(working(task)&&this.renderedSeconds.get(task.id)!==elapsedSeconds(task)){
         const row=this.store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`) as {status:string}|undefined;
         if(row?.status==='DELIVERED')this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
       }
-      for(const row of this.store.due()){
-      try{await this.deliver(row);this.store.ack(row.id,row.version);}
-      catch(e){const error=safeError(e);const permanent=e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code);
-        this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
-    }}catch(e){log.error({error:safeError(e)},'投递轮询失败，下一轮重试');}
+      for(const row of this.store.due(false))await this.deliverRow(row);
+    }catch(e){log.error({error:safeError(e)},'投递轮询失败，下一轮重试');}
     finally{this.busy=false;}
+    await files;
   }
-  private async api<T>(fn:()=>Promise<T>):Promise<T>{return await this.gate.add(fn);}
+  private async pumpFiles(){
+    if(this.filesBusy)return;this.filesBusy=true;
+    try{for(const row of this.store.due(true))await this.deliverRow(row);}
+    catch(e){log.error({error:safeError(e)},'文件投递轮询失败，下一轮重试');}
+    finally{this.filesBusy=false;}
+  }
+  private async deliverRow(row:any){
+    try{await this.deliver(row);this.store.ack(row.id,row.version);}
+    catch(e){const error=safeError(e);const permanent=e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code);
+      this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
+  }
+  private async api<T>(fn:()=>Promise<T>,gate=this.gate):Promise<T>{return await gate.add(fn);}
   private async deliver(row:any){
     const payload=JSON.parse(row.payload);
     if(row.kind==='NOTICE'){
@@ -94,10 +119,10 @@ export class Delivery {
       // Revalidate realpath immediately before uploading; do not follow replaced symlinks outside the task directory.
       await ownedArtifact(task.workspace_path!,artifact.path);
       const image=artifact.kind==='image';
-      if(!artifact.file_key){const uploaded=await this.api(()=>image?this.feishu.uploadImage(artifact.path):this.feishu.upload(artifact.path,artifact.name));artifact.file_key=image?uploaded.image_key:uploaded.file_key;
+      if(!artifact.file_key){const uploaded=await this.api(()=>image?this.feishu.uploadImage(artifact.path):this.feishu.upload(artifact.path,artifact.name),this.fileGate);artifact.file_key=image?uploaded.image_key:uploaded.file_key;
         if(!artifact.file_key)throw Error('飞书未返回附件上传标识');
         this.store.db.prepare('UPDATE task_artifacts SET file_key=? WHERE id=?').run(artifact.file_key,artifact.id);}
-      const sent=await this.api(()=>this.feishu.reply(task.source_message_id,task.chat_id,image?'image':'file',image?{image_key:artifact.file_key}:{file_key:artifact.file_key},this.uuid(row.id)));
+      const sent=await this.api(()=>this.feishu.reply(task.source_message_id,task.chat_id,image?'image':'file',image?{image_key:artifact.file_key}:{file_key:artifact.file_key},this.uuid(row.id)),this.fileGate);
       this.store.db.prepare('UPDATE task_artifacts SET message_id=? WHERE id=?').run(sent.message_id,artifact.id);return;
     }
     if(row.kind!=='VIEW')throw Error('未知投递类型');
@@ -120,8 +145,8 @@ export class Delivery {
     }
     // Feishu streaming sessions close after 10 minutes. Switch to full-card updates before that limit.
     const closeStream=terminal(task.status)||Date.now()-(task.started_at??task.created_at)>9*60*1000;
-    if(working(task)&&!message.finalized&&!closeStream){
-      // The colored header is outside the text element, so refresh the full card with the stream open.
+    if(!terminal(task.status)&&!message.finalized&&!closeStream){
+      // The colored header is outside the text element, so refresh the full card with the stream open (this also drops it while the task waits for the user).
       const {sequence}=this.store.nextSequence(task.id);
       await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,true,now))},sequence,uuid:`u_${task.id}_${sequence}`}));
     }else if(message.finalized){
@@ -176,6 +201,8 @@ ${reason}`});
     for(const file of await outputFiles(task.workspace_path,{from:task.started_at??task.created_at,to:task.finished_at??Date.now()}))if(!paths.has(file))paths.set(file,/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file');
     for(const [candidate,requestedKind] of paths){
       try{
+        // A reply links all sorts of things (the user's own attachment, a site path); only what is meant to be in the delivery folder can fail loudly.
+        if(!await lexicallyInside(task.workspace_path,candidate)){log.info({taskId:task.id,name:path.basename(candidate)},'回复里的链接不在交付目录内，不作为附件发送');continue;}
         const file=await ownedArtifact(task.workspace_path,candidate),id=this.uuid(`${task.id}:${file.path}`);
         // Feishu's image upload limit is 10 MB; larger images remain downloadable files.
         const kind=requestedKind==='image'&&file.size<=10*1024*1024?'image':'file';
@@ -185,5 +212,5 @@ ${reason}`});
       }catch(e){reject(path.basename(candidate),e,candidate);}
     }
   }
-  async stop(){this.stopping=true;clearInterval(this.timer);while(this.busy)await new Promise(r=>setTimeout(r,50));await this.gate.onIdle();}
+  async stop(){this.stopping=true;clearInterval(this.timer);while(this.busy||this.filesBusy)await new Promise(r=>setTimeout(r,50));await this.gate.onIdle();await this.fileGate.onIdle();}
 }

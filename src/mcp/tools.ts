@@ -38,15 +38,16 @@ export const tools:Tool[]=[
   browser('browser_tab','Switch to a tab by its index from browser_tabs.',schema({index:text('Tab index')},['index']),'tab',a=>[String(a.index??'')]),
   browser('browser_close','Close the browser; the profile and cookies are kept.',schema(),'close'),
   {name:'browser_screenshot',enabled:browserOn,
-    description:'Save a screenshot of the current page into this task\'s delivery directory and return its absolute path; link that path in the final reply to deliver it.',
+    description:'Save a screenshot of the current page and return its absolute path. It is not sent to the user by itself: link that path in the final reply to deliver it.',
     inputSchema:schema({name:text('Optional file name, e.g. page.png'),full:{type:'boolean',description:'Capture the full page'}}),
     async run(context,args){
       const base=typeof args.name==='string'&&args.name?path.basename(args.name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_'):`screenshot-${Date.now()}.png`;
-      const file=path.join(context.workspace,/\.(png|jpe?g)$/i.test(base)?base:`${base}.png`);
+      // Kept in a hidden folder of the delivery directory: every file in the directory itself is sent, and a screenshot taken only to look at a page is not meant for the user.
+      const file=path.join(context.workspace,'.screenshots',/\.(png|jpe?g)$/i.test(base)?base:`${base}.png`);
       return {text:await context.browsers.run(context.data,'screenshot',[file,...(args.full===true?['--full']:[])],context.workspace)};
     }},
   {name:'feishu_cli',enabled:()=>config.FEISHU_CLI_ENABLED&&!!config.FEISHU_APP_ID,
-    description:'Run the official Feishu/Lark CLI (lark-cli) as this user, with this user\'s own login, for docs, drive, messages, calendar, tasks, sheets, base, wiki, contacts and more. Pass the arguments after "lark-cli", e.g. ["docs","--help"], ["schema","im.messages.create"] or ["api","GET","/open-apis/..."]. If it reports the user is not logged in, call it with ["auth","login"] and put the printed link in your final reply; the user authorizes and sends the request again. Also supported: ["auth","status"] and ["auth","logout"]. Prefer +shortcuts; read --help first.',
+    description:'Run the official Feishu/Lark CLI (lark-cli) as this user, with this user\'s own login, for docs, drive, messages, calendar, tasks, sheets, base, wiki, contacts and more. Pass the arguments after "lark-cli", e.g. ["docs","--help"], ["schema","im.messages.create"] or ["api","GET","/open-apis/..."]. If it reports the user is not logged in, call it with ["auth","login"]: put the printed link in your final reply and stop (a QR code image of it is sent to the user automatically); the user authorizes and sends the request again. Logging in grants documents (create, read, edit), calendar read-only and mailbox read-only. If a command reports a missing permission, call ["auth","login","--scope","<permission name>"] to ask the user for just that one. Also supported: ["auth","status"] and ["auth","logout"]. Prefer +shortcuts; read --help first.',
     inputSchema:schema({args:{type:'array',items:{type:'string'},description:'lark-cli arguments'}},['args']),
     async run(context,args){
       if(!Array.isArray(args.args)||!args.args.length||args.args.some(x=>typeof x!=='string'))throw Error('args 必须是非空字符串数组');

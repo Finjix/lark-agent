@@ -76,6 +76,18 @@ test('/cancel ends an UNKNOWN task that Desktop never confirmed and frees the us
   assert.equal(s.get(running.id).status,'RUNNING');assert.equal(s.get(running.id).cancel_requested,1);s.close();
 });
 
+test('a second /cancel ends a task whose interrupt Desktop never confirms, and frees the user queue',async()=>{
+  const s=new Store(':memory:'),task=s.create(input('stuck')).task;s.transition(task.id,'RUNNING',{thread_id:'th',turn_id:'tu'});
+  let interrupts=0;const service=new TaskService(s,Object.assign(new EventEmitter(),{interrupt:async()=>{interrupts++;throw new Error('Desktop 无响应');}}));
+  await service.command(msg(`/cancel ${task.id}`));
+  assert.equal(s.get(task.id).status,'RUNNING','the first /cancel only asks Desktop');assert.equal(s.get(task.id).cancel_requested,1);
+  assert(notices(s).at(-1).includes('再发一次 /cancel'),'a failed interrupt is not reported as the bot being down, and the way out is named');assert(!notices(s).some(t=>t.includes('罢工')));
+  assert.equal(s.busy('t1','u1'),true);
+  await service.command(msg(`/cancel ${task.id}`,'cmd2'));
+  assert.equal(s.get(task.id).status,'CANCELLED');assert.equal(s.busy('t1','u1'),false);assert(notices(s).at(-1).includes('强制结束'));
+  await service.command(msg(`/cancel ${task.id}`,'cmd3'));assert(notices(s).at(-1).includes('已结束'),'cancelling a finished task is harmless');s.close();
+});
+
 test('a failed interrupt can be retried instead of being remembered as sent',async()=>{
   const s=new Store(':memory:');let calls=0;
   const d=Object.assign(new EventEmitter(),{interrupt:async()=>{if(++calls===1)throw new Error('timed out');}}),service=new TaskService(s,d);

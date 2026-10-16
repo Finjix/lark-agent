@@ -19,6 +19,7 @@ import {McpServer,mcpToken} from './mcp/server.js';
 import {registerMcp,unregisterMcp,mcpRegistered} from './mcp/register.js';
 import {feishuCliBinary} from './feishu-cli/run.js';
 import {FeishuCliAuth} from './feishu-cli/auth.js';
+import {clockOffset} from './feishu/clock.js';
 
 async function main(){
   ensureDirectories();const action=process.argv[2]??'start';
@@ -59,9 +60,9 @@ async function main(){
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
   let stopping=false;let poll:NodeJS.Timeout|undefined,refresh:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
-  let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0,lastNameSync=0,nameSync:Promise<void>|undefined;
-  const token=randomBytes(32).toString('hex'),browsers=new BrowserManager(),mcp=new McpServer(store,browsers,new FeishuCliAuth());
-  const feishu=new FeishuClient(),service=new TaskService(store,desktop,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
+  let feishuStarted=false,lastFeishuAttempt=0,lastReconcile=0,lastNameSync=0,lastClockSync=0,nameSync:Promise<void>|undefined;
+  const token=randomBytes(32).toString('hex'),browsers=new BrowserManager(),feishu=new FeishuClient(),mcp=new McpServer(store,browsers,new FeishuCliAuth(()=>feishu.grantedUserScopes()));
+  const service=new TaskService(store,desktop,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
   const server=http.createServer((request,response)=>{
     response.setHeader('Content-Type','application/json; charset=utf-8');response.setHeader('Cache-Control','no-store');
     if(request.headers.origin){response.writeHead(403).end('{}');return;}
@@ -94,6 +95,10 @@ async function main(){
   const reconnect=async()=>{
     if(polling||stopping)return;polling=true;
     try{
+      if(Date.now()-lastClockSync>600000){
+        lastClockSync=Date.now();
+        void clockOffset().then(offset=>{service.clockOffsetMs=offset;if(Math.abs(offset)>5000)log.warn({offsetMs:Math.round(offset)},'本机时钟与飞书相差较大，已按飞书时间判断消息是否过期，请校准系统时间');}).catch(e=>log.debug({error:safeError(e)},'读取飞书时间失败'));
+      }
       if(!desktop.ready){try{await desktop.probe();await service.reconcile();lastReconcile=Date.now();}catch(e){log.warn({error:safeError(e)},'等待 Desktop 就绪');}}
       else if(Date.now()-lastReconcile>30000){await service.reconcile();lastReconcile=Date.now();}
       // The SDK gives up after a non-retryable error (for example rejected credentials); build a fresh client instead of staying deaf.

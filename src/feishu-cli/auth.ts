@@ -36,19 +36,39 @@ const tokens=(body:any,previous?:Credentials):Credentials=>{
     scope:body.scope??previous?.scope,savedAt:now};
 };
 
-interface Pending{url:string;userCode:string;expiresAt:number;abort:AbortController}
+/**
+ * What a login asks for when FEISHU_CLI_SCOPES is empty: documents (create, read, edit), calendar read-only and mailbox read-only.
+ * Anything else is asked for later, when a command needs it, with `auth login --scope`. The app must have these enabled in the Feishu console.
+ */
+export const DEFAULT_SCOPES=[
+  'docx:document','docx:document:create','docs:document.content:read',
+  'calendar:calendar:readonly','calendar:calendar.event:read','calendar:calendar.free_busy:read',
+  'mail:user_mailbox.message:readonly','mail:user_mailbox.message.subject:read','mail:user_mailbox.message.address:read','mail:user_mailbox.message.body:read','mail:user_mailbox.folder:read',
+];
+interface Pending{url:string;userCode:string;expiresAt:number;scope:string;abort:AbortController}
 export class FeishuCliAuth {
+  /** `granted` lists the user permissions the app has been given; they are all requested when FEISHU_CLI_SCOPES is left empty. */
+  constructor(private granted:()=>Promise<string[]>=async()=>[]){}
   private pending=new Map<string,Pending>();private refreshing=new Map<string,Promise<Credentials|undefined>>();
   /** Starts the OAuth device flow (RFC 8628) and polls in the background; returns the text Codex relays to the user. */
-  async login(root:string):Promise<string>{
+  /** The link of this user's login that is still waiting for them, if any. */
+  loginUrl(root:string){const p=this.pending.get(root);return p&&p.expiresAt>Date.now()?p.url:undefined;}
+  private async requestedScope(root:string,extra:string[]){
+    let wanted=config.FEISHU_CLI_SCOPES.length?config.FEISHU_CLI_SCOPES:DEFAULT_SCOPES;
+    if(wanted.includes('all'))try{wanted=await this.granted();}catch(e){log.warn({error:safeError(e)},'无法查询应用已开通的用户权限，改用默认权限');wanted=DEFAULT_SCOPES;}
+    // A new authorization replaces the old token, so what the user has already allowed is asked for again together with what is new.
+    const current=(await loadCredentials(root).catch(()=>undefined))?.scope?.split(/[\s,]+/)??[];
+    return [...new Set(['offline_access',...wanted,...current,...extra].filter(x=>x&&x!=='all'))].join(' ');
+  }
+  async login(root:string,extra:string[]=[]):Promise<string>{
+    const scope=await this.requestedScope(root,extra);
     const existing=this.pending.get(root);
-    if(existing&&existing.expiresAt>Date.now())return this.loginText(existing);
+    if(existing&&existing.expiresAt>Date.now()&&existing.scope===scope)return this.loginText(existing);
     existing?.abort.abort();
-    const scope=['offline_access',...config.FEISHU_CLI_SCOPES.filter(x=>x!=='offline_access')].join(' ');
     const {status,body}=await form(`${ACCOUNTS}/oauth/v1/device_authorization`,{client_id:config.FEISHU_APP_ID,scope},true);
     if(status>=400||body.error||!body.device_code)throw Error(`发起飞书授权失败：${failure(body)}（检查应用是否已开通并发布所需权限，见 FEISHU_CLI_SCOPES）`);
     const lifetime=Number(body.expires_in??240)*1000;
-    const pending:Pending={url:body.verification_uri_complete||body.verification_uri,userCode:String(body.user_code??''),expiresAt:Date.now()+lifetime,abort:new AbortController()};
+    const pending:Pending={url:body.verification_uri_complete||body.verification_uri,userCode:String(body.user_code??''),expiresAt:Date.now()+lifetime,scope,abort:new AbortController()};
     this.pending.set(root,pending);
     void this.poll(root,pending,String(body.device_code),Math.max(1,Number(body.interval??5))).catch(e=>log.warn({error:safeError(e)},'飞书授权轮询失败'))
       .finally(()=>{if(this.pending.get(root)===pending)this.pending.delete(root);});

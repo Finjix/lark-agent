@@ -178,7 +178,8 @@ export class Store {
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,status='PENDING',next_attempt_at=0,
       version=delivery_outbox.version+1,error=''`).run(id,taskId,kind,JSON.stringify(payload));
   }
-  due():any[]{return this.db.prepare("SELECT * FROM delivery_outbox WHERE status IN ('PENDING','RETRYING') AND next_attempt_at<=? ORDER BY CASE WHEN kind='VIEW' THEN 0 ELSE 1 END,rowid LIMIT 20").all(Date.now());}
+  /** Rows ready to send; `files` limits them to uploads (true) or everything else (false). */
+  due(files?:boolean):any[]{return this.db.prepare(`SELECT * FROM delivery_outbox WHERE status IN ('PENDING','RETRYING') AND next_attempt_at<=?${files===undefined?'':` AND (kind='FILE')=${files?1:0}`} ORDER BY CASE WHEN kind='VIEW' THEN 0 ELSE 1 END,rowid LIMIT 20`).all(Date.now());}
   ack(id:string,version:number){this.db.prepare("UPDATE delivery_outbox SET status='DELIVERED',error='' WHERE id=? AND version=?").run(id,version);}
   retry(id:string,version:number,error:string,permanent=false){
     this.db.prepare(`UPDATE delivery_outbox SET attempts=attempts+1,status=?,error=?,next_attempt_at=? WHERE id=? AND version=?`).run(
@@ -201,6 +202,8 @@ export class Store {
       return {cancelled:Number(cancelled),dropped:Number(dropped)};
     })();
   }
+  /** Finished tasks whose files are still kept and whose retention period ended before `before`. */
+  expired(before:number):Task[]{return this.db.prepare("SELECT * FROM tasks WHERE cleaned_at IS NULL AND finished_at IS NOT NULL AND finished_at<? AND status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY finished_at").all(before) as unknown as Task[];}
   messages(taskId:string):any{return this.db.prepare('SELECT * FROM task_messages WHERE task_id=?').get(taskId);}
   nextSequence(taskId:string){return this.db.prepare('UPDATE task_messages SET sequence=sequence+1 WHERE task_id=? RETURNING sequence').get(taskId) as {sequence:number};}
   pending(taskId:string):PendingInteraction[]{return this.db.prepare("SELECT request_id AS id,kind,summary,payload FROM pending_requests WHERE task_id=? AND status='PENDING'").all(taskId).map((r:any)=>({...r,payload:JSON.parse(r.payload)}));}

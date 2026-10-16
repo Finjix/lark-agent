@@ -17,7 +17,7 @@ function input(message='m1',user='u1',tenant='t1'){return {tenant_key:tenant,use
 function memory(){return new Store(':memory:');}
 const broadcast=(id,change)=>({type:'broadcast',method:'thread-stream-state-changed',params:{hostId:'local',conversationId:id,change}});
 const state=(turns,requests=[])=>({turnHistory:{kind:'canonical',history:{entitiesByKey:Object.fromEntries(turns.map(t=>['turn:'+t.turnId,t]))}},requests});
-const turn=(id,marker,answer,status='inProgress')=>({turnId:id,status,items:[{type:'userMessage',content:[{type:'text',text:marker}]},{type:'reasoning',content:'SECRET_INTERNAL_REASONING'},{type:'agentMessage',phase:'commentary',text:'公开进度'},{type:'agentMessage',phase:'final_answer',text:answer}]});
+const turn=(id,marker,answer,status='inProgress')=>({turnId:id,params:{clientUserMessageId:marker},status,items:[{type:'userMessage',content:[{type:'text',text:marker}]},{type:'reasoning',content:'SECRET_INTERNAL_REASONING'},{type:'agentMessage',phase:'commentary',text:'公开进度'},{type:'agentMessage',phase:'final_answer',text:answer}]});
 
 test('frames handle UTF-8 splits, coalesced messages, and reject oversized frames',()=>{
   const d=new FrameDecoder(1000),a=encodeFrame({text:'中文🙂'}),b=encodeFrame({id:2});
@@ -49,13 +49,14 @@ test('routing requires exact thread and turn, excludes reasoning, and handles al
   assert.equal(s.view('thread-a','b'),undefined);
   assert(!JSON.stringify(s.view('thread-a','new')).includes('SECRET_INTERNAL_REASONING'));
 });
-test('patch gaps resync; bad batches do not partially corrupt state; duplicate patches are ignored',()=>{
+test('patch gaps resync; a bad batch is dropped instead of leaving half-applied state; duplicate patches are ignored',()=>{
   const s=new StreamState();let resync=0;s.on('resync',()=>resync++);
   s.receive(broadcast('a',{type:'snapshot',revision:3,conversationState:{value:'old'}}));
   s.receive(broadcast('a',{type:'patches',baseRevision:2,revision:4,patches:[]}));
   assert.equal(resync,1);
   s.receive(broadcast('a',{type:'patches',baseRevision:3,revision:4,patches:[{op:'replace',path:['value'],value:'changed'},{op:'remove',path:['missing','key']}]}));
-  assert.equal(s.states.get('a').state.value,'old');assert.equal(s.states.get('a').revision,3);
+  assert.equal(s.states.has('a'),false,'the half-changed state is not kept');assert.equal(resync,2,'and Desktop is asked again');
+  s.receive(broadcast('a',{type:'snapshot',revision:3,conversationState:{value:'old'}}));
   s.receive(broadcast('a',{type:'patches',baseRevision:3,revision:4,patches:[{op:'replace',path:['value'],value:'new'}]}));
   s.receive(broadcast('a',{type:'patches',baseRevision:3,revision:4,patches:[{op:'replace',path:['value'],value:'duplicate'}]}));
   assert.equal(s.states.get('a').state.value,'new');
@@ -64,14 +65,6 @@ test('patch gaps resync; bad batches do not partially corrupt state; duplicate p
 test('approval routing preserves numeric wire request IDs and excludes another turn',()=>{
   const items=interactionsOf({requests:[{id:42,method:'item/commandExecution/requestApproval',params:{turnId:'a',reason:'需要授权'}},{id:43,method:'item/tool/requestUserInput',params:{turnId:'b'}}]},'a');
   assert.equal(items.length,1);assert.equal(items[0].id,'42');assert.equal(items[0].payload._requestId,42);
-});
-test('Desktop canonical first turn binds from params.input even when userMessage is not an item',()=>{
-  const s=new StreamState();s.receive(broadcast('created',{type:'snapshot',revision:1,conversationState:state([{turnId:'first',status:'completed',params:{input:[{type:'text',text:'[LARK_TASK_ID:unique] do work'}]},items:[{type:'agentMessage',phase:'final_answer',text:'done'}]}])}));
-  assert.equal(s.view('created',null,'[LARK_TASK_ID:unique]').turnId,'first');
-});
-test('Desktop native-created task binds from its initial delegation payload without exposing it',()=>{
-  const s=new StreamState();s.receive(broadcast('created',{type:'snapshot',revision:1,conversationState:state([{turnId:'first',status:'completed',params:{input:[],toolOutput:{output:'<codex_delegation><input>[LARK_TASK_ID:unique] task</input></codex_delegation>'}},items:[{type:'functionCallOutput',output:'internal delegation'},{type:'agentMessage',phase:'final_answer',text:'done'}]}])}));
-  const view=s.view('created',null,'[LARK_TASK_ID:unique]');assert.equal(view.turnId,'first');assert.equal(view.answer,'done');assert(!JSON.stringify(view).includes('codex_delegation'));
 });
 test('SQLite deduplicates within tenant, preserves recovery links and leaves a newer outbox generation pending',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-db-'));const file=path.join(dir,'test.sqlite');let s=new Store(file);
@@ -215,12 +208,12 @@ test('outbox retries delivery without calling Desktop and serializes card sequen
   s.db.prepare('UPDATE delivery_outbox SET next_attempt_at=0').run();await delivery.tick();
   assert.equal(s.due().length,0);assert.equal(new Set(sequences).size,sequences.length);assert.deepEqual(sequences,[...sequences].sort((a,b)=>a-b));await delivery.stop();s.close();
 });
-test('rejected final artifacts produce a user-facing delivery notice without uploading outside the workspace',async()=>{
+test('a link to a file outside the delivery folder is ignored without a notice and never uploaded',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-rejected-')),workspace=path.join(dir,'workspace');await fs.mkdir(workspace);
   const outside=path.join(dir,'outside.txt');await fs.writeFile(outside,'never upload');const s=memory(),task=s.create(input()).task;
   s.transition(task.id,'COMPLETED',{workspace_path:workspace,result:`[file](<${outside}>)`});let uploaded=false;
   const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>{uploaded=true;}};
-  const delivery=new Delivery(s,f);await delivery.tick();const notice=s.due().find(r=>r.kind==='NOTICE');assert(notice);assert(JSON.parse(notice.payload).text.includes('附件未发送'));assert.equal(uploaded,false);
+  const delivery=new Delivery(s,f);await delivery.tick();assert.equal(s.db.prepare("SELECT count(*) c FROM delivery_outbox WHERE kind='NOTICE'").get().c,0,'no notice');assert.equal(s.db.prepare('SELECT count(*) c FROM task_artifacts').get().c,0);assert.equal(uploaded,false);
   await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
 });
 test('whatever Codex leaves in the task output folder is delivered even when the reply does not link it',async()=>{
@@ -249,4 +242,61 @@ test('a task owns only the files that appeared in output/ while it ran',async()=
   const copy=path.join(dir,'copy.txt');await fs.copyFile(old,copy);
   assert((await names({from:now-5000,to:now+5000})).includes('copy.txt'),'a copied file counts by when it was created here');
   await fs.rm(dir,{recursive:true});
+});
+
+test('reply links: parentheses inside a path are kept, other markdown is not mistaken for a file',()=>{
+  assert.deepEqual(artifactLinks('[a](<D:/x/in/report (2).pdf>) [b](D:/x/out/report (2).pdf) [c](D:\\x\\a.txt:12)'),['D:/x/in/report (2).pdf','D:/x/out/report (2).pdf','D:\\x\\a.txt']);
+  assert.deepEqual(artifactLinks('[site](https://example.com/a) [rel](docs/a.md) [anchor](#top) [open](<D:/x/unclosed.txt) next line)'),[]);
+  assert.deepEqual(artifactLinks('see [a](D:/x/a.txt) and (parenthetical) then [b](D:/x/b (1).txt)'),['D:/x/a.txt','D:/x/b (1).txt']);
+});
+test('a delivered file with parentheses in its name is sent, a link to a missing file inside the folder is still reported, links elsewhere are not',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-links-')),workspace=path.join(dir,'outputs'),input_=path.join(dir,'input');await fs.mkdir(workspace);await fs.mkdir(input_);
+  const named=path.join(workspace,'report (2).pdf'),mine=path.join(input_,'photo (2).png');await fs.writeFile(named,'r');await fs.writeFile(mine,'m');
+  const s=memory(),task=s.create(input()).task;
+  s.transition(task.id,'COMPLETED',{workspace_path:workspace,result:`[报告](<${named}>) [你的图](<${mine}>) [站内](/docs/intro) [丢失](<${path.join(workspace,'missing.txt')}>)`});
+  const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>({file_key:'file'}),uploadImage:async()=>({image_key:'image'})};
+  const delivery=new Delivery(s,f);await delivery.tick();
+  assert.deepEqual(s.db.prepare('SELECT name FROM task_artifacts WHERE task_id=?').all(task.id).map(r=>r.name),['report (2).pdf']);
+  const notices=s.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE'").all().map(r=>JSON.parse(r.payload).text);
+  assert.equal(notices.length,1);assert(notices[0].includes('missing.txt')&&notices[0].includes('附件未发送'));
+  await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
+});
+
+test('a slow upload does not hold back the card updates of other tasks',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-slow-')),workspace=path.join(dir,'outputs');await fs.mkdir(workspace);
+  const big=path.join(workspace,'big.bin');await fs.writeFile(big,'x');
+  const s=memory(),a=s.create(input('a','u1')).task,b=s.create(input('b','u2')).task;
+  s.transition(a.id,'COMPLETED',{workspace_path:workspace,result:`[大文件](<${big}>)`});s.transition(b.id,'RUNNING',{started_at:Date.now(),progress:'还在做'});
+  let release;const gate=new Promise(r=>release=r),puts=[];
+  const f={connected:true,raw:async(method,url,data)=>{if(method==='PUT')puts.push(url);return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>({message_id:'m'}),upload:async()=>{await gate;return {file_key:'k'};}};
+  const delivery=new Delivery(s,f);await delivery.tick(); // cards out, the upload is queued
+  const uploading=delivery.tick();await new Promise(r=>setTimeout(r,50)); // the upload is now stuck
+  puts.length=0;s.enqueue(`view:${b.id}`,b.id,'VIEW',{});
+  const next=delivery.tick();await new Promise(r=>setTimeout(r,200));
+  assert(puts.length>0,'the other task\'s card was updated while the upload is still running');
+  release();await uploading;await next;await delivery.tick();
+  assert.equal(s.db.prepare("SELECT status FROM delivery_outbox WHERE kind='FILE'").get().status,'DELIVERED');
+  await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
+});
+test('a task waiting for the user gets its card refreshed without the stale working header',async()=>{
+  const s=memory(),task=s.create(input()).task;s.transition(task.id,'RUNNING',{started_at:Date.now()});
+  const calls=[],f={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>({message_id:'m'})};
+  const delivery=new Delivery(s,f);await delivery.tick();
+  s.setRequests(task.id,[{id:'r1',kind:'command',summary:'允许？',payload:{}}]);s.transition(task.id,'WAITING_APPROVAL');
+  calls.length=0;await delivery.tick();
+  const card=calls.filter(c=>c.method==='PUT'&&c.data.card).map(c=>JSON.parse(c.data.card.data)).at(-1);
+  assert(card,'the whole card is replaced, not just its text');assert.equal(card.header,undefined);assert(card.body.elements[0].content.includes('/approve'));
+  await delivery.stop();s.close();
+});
+test('screenshots in the hidden folder are not sent unless the reply links them',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-shots-'));await fs.mkdir(path.join(dir,'.screenshots'));
+  await fs.writeFile(path.join(dir,'.screenshots','look.png'),'p');await fs.writeFile(path.join(dir,'report.txt'),'r');
+  assert.deepEqual((await outputFiles(dir)).map(f=>path.basename(f)),['report.txt']);await fs.rm(dir,{recursive:true});
+});
+test('a task Desktop cannot be asked about is marked UNKNOWN once, not rewritten on every pass',async()=>{
+  const s=memory(),task=s.create(input()).task;s.transition(task.id,'RUNNING',{thread_id:'th',turn_id:'tu'});
+  const service=new TaskService(s,Object.assign(new EventEmitter(),{follow:async()=>{throw new Error('no-client-found');}}));
+  await service.reconcile();const after=s.db.prepare('SELECT count(*) c FROM task_events WHERE task_id=?').get(task.id).c;
+  await service.reconcile();await service.reconcile();
+  assert.equal(s.get(task.id).status,'UNKNOWN');assert.equal(s.db.prepare('SELECT count(*) c FROM task_events WHERE task_id=?').get(task.id).c,after);s.close();
 });
