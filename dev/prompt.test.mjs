@@ -16,7 +16,7 @@ async function sandbox(t){
 
 test('the shipped system prompt is short, static, names the output folder, and only applies in lark- folders',async()=>{
   const text=await fs.readFile(path.join(config.root,'prompt','system.md'),'utf8');
-  assert(/lark-/.test(text)&&/output/.test(text)&&/lark_user_attachments/.test(text));
+  assert(/lark-/.test(text)&&/output/.test(text)&&!/lark_user_attachments/.test(text));
   assert(text.length<300,'every character here is paid for in every chat');
   assert(!/<task|\$\{/.test(text),'it is static: nothing in it changes from one task to the next');
 });

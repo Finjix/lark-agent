@@ -20,6 +20,8 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
     if(msg.message_type==='text')message.text=typeof content.text==='string'?content.text:'';
     else if(msg.message_type==='image')add('image',content.image_key,undefined);
     else if(msg.message_type==='file')add('file',content.file_key,content.file_name);
+    // A Feishu voice message is an Opus recording downloaded like a file.
+    else if(msg.message_type==='audio')add('file',content.file_key,'语音消息.opus');
     else if(msg.message_type==='post'){
       // Receive events normally omit the locale wrapper; accept both API representations.
       const post=Array.isArray(content.content)?content:content.zh_cn??content.en_us??Object.values(content).find((v:any)=>Array.isArray(v?.content));
@@ -48,7 +50,7 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
         add('file',file?.file_key,file?.file_name);
       }
       for(const image of Array.isArray(post.images)?post.images:Array.isArray(content.images)?content.images:[])add('image',image?.image_key,undefined);
-    }else message.error='暂不支持此消息类型，请发送文字、图片、文件或图文消息。';
+    }else message.error='暂不支持此消息类型，请发送文字、图片、文件、语音或图文消息。';
     for(const mention of mentions)if(mention.id?.open_id===botId&&typeof mention.key==='string')message.text=message.text.replaceAll(mention.key,'');
     if(attachments.length>MAX_INPUT_FILES)throw Error(`每条消息最多接收 ${MAX_INPUT_FILES} 个附件，请分批发送`);
   }catch(e){message.error=e instanceof SyntaxError?'无法解析消息，请重新发送。':(e as Error).message;}

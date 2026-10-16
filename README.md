@@ -13,7 +13,7 @@ Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 �
 
 必须与 Desktop 在同一 Windows 用户下运行。数据库用 Node 内置 `node:sqlite`；依赖有飞书官方 SDK、`playwright-core`（浏览器引擎，使用系统已装的 Edge 或 Chrome，不下载浏览器）和官方飞书 CLI `@larksuite/cli`，都由 `npm ci` 按 lockfile 装进项目。
 
-**系统提示词**：每轮不再向 Codex 注入任何说明。固定约定只有一句，写在 `prompt/system.md`：Codex 在名为 `lark-*` 的聊天目录里时，把要发给用户的文件放进 `output/`，用户自己的文件见 `lark_user_attachments` 里的路径。`set-prompt.cmd` 把它作为带标记的一段写入 `%USERPROFILE%\.codex\AGENTS.md`（Desktop“个性化”里的自定义指令文件）：保留你已有的内容，首次修改会备份为 `AGENTS.md.lark-agent.bak`，改了 `system.md` 后再运行一次即可更新，`set-prompt.cmd remove` 撤销。只在 `lark-` 目录里生效，不影响你自己的聊天。每轮唯一随消息携带的是附件清单（每条消息都不同）。
+**系统提示词**：每轮不再向 Codex 注入任何说明。固定约定只有一句，写在 `prompt/system.md`：Codex 在名为 `lark-*` 的聊天目录里时，把要发给用户的文件放进 `output/`。用户发来的附件不靠提示词：每轮按 Desktop 自己“拖入文件”的原生格式写入（`# Files mentioned by the user:` 加 `## 文件名: 路径`），图片另以 `localImage` 输入让模型直接看到画面；Desktop 对话里会显示成文件标签。非图片文件在 Desktop 协议里只有路径这一种输入，由模型用工具打开。飞书语音消息按文件接收（`语音消息.opus`）；wav/mp3/m4a/webm/ogg 音频文件仅当 Desktop 提供的所有模型都支持音频输入（读 `~/.codex/models_cache.json`）时才另以 `localAudio` 原生输入，目前没有模型支持，所以实际仍是路径。`set-prompt.cmd` 把它作为带标记的一段写入 `%USERPROFILE%\.codex\AGENTS.md`（Desktop“个性化”里的自定义指令文件）：保留你已有的内容，首次修改会备份为 `AGENTS.md.lark-agent.bak`，改了 `system.md` 后再运行一次即可更新，`set-prompt.cmd remove` 撤销。只在 `lark-` 目录里生效，不影响你自己的聊天。每轮唯一随消息携带的是附件清单（每条消息都不同）。
 
 **MCP 注册**：Codex 通过本服务的 MCP 服务器 `lark_agent`（`http://127.0.0.1:8765/mcp`）使用浏览器和飞书 CLI。`register-mcp.cmd` 会（必要时先 `npm ci` 和编译）在 Codex 的 `config.toml`（`CODEX_HOME`，默认 `~/.codex`）里写入一段带标记的配置，幂等，不动其他内容，首次修改会备份为 `config.toml.lark-agent.bak`；若已有手写的同名条目则拒绝覆盖。`register-mcp.cmd remove` 撤销。这是唯一会修改 Codex 配置的操作，服务启动时不会改，只会在未注册时打印提醒。
 
@@ -76,7 +76,7 @@ start.cmd backup                :: 备份数据库到 data/
 start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任务
 ```
 
-健康检查 `http://127.0.0.1:8765/health`（`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建。日志在 `data/logs`，保留 14 天；`.env` 可选 `CODEX_HOME`、`LOG_LEVEL`。重启会核对执行中任务并恢复队列和投递；没有自动重跑 `UNKNOWN` 任务的入口；对从未被 Desktop 确认执行轮次的 `UNKNOWN` 任务，任务本人或管理员可用 `/cancel` 结束它，释放该用户的队列（若请求已到达 Desktop，它仍可能继续执行）。Desktop 暂时不可用时尚未提交的任务会回到队列等待。
+健康检查 `http://127.0.0.1:8765/health`（`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建。日志在 `data/logs`，保留 14 天；`.env` 可选 `CODEX_HOME`、`LOG_LEVEL`。重启会核对执行中任务并恢复队列和投递；没有自动重跑 `UNKNOWN` 任务的入口；对从未被 Desktop 确认执行轮次的 `UNKNOWN` 任务，任务本人或管理员可用 `/cancel` 结束它，释放该用户的队列（若请求已到达 Desktop，它仍可能继续执行）。Desktop 暂时不可用时，尚未把用户原文发给 Desktop 的任务直接作废（回复“机器人罢工了”，不会稍后自动重跑，需用户重发）；只有已尝试发送、结果不明的任务才保留为 `UNKNOWN` 等待核对。
 
 ## 兼容性
 

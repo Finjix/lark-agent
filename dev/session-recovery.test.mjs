@@ -48,7 +48,7 @@ for(const status of ['archived','missing'])test(`${status} sessions create a fre
   }finally{s.close();await fs.rm(root,{recursive:true});}
 });
 
-test('pre-send recovery releases the queue; uncertain sent input never rotates or resubmits',async()=>{
+test('pre-send failure ends the task and releases the queue; uncertain sent input never rotates or resubmits',async()=>{
   const s=new Store(':memory:'),followed=[],d=Object.assign(new EventEmitter(),{stream:new StreamState(),follow:async id=>{followed.push(id);throw Error('no-client-found');}}),service=new TaskService(s,d);
   try{
     for(const message of ['not-sent','sent']){
@@ -56,7 +56,7 @@ test('pre-send recovery releases the queue; uncertain sent input never rotates o
       s.transition(t.id,'UNKNOWN',{thread_id:message});s.event(t.id,'DESKTOP_RAW_REQUEST',{});
       if(message==='sent')s.event(t.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:t.id});
     }
-    await service.reconcile();assert.deepEqual(s.list().map(t=>t.status),['QUEUED','UNKNOWN']);assert.deepEqual(followed,['sent']);
+    await service.reconcile();assert.deepEqual(s.list().map(t=>t.status),['FAILED','UNKNOWN']);assert.deepEqual(followed,['sent']);
     const task=s.list()[1],native=new NativeDesktop(s,()=> 'archived');native.ready=true;native.tools={};native.ipc={};
     await assert.rejects(native.startTask(task),/不能重复发送/);assert.throws(()=>s.renewSession(task,'archived'),/不能切换/);
     assert.equal(s.sessions().length,2);

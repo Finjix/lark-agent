@@ -102,3 +102,25 @@ test('every unavailable case tells the user the same one sentence, and nothing a
   assert.equal(store.get(t2.id).status,'UNKNOWN');assert.equal(store.get(t2.id).error,BOT_DOWN);
   store.close();
 });
+
+test('a failure before the input is sent ends the task once; it is not retried later behind a "bot down" reply',async()=>{
+  const {BOT_DOWN}=await import('../dist/types.js');
+  const {store,desktop,service}=setup(true);
+  Object.assign(desktop,{startTask:async()=>{throw new Error('no-client-found');},follow:async()=>{}});
+  await service.receive(message('m1'));const [task]=store.list();
+  store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
+  assert.equal(store.get(task.id).status,'FAILED');assert.equal(store.get(task.id).error,BOT_DOWN);
+  await service.reconcile();assert.equal(store.get(task.id).status,'FAILED','reconciliation does not bring it back');
+  store.close();
+});
+
+test('on start, tasks that never sent their input are cancelled silently; ones that did stay for reconciliation',()=>{
+  const store=new Store(':memory:'),mk=n=>store.create({tenant_key:'t',user_id:n,chat_id:'c',source_message_id:n,instruction:'x'}).task;
+  const unsent=mk('a'),sent=mk('b');
+  for(const t of [unsent,sent]){const session=store.sessionFor(t);store.bindSession(session.id,`th-${t.id}`,'w');store.transition(t.id,'UNKNOWN',{thread_id:`th-${t.id}`});store.event(t.id,'DESKTOP_RAW_REQUEST',{});}
+  store.event(sent.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:sent.id});
+  store.discardLeftovers();
+  assert.equal(store.get(unsent.id).status,'CANCELLED');assert.equal(store.get(sent.id).status,'UNKNOWN');
+  assert(!store.due().some(r=>r.task_id===unsent.id),'and says nothing about it');
+  store.close();
+});

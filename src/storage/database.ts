@@ -189,7 +189,11 @@ export class Store {
    */
   discardLeftovers(){
     return this.db.transaction(()=>{
-      const cancelled=this.db.prepare("UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status='QUEUED'").run(Date.now()).changes;
+      // Also tasks that were mid-start or stranded but never sent their input to Desktop (no send attempt recorded); a lost session creation is left for reconciliation.
+      const cancelled=this.db.prepare(`UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE turn_id IS NULL AND (status='QUEUED' OR (status IN ('STARTING','UNKNOWN')
+        AND NOT EXISTS(SELECT 1 FROM task_events e WHERE e.task_id=tasks.id AND e.kind='DESKTOP_TURN_SUBMITTING')
+        AND (NOT EXISTS(SELECT 1 FROM task_events e WHERE e.task_id=tasks.id AND e.kind='DESKTOP_RAW_REQUEST')
+          OR EXISTS(SELECT 1 FROM user_sessions s WHERE s.id=tasks.session_id AND s.thread_id IS NOT NULL))))`).run(Date.now()).changes;
       const dropped=this.db.prepare(`UPDATE delivery_outbox SET status='FAILED',error='服务重启，已丢弃重启前未送达的消息'
         WHERE status IN ('PENDING','RETRYING') AND (kind='NOTICE' OR task_id IN (SELECT id FROM tasks WHERE status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED')))`).run().changes;
       return {cancelled:Number(cancelled),dropped:Number(dropped)};

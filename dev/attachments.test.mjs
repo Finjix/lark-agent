@@ -111,9 +111,13 @@ test('inputs survive restart, use isolated safe filenames, and reach the first D
   assert(inputs.every(file=>path.dirname(file.path)===flat),'one flat input folder, no per-task naming');
   const prompt=taskPrompt(task,store);assert.equal(prompt,'改成卡通风格');
   const request=taskRequest({...task,thread_id:'thread',workspace_path:path.join(root,'outputs')},store);
-  assert.equal(request.input[0].text,prompt);assert.equal(request.input[1].type,'localImage');assert.equal(request.input[1].path,inputs[0].path);
-  assert(request.additionalContext.lark_user_attachments.value.includes(JSON.stringify(inputs[0].path)));
-  assert.deepEqual(Object.keys(request.additionalContext),['lark_user_attachments'],'standing rules are in the system prompt; only the attachment list travels with the turn');
+  const slash=p=>p.replaceAll('\\','/'),text=request.input[0].text;
+  assert(text.startsWith('\n# Files mentioned by the user:\n\n## '),'the header Desktop itself writes for a dropped-in file');
+  assert(text.includes(`\n## ${path.basename(inputs[0].path)}: ${slash(inputs[0].path)}\nImage attachment: true\n`),'an image is marked as one');
+  assert(text.includes(`\n## 需求_报告.docx: ${slash(inputs[1].path)}\n\n`),'another file is a plain path with no image marker');
+  assert(text.endsWith(`\n## My request:\n${prompt}\n`));
+  assert.equal(request.input.length,2);assert.equal(request.input[1].type,'localImage');assert.equal(request.input[1].path,inputs[0].path);
+  assert.deepEqual(request.additionalContext,{},'standing rules are in the system prompt; nothing else is injected');
   assert.equal(inputFilename(['..','..','secret.txt'].join(String.fromCharCode(92))),'secret.txt');
   // The same name sent again does not overwrite the earlier file.
   const again=store.create({...input,source_message_id:'again'},[],[{kind:'file',key:'file-key-2',name:'需求:报告.docx'}]).task;
@@ -169,10 +173,27 @@ test('failed and cancelled downloads do not submit a Desktop task, and partial f
   assert.equal(store.get(cancelled.id).status,'CANCELLED');assert.equal(submissions,0);await removeInputs(store.inputs(cancelled.id).flatMap(i=>i.path?[i.path]:[]),chat);store.close();
 });
 
-test('reconciliation retries only attachment preparation that has not reached Desktop submission',async()=>{
+test('reconciliation voids attachment preparation that has not reached Desktop submission and checks one that has',async()=>{
   const store=new Store(':memory:'),d=desktop();let recovered=0;d.recoverUnbound=async()=>{recovered++;};
   const service=new TaskService(store,d);const before=store.create(input,[],[image]).task;
   const submitted=store.create({...input,source_message_id:'submitted'},[],[image]).task;
   store.transition(before.id,'STARTING');store.transition(submitted.id,'STARTING');store.event(submitted.id,'DESKTOP_SUBMITTING',{});
-  await service.reconcile();assert.equal(store.get(before.id).status,'QUEUED');assert.equal(store.get(submitted.id).status,'UNKNOWN');assert.equal(recovered,1);store.close();
+  await service.reconcile();assert.equal(store.get(before.id).status,'FAILED');assert.equal(store.get(submitted.id).status,'UNKNOWN');assert.equal(recovered,1);store.close();
+});
+
+test('voice messages arrive as a file; audio files go in natively only when every offered model takes audio',async()=>{
+  const {audioInputs,audioSupported}=await import('../dist/desktop/audio.js');
+  const voice=incomingMessage({sender:{sender_type:'user',sender_id:{open_id:'u'}},tenant_key:'t',message:{message_id:'m',chat_id:'c',chat_type:'p2p',message_type:'audio',content:JSON.stringify({file_key:'k',duration:3000})}},'bot');
+  assert.deepEqual(voice.attachments,[{kind:'file',key:'k',name:'语音消息.opus'}]);assert(!voice.error);
+  const inputs=[{kind:'file',path:'C:/in/a.MP3'},{kind:'file',path:'C:/in/b.pdf'},{kind:'image',path:'C:/in/c.mp3'}];
+  assert.deepEqual(audioInputs(inputs,true),[{type:'localAudio',path:'C:/in/a.MP3'}],'only audio files, never images or documents');
+  assert.deepEqual(audioInputs(inputs,false),[]);
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-models-'));
+  try{
+    assert.equal(audioSupported(home),false,'no model list: no native audio');
+    const write=models=>fs.writeFile(path.join(home,'models_cache.json'),JSON.stringify({models}));
+    await write([{visibility:'list',input_modalities:['text','image']}]);assert.equal(audioSupported(home),false);
+    await write([{visibility:'list',input_modalities:['text','audio']},{visibility:'list',input_modalities:['text','image']}]);assert.equal(audioSupported(home),false,'one model without audio is enough to keep it off');
+    await write([{visibility:'list',input_modalities:['text','audio']},{visibility:'hide',input_modalities:['text']}]);assert.equal(audioSupported(home),true);
+  }finally{await fs.rm(home,{recursive:true,force:true});}
 });

@@ -55,7 +55,8 @@ test('reconcile releases a task stranded by an earlier failure before any send w
   const session=s.sessionFor(s.get(task.id));
   // The state older versions left behind: UNKNOWN, thread attached, no RAW_REQUEST and no submission.
   s.transition(task.id,'UNKNOWN',{thread_id:session.thread_id,error:'需要核对 Desktop：Desktop 尚未就绪'});
-  await service.reconcile();assert.equal(s.get(task.id).status,'QUEUED');
+  await service.reconcile();assert.equal(s.get(task.id).status,'FAILED');
+  s.db.prepare("UPDATE tasks SET status='UNKNOWN',finished_at=NULL WHERE id=?").run(task.id);
   // Once a send was attempted, the task must stay UNKNOWN.
   s.transition(task.id,'UNKNOWN');s.event(task.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:task.id});
   await service.reconcile();assert.equal(s.get(task.id).status,'UNKNOWN');s.close();

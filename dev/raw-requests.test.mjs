@@ -25,7 +25,7 @@ test('private text and rich-text whitespace reach Codex unchanged; attachment-on
   await service.receive({...incoming,message:'file-only',text:'',attachments:[{kind:'file',key:'key',name:'notes.txt'}]});
   const file=s.list()[1];assert.equal(file.instruction,'');s.inputReady(file.id,0,'D:/inputs/notes.txt',5);
   const request=taskRequest({...file,thread_id:'thread',workspace_path:'D:/outputs/task'},s);
-  assert.equal(request.input[0].text,'');assert(request.additionalContext.lark_user_attachments);
+  assert(request.input[0].text.includes('## notes.txt: D:/inputs/notes.txt\n')&&!request.input[0].text.includes('My request'),'a file with no text still goes out as a file mention');assert.deepEqual(request.additionalContext,{});
   assert(!JSON.stringify(request.input).includes('deliverable'));s.close();
 });
 
@@ -56,14 +56,14 @@ test('raw-turn replies still collect and deliver linked files; repeated delivery
   await delivery.stop();await new Promise(r=>setImmediate(r));s.close();await fs.rm(root,{recursive:true});
 });
 
-test('restart resumes initialization without replaying an uncertain business send',async()=>{
+test('reconciliation voids an input that never went out and never replays an uncertain business send',async()=>{
   const s=new Store(':memory:'),d=Object.assign(new EventEmitter(),{stream:new StreamState(),follow:async()=>{}}),service=new TaskService(s,d);
   for(const message of ['initializing','sent']){
     const t=s.create({...input(message),user_id:message}).task,session=s.sessionFor(t);s.bindSession(session.id,`thread-${message}`,'workspace');
     s.transition(t.id,'UNKNOWN',{thread_id:`thread-${message}`});s.event(t.id,'DESKTOP_RAW_REQUEST',{});
     if(message==='sent')s.event(t.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:t.id});
   }
-  await service.reconcile();assert.deepEqual(s.list().map(t=>t.status),['QUEUED','UNKNOWN']);s.close();
+  await service.reconcile();assert.deepEqual(s.list().map(t=>t.status),['FAILED','UNKNOWN']);assert.equal(s.list()[0].error,'机器人罢工了，请联系 @钟丰骏-实习生');s.close();
 });
 
 test('a raw turn still returns an input request and routes the user answer to its exact thread, turn and numeric request ID',async()=>{

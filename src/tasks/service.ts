@@ -135,8 +135,10 @@ export class TaskService {
         log.warn({taskId:task.id,error:safeError(e)},'Desktop 拒绝了请求，任务未执行');
         this.store.transition(task.id,'FAILED',{error:BOT_DOWN});
       }else{
-        log.warn({taskId:task.id,submitting,error:safeError(e)},submitting?'提交结果不明，需要核对 Desktop':'任务未提交给 Codex（附件接收失败）');
-        this.store.transition(task.id,submitting?'UNKNOWN':'FAILED',{error:BOT_DOWN});
+        // Only a persisted send attempt or a lost session creation makes the outcome uncertain; any other failure happened before anything reached Desktop.
+        const uncertain=submitting&&(!!this.store.submission(task.id)||e instanceof OutcomeUnknown);
+        log.warn({taskId:task.id,uncertain,error:safeError(e)},uncertain?'提交结果不明，需要核对 Desktop':'任务未提交给 Codex');
+        this.store.transition(task.id,uncertain?'UNKNOWN':'FAILED',{error:BOT_DOWN});
       }
     }
     finally{this.starting.delete(task.id);}
@@ -174,22 +176,21 @@ export class TaskService {
     try{await this.desktop.interrupt(task.thread_id,task.turn_id);}catch(e){this.interruptSent.delete(key);throw e;}
   }
   async reconcile(){
-    const queueAgain=(id:string,progress:string)=>this.store.transition(id,'QUEUED',{error:'',progress,started_at:null});
+    // Nothing of this task reached Desktop. It is not run later, when the user has probably moved on or sent it again: it ends now, and the user is told once.
+    const voidTask=(id:string)=>this.store.transition(id,this.store.get(id)?.cancel_requested?'CANCELLED':'FAILED',{error:this.store.get(id)?.cancel_requested?'':BOT_DOWN,progress:''});
     for(const task of this.store.active()){
       if(this.starting.has(task.id))continue;
       try{
         const session=task.session_id?this.store.session(task.session_id):undefined;
         // Only a persisted send attempt makes the outcome uncertain. Without one the business input never left,
         // so queue it again before following an old thread; startTask can then replace an archived or missing session.
-        if(!this.store.submission(task.id)&&!task.turn_id&&session?.thread_id&&session.workspace_path){queueAgain(task.id,'等待提交用户原文');continue;}
+        if(!this.store.submission(task.id)&&!task.turn_id&&session?.thread_id&&session.workspace_path){voidTask(task.id);continue;}
         if(task.thread_id)await this.desktop.follow(task.thread_id);
-        else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))queueAgain(task.id,'等待恢复附件接收');
+        else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))voidTask(task.id);
         else{this.store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});await this.desktop.recoverUnbound(task);}
-        // recoverUnbound may have bound the session after a lost creation response; an unsent input can then go out.
+        // recoverUnbound may have bound the session after a lost creation response; an input that never went out is void like any other.
         const current=this.store.get(task.id)!;
-        if(!terminal(current.status)&&current.status!=='QUEUED'&&!this.store.submission(task.id)&&!current.turn_id&&current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path){
-          queueAgain(task.id,'等待提交用户原文');
-        }
+        if(!terminal(current.status)&&!this.store.submission(task.id)&&!current.turn_id&&current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path)voidTask(task.id);
       }catch(e){log.warn({taskId:task.id,error:safeError(e)},'核对 Desktop 失败');this.store.transition(task.id,'UNKNOWN',{error:BOT_DOWN});}
     }
   }
