@@ -4,36 +4,35 @@ import {EventEmitter} from 'node:events';
 import {Store} from '../dist/storage/database.js';
 import {TaskService,UNAVAILABLE} from '../dist/tasks/service.js';
 import {Scheduler,canSchedule} from '../dist/tasks/scheduler.js';
-import {NotSubmitted} from '../dist/desktop/transport.js';
 import {clockOffset} from '../dist/feishu/clock.js';
 
 const message=(id,user='u1',extra={})=>({tenant:'t',user,chat:'c',message:id,text:'hi',isGroup:false,...extra});
 const notices=store=>store.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE' ORDER BY rowid").all().map(r=>JSON.parse(r.payload));
 function setup(ready){
-  const store=new Store(':memory:'),desktop=Object.assign(new EventEmitter(),{ready,stream:{states:new Map()}}),service=new TaskService(store,desktop);
-  service.authorized=()=>true;return {store,desktop,service};
+  const store=new Store(':memory:'),codex=Object.assign(new EventEmitter(),{ready}),service=new TaskService(store,codex);
+  service.authorized=()=>true;store.apiKey=()=>'sk-test';return {store,codex,service};
 }
 
-test('while Desktop is unavailable nothing is queued; the user gets one plain refusal, never a promise to run later',async()=>{
-  const {store,desktop,service}=setup(false);
+test('while Codex is unavailable nothing is queued; the user gets one plain refusal, never a promise to run later',async()=>{
+  const {store,codex,service}=setup(false);
   await service.receive(message('m1'));await service.receive(message('m1'));await service.receive(message('m2'));
   assert.equal(store.list().length,0,'no task is created');
   const sent=notices(store);assert.equal(sent.length,2,'one refusal per message, none for a redelivered event');
   assert(sent.every(n=>n.text===UNAVAILABLE));assert(!sent.some(n=>/已收到|恢复后|无需重新发送|前面还有/.test(n.text)));
-  desktop.ready=true;await service.receive(message('m3'));assert.equal(store.list().length,1,'works again as soon as Desktop is back');
+  codex.ready=true;await service.receive(message('m3'));assert.equal(store.list().length,1,'works again as soon as Codex is back');
   store.close();
 });
 
-test('with Desktop ready nothing extra is sent, for one user or several',async()=>{
+test('with Codex ready nothing extra is sent, for one user or several',async()=>{
   const {store,service}=setup(true);
   await service.receive(message('a1'));await service.receive(message('b1','u2'));await service.receive(message('c1','u3'));
   assert.equal(store.list().length,3);assert.equal(notices(store).length,0);
   store.close();
 });
 
-test('a redelivered event for a task that already exists is not refused while Desktop is down',async()=>{
-  const {store,desktop,service}=setup(true);
-  await service.receive(message('m1'));desktop.ready=false;await service.receive(message('m1'));
+test('a redelivered event for a task that already exists is not refused while Codex is down',async()=>{
+  const {store,codex,service}=setup(true);
+  await service.receive(message('m1'));codex.ready=false;await service.receive(message('m1'));
   assert.equal(store.list().length,1);assert.equal(notices(store).length,0);
   store.close();
 });
@@ -47,9 +46,9 @@ test('messages sent before this service started are ignored, later ones run',asy
   store.close();
 });
 
-test('a task that Desktop never received fails at once instead of waiting in a queue',async()=>{
-  const {store,desktop,service}=setup(true);
-  Object.assign(desktop,{startTask:async()=>{throw new NotSubmitted('Desktop 尚未就绪');},follow:async()=>{}});
+test('a task whose Codex process cannot be started fails at once instead of waiting in a queue',async()=>{
+  const {store,codex,service}=setup(true);
+  codex.run=async function*(){throw Error('spawn codex ENOENT');};
   await service.receive(message('m1'));const [task]=store.list();
   store.transition(task.id,'STARTING',{started_at:Date.now()});
   await service.start(store.get(task.id));
@@ -65,17 +64,17 @@ test('there is no global concurrency cap: different users start together, one us
   store.close();
 });
 
-test('starting the service voids what the last run left behind: queued tasks, undelivered notices, replies of finished tasks',()=>{
+test('starting the service voids what the last run left behind: queued tasks, undelivered notices, replies of finished tasks; what was running is over',()=>{
   const store=new Store(':memory:'),mk=n=>store.create({tenant_key:'t',user_id:'u',chat_id:'c',source_message_id:n,instruction:'x'}).task;
   const queued=mk('q'),done=mk('d'),running=mk('r');
   store.transition(done.id,'COMPLETED');store.transition(running.id,'RUNNING');
   store.enqueue('notice:1',null,'NOTICE',{chat:'c',message:'q',text:'late'});
   store.enqueue(`file:${done.id}`,done.id,'FILE',{});store.db.prepare("UPDATE delivery_outbox SET status='RETRYING' WHERE id=?").run(`view:${done.id}`);
   const result=store.discardLeftovers();
-  assert.equal(result.cancelled,1);assert.equal(store.get(queued.id).status,'CANCELLED');assert.equal(store.get(running.id).status,'RUNNING');
+  assert.equal(result.cancelled,1);assert.equal(store.get(queued.id).status,'CANCELLED');assert.equal(store.get(running.id).status,'FAILED','its Codex process died with the last run');
   const status=id=>store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(id).status;
   assert.equal(status('notice:1'),'FAILED');assert.equal(status(`file:${done.id}`),'FAILED');assert.equal(status(`view:${done.id}`),'FAILED');
-  assert.equal(status(`view:${running.id}`),'PENDING','a task that is still running keeps reporting');
+  assert.equal(status(`view:${running.id}`),'PENDING','its card is finished, not left at "running"');
   assert.equal(store.due().filter(r=>r.kind!=='VIEW'||r.task_id===running.id).length,store.due().length);
   assert(!store.due().some(r=>r.id==='notice:1'||r.task_id===done.id||r.task_id===queued.id),'nothing from before the start is sent');
   store.close();
@@ -89,61 +88,22 @@ test('markdown images never reach a card: Feishu rejects the whole card for a da
   assert.equal(renderTask({status:'COMPLETED',progress:'',result:'![a](data:image/png;base64,AAAA)',error:''}),'本轮已完成。');
 });
 
-test('every unavailable case tells the user the same one sentence, and nothing about Desktop internals',async()=>{
+test('every unavailable case tells the user the same one sentence, and nothing about Codex internals',async()=>{
   const {BOT_DOWN}=await import('../dist/types.js');
   assert.equal(BOT_DOWN,'机器人罢工了，请联系 @钟丰骏-实习生');assert.equal(UNAVAILABLE,BOT_DOWN);
-  const {store,desktop,service}=setup(true);
-  Object.assign(desktop,{startTask:async()=>{throw new NotSubmitted('Desktop 尚未就绪');},follow:async()=>{}});
+  const {store,codex,service}=setup(true);
+  codex.run=async function*(){throw Error('Codex Exec exited with code 1: 401 Unauthorized');};
   await service.receive(message('m1'));const [task]=store.list();
   store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
-  assert.equal(store.get(task.id).error,BOT_DOWN);
-  desktop.reconcileFail=true;Object.assign(desktop,{follow:async()=>{throw Error('boom');}});
-  const t2=store.create({tenant_key:'t',user_id:'u9',chat_id:'c',source_message_id:'x',instruction:'x'}).task;
-  store.transition(t2.id,'STARTING',{thread_id:'th'});await service.reconcile();
-  assert.equal(store.get(t2.id).status,'UNKNOWN');assert.equal(store.get(t2.id).error,BOT_DOWN);
-  store.close();
-});
-
-test('a failure before the input is sent ends the task once; it is not retried later behind a "bot down" reply',async()=>{
-  const {BOT_DOWN}=await import('../dist/types.js');
-  const {store,desktop,service}=setup(true);
-  Object.assign(desktop,{startTask:async()=>{throw new Error('no-client-found');},follow:async()=>{}});
-  await service.receive(message('m1'));const [task]=store.list();
-  store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
-  assert.equal(store.get(task.id).status,'FAILED');assert.equal(store.get(task.id).error,BOT_DOWN);
-  await service.reconcile();assert.equal(store.get(task.id).status,'FAILED','reconciliation does not bring it back');
-  store.close();
-});
-
-test('on start, tasks that never sent their input are cancelled silently; ones that did stay for reconciliation',()=>{
-  const store=new Store(':memory:'),mk=n=>store.create({tenant_key:'t',user_id:n,chat_id:'c',source_message_id:n,instruction:'x'}).task;
-  const unsent=mk('a'),sent=mk('b');
-  for(const t of [unsent,sent]){const session=store.sessionFor(t);store.bindSession(session.id,`th-${t.id}`,'w');store.transition(t.id,'UNKNOWN',{thread_id:`th-${t.id}`});store.event(t.id,'DESKTOP_RAW_REQUEST',{});}
-  store.event(sent.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:sent.id});
-  store.discardLeftovers();
-  assert.equal(store.get(unsent.id).status,'CANCELLED');assert.equal(store.get(sent.id).status,'UNKNOWN');
-  assert(!store.due().some(r=>r.task_id===unsent.id),'and says nothing about it');
+  assert.equal(store.get(task.id).error,BOT_DOWN);assert(!JSON.stringify(store.get(task.id)).includes('401'),'the cause is for the log');
+  codex.ready=false;await service.receive(message('m2','u2'));assert.equal(notices(store).at(-1).text,BOT_DOWN);
   store.close();
 });
 
 test('the bot-down reply is that sentence alone, with no "执行失败" after it',async()=>{
   const {renderTask}=await import('../dist/feishu/cards.js'),{BOT_DOWN}=await import('../dist/types.js');
   assert.equal(renderTask({status:'FAILED',progress:'',result:'',error:BOT_DOWN}),BOT_DOWN);
-  assert.equal(renderTask({status:'UNKNOWN',progress:'',result:'',error:BOT_DOWN}),BOT_DOWN);
   assert(renderTask({status:'FAILED',progress:'',result:'',error:'模型出错'}).endsWith('执行失败'),'other failures keep their label');
-});
-
-test('a chat no Desktop window has loaded is opened before a task is sent, but never by background following',async()=>{
-  const {NativeDesktop}=await import('../dist/desktop/adapter.js'),{RpcRejected}=await import('../dist/desktop/transport.js');
-  const make=()=>{
-    const store=new Store(':memory:'),d=new NativeDesktop(store),calls=[];let loaded=false;
-    Object.assign(d,{ready:true,openRetryMs:1,tools:{call:async(tool)=>{calls.push(tool);if(tool==='navigate_to_codex_page')loaded=true;return {};}},
-      ipc:{follow(){},request:async(method)=>{if(method==='thread-owner-discovery'){if(!loaded)throw new RpcRejected('no-client-found');return {handledByClientId:'win'};}return {};}}});
-    return {store,d,calls};
-  };
-  const a=make();await a.d.follow('t',true);
-  assert.deepEqual(a.calls,['read_thread','navigate_to_codex_page']);assert.equal(a.d.owners.get('t'),'win');a.store.close();
-  const b=make();await assert.rejects(b.d.follow('t'),/no-client-found/);assert(!b.calls.includes('navigate_to_codex_page'),'reconcile and refresh never move the user\'s window');b.store.close();
 });
 
 test("stale checks run on Feishu's clock, so a machine whose clock runs fast still hears live messages",async()=>{

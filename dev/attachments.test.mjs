@@ -11,7 +11,7 @@ import {incomingMessage} from '../dist/feishu/incoming.js';
 import {FeishuClient,MAX_INPUT_BYTES,downloadError} from '../dist/feishu/client.js';
 import {config} from '../dist/config.js';
 import {prepareInputs,removeInputs,inputFilename,sessionInputs} from '../dist/feishu/inputs.js';
-import {taskPrompt,taskRequest} from '../dist/desktop/adapter.js';
+import {codexInput} from '../dist/codex/input.js';
 import {TaskService} from '../dist/tasks/service.js';
 
 const image={kind:'image',key:'img-user-upload',name:'image-1.png'};
@@ -20,13 +20,8 @@ function event(type,content,overrides={}){
   return {tenant_key:'tenant',sender:{sender_type:'user',sender_id:{open_id:'user'}},
     message:{message_id:'message',chat_id:'chat',chat_type:'p2p',message_type:type,content:JSON.stringify(content),...overrides}};
 }
-const desktop=()=>Object.assign(new EventEmitter(),{ready:true,follow:async()=>{}});
-/** A fake Desktop chat whose folder is a fresh temp directory, as Codex's own folder would be. */
-const withChat=async(d,store)=>{
-  const chat=await fs.mkdtemp(path.join(os.tmpdir(),'lark-chat-'));
-  d.prepareSession=async task=>{const owner=store.sessionFor(task);if(!owner.thread_id)store.bindSession(owner.id,'thread',chat);return store.session(owner.id);};
-  return chat;
-};
+/** A Codex that records what it is given and answers at once. */
+const codex=()=>Object.assign(new EventEmitter(),{ready:true,jobs:[],run:async function*(job){this.jobs.push(job);yield {type:'thread.started',thread_id:'thread'};yield {type:'turn.completed',usage:{}};}});
 const fakeClient=()=>new FeishuClient({appId:'cli_offline_test',appSecret:'offline-test-placeholder'});
 
 test('binary resource error responses expose the required published application permission',async()=>{
@@ -84,40 +79,35 @@ test('v1 migration preserves existing tasks and stores attachment metadata atomi
   const task=store.create(input,[],[image]).task;
   assert.equal(store.create(input,[],[{...image,key:'different'}]).created,false);
   store.close();store=new Store(file);assert.equal(store.inputs(task.id)[0].key,image.key);
-  assert.equal(store.db.pragma('user_version',{simple:true}),5);store.close();await fs.rm(root,{recursive:true});
+  assert.equal(store.db.pragma('user_version',{simple:true}),6);store.close();await fs.rm(root,{recursive:true});
 });
 
 test('unauthorized and unsupported attachment messages never create a task or download files',async()=>{
-  const store=new Store(':memory:');let downloads=0;const service=new TaskService(store,desktop(),{downloadResource:async()=>{downloads++;}});
+  const store=new Store(':memory:');let downloads=0;const service=new TaskService(store,codex(),{downloadResource:async()=>{downloads++;}});
   service.authorized=()=>false;const message=incomingMessage(event('image',{image_key:'private-image'}),'bot');
   await service.receive(message);assert.equal(store.list().length,0);assert.equal(downloads,0);
   service.authorized=()=>true;await service.receive({...message,message:'bad-message',error:'暂不支持'});
   assert.equal(store.list().length,0);assert.equal(downloads,0);store.close();
 });
 
-test('inputs survive restart, use isolated safe filenames, and reach the first Desktop prompt only after download',async()=>{
+test('inputs survive restart, use isolated safe filenames, and reach Codex only after download',async()=>{
   const chat=await fs.mkdtemp(path.join(os.tmpdir(),'lark-inputs-')),root=path.join(chat,'input');const store=new Store(':memory:');
   const task=store.create(input,[],[image,{kind:'file',key:'file-key',name:'../../需求:报告.docx'}]).task;
   const calls=[];const downloader={downloadResource:async(message,attachment,file)=>{
     calls.push({message,key:attachment.key});await fs.writeFile(file,'input-data',{flag:'wx'});
     return {size:10,contentType:attachment.kind==='image'?'image/jpeg':'application/octet-stream'};
   }};
-  assert.throws(()=>taskPrompt(task,store),/尚未接收/);
+  assert.throws(()=>codexInput(task.instruction,store.inputs(task.id)),/尚未接收/);
   await prepareInputs(store,task,downloader,root);await prepareInputs(store,task,downloader,root);
   assert.equal(calls.length,2);assert.equal(calls[0].message,'message');
   const inputs=store.inputs(task.id);assert.equal(path.extname(inputs[0].path),'.jpg');
   assert.equal(path.basename(inputs[1].path),'需求_报告.docx','the name it was sent with, only cleaned');
   const flat=path.join(await fs.realpath(chat),'input');
   assert(inputs.every(file=>path.dirname(file.path)===flat),'one flat input folder, no per-task naming');
-  const prompt=taskPrompt(task,store);assert.equal(prompt,'改成卡通风格');
-  const request=taskRequest({...task,thread_id:'thread',workspace_path:path.join(root,'outputs')},store);
-  const slash=p=>p.replaceAll('\\','/'),text=request.input[0].text;
-  assert(text.startsWith('\n# Files mentioned by the user:\n\n## '),'the header Desktop itself writes for a dropped-in file');
-  assert(text.includes(`\n## ${path.basename(inputs[0].path)}: ${slash(inputs[0].path)}\nImage attachment: true\n`),'an image is marked as one');
-  assert(text.includes(`\n## 需求_报告.docx: ${slash(inputs[1].path)}\n\n`),'another file is a plain path with no image marker');
-  assert(text.endsWith(`\n## My request:\n${prompt}\n`));
-  assert.equal(request.input.length,2);assert.equal(request.input[1].type,'localImage');assert.equal(request.input[1].path,inputs[0].path);
-  assert.deepEqual(request.additionalContext,{},'standing rules are in the system prompt; nothing else is injected');
+  const [text,...images]=codexInput(task.instruction,inputs),slash=p=>p.replaceAll('\\','/');
+  assert(text.text.includes(`\n- ${slash(inputs[0].path)}\n- ${slash(inputs[1].path)}\n`),'every file by path');
+  assert(text.text.endsWith('\n\n改成卡通风格'),'then the request, as typed');
+  assert.deepEqual(images,[{type:'local_image',path:inputs[0].path}],'the image is also attached; the document is only a path');
   assert.equal(inputFilename(['..','..','secret.txt'].join(String.fromCharCode(92))),'secret.txt');
   // The same name sent again does not overwrite the earlier file.
   const again=store.create({...input,source_message_id:'again'},[],[{kind:'file',key:'file-key-2',name:'需求:报告.docx'}]).task;
@@ -141,61 +131,39 @@ test('download API uses the source message resource endpoint and enforces the st
   client.close();await fs.rm(root,{recursive:true});
 });
 
-test('a rich-text event is deduplicated, downloaded, and handed to Desktop with its original instruction',async()=>{
-  const store=new Store(':memory:'),d=desktop();let downloads=0,submissions=0;const chatFolder=await withChat(d,store);
-  d.startTask=async task=>{
-    submissions++;const files=store.inputs(task.id);assert.equal(files.length,1);
-    assert.equal(await fs.readFile(files[0].path,'utf8'),'image-data');assert(taskPrompt(task,store).includes('改成卡通风格'));
-    return {threadId:'thread',workspace:'workspace'};
-  };
-  const service=new TaskService(store,d,{downloadResource:async(_message,_attachment,file)=>{
+test('a rich-text event is deduplicated, downloaded, and handed to Codex with its original instruction',async()=>{
+  const store=new Store(':memory:'),c=codex();let downloads=0;store.apiKey=()=>'sk-test';
+  const service=new TaskService(store,c,{downloadResource:async(_message,_attachment,file)=>{
     downloads++;await fs.writeFile(file,'image-data');return {size:10,contentType:'image/png'};
   }});service.authorized=()=>true;
   const message=incomingMessage(event('post',{content:[[{tag:'img',image_key:image.key}],[{tag:'text',text:'改成卡通风格'}]]}),'bot');
   await service.receive(message);await service.receive(message);assert.equal(store.list().length,1);
   const task=store.list()[0];store.transition(task.id,'STARTING');await service.start(store.get(task.id));
-  assert.equal(downloads,1);assert.equal(submissions,1);assert.equal(store.get(task.id).thread_id,'thread');
-  const saved=store.inputs(task.id)[0].path;assert.equal(path.basename(path.dirname(saved)),'input','attachments land in the chat folder\'s input/');assert.equal(path.basename(saved),'image-1.png');
-  assert.equal(path.dirname(path.dirname(saved)),await fs.realpath(chatFolder));
-  await removeInputs([saved],chatFolder);store.close();
+  assert.equal(downloads,1);assert.equal(c.jobs.length,1);assert.equal(store.get(task.id).thread_id,'thread');
+  const saved=store.inputs(task.id)[0].path,job=c.jobs[0];assert.equal(await fs.readFile(saved,'utf8'),'image-data','the file was there before Codex started');
+  assert.equal(path.basename(path.dirname(saved)),'input','attachments land in the workspace\'s input/');assert.equal(path.basename(saved),'image-1.png');
+  assert.equal(path.dirname(path.dirname(saved)),await fs.realpath(job.cwd),'and that workspace is where Codex works');
+  assert(job.input[0].text.includes('改成卡通风格'));assert.deepEqual(job.input.slice(1),[{type:'local_image',path:saved}]);
+  await removeInputs([saved],job.cwd);store.close();
 });
 
-test('failed and cancelled downloads do not submit a Desktop task, and partial files are removed',async()=>{
-  const store=new Store(':memory:'),d=desktop();let submissions=0;d.startTask=async()=>{submissions++;};const chat=await withChat(d,store);
+test('failed and cancelled downloads do not start Codex, and partial files are removed',async()=>{
+  const store=new Store(':memory:'),c=codex();
   const task=store.create(input,[],[image]).task;
-  const service=new TaskService(store,d,{downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'partial');throw Error('缺少 im:resource 权限');}});
+  const service=new TaskService(store,c,{downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'partial');throw Error('缺少 im:resource 权限');}});
   store.transition(task.id,'STARTING');await service.start(store.get(task.id));
-  assert.equal(store.get(task.id).status,'FAILED');assert.equal(store.get(task.id).error,'机器人罢工了，请联系 @钟丰骏-实习生');assert.equal(submissions,0);
+  assert.equal(store.get(task.id).status,'FAILED');assert.equal(store.get(task.id).error,'机器人罢工了，请联系 @钟丰骏-实习生');assert.equal(c.jobs.length,0);
   const folder=sessionInputs(store.session(store.get(task.id).session_id).workspace_path);assert.deepEqual(await fs.readdir(folder),[],'the partial download is gone');
   const cancelled=store.create({...input,source_message_id:'cancelled'},[],[image]).task;
   service.downloader={downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'data');store.update(cancelled.id,{cancel_requested:1});return {size:4,contentType:'image/png'};}};
   store.transition(cancelled.id,'STARTING');await service.start(store.get(cancelled.id));
-  assert.equal(store.get(cancelled.id).status,'CANCELLED');assert.equal(submissions,0);await removeInputs(store.inputs(cancelled.id).flatMap(i=>i.path?[i.path]:[]),chat);store.close();
+  assert.equal(store.get(cancelled.id).status,'CANCELLED');assert.equal(c.jobs.length,0);store.close();
 });
 
-test('reconciliation voids attachment preparation that has not reached Desktop submission and checks one that has',async()=>{
-  const store=new Store(':memory:'),d=desktop();let recovered=0;d.recoverUnbound=async()=>{recovered++;};
-  const service=new TaskService(store,d);const before=store.create(input,[],[image]).task;
-  const submitted=store.create({...input,source_message_id:'submitted'},[],[image]).task;
-  store.transition(before.id,'STARTING');store.transition(submitted.id,'STARTING');store.event(submitted.id,'DESKTOP_SUBMITTING',{});
-  await service.reconcile();assert.equal(store.get(before.id).status,'FAILED');assert.equal(store.get(submitted.id).status,'UNKNOWN');assert.equal(recovered,1);store.close();
-});
-
-test('voice messages arrive as a file; audio files go in natively only when every offered model takes audio',async()=>{
-  const {audioInputs,audioSupported}=await import('../dist/desktop/audio.js');
+test('voice messages arrive as a file, and like any file they go to Codex as a path',()=>{
   const voice=incomingMessage({sender:{sender_type:'user',sender_id:{open_id:'u'}},tenant_key:'t',message:{message_id:'m',chat_id:'c',chat_type:'p2p',message_type:'audio',content:JSON.stringify({file_key:'k',duration:3000})}},'bot');
   assert.deepEqual(voice.attachments,[{kind:'file',key:'k',name:'语音消息.opus'}]);assert(!voice.error);
-  const inputs=[{kind:'file',path:'C:/in/a.MP3'},{kind:'file',path:'C:/in/b.pdf'},{kind:'image',path:'C:/in/c.mp3'}];
-  assert.deepEqual(audioInputs(inputs,true),[{type:'localAudio',path:'C:/in/a.MP3'}],'only audio files, never images or documents');
-  assert.deepEqual(audioInputs(inputs,false),[]);
-  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-models-'));
-  try{
-    assert.equal(audioSupported(home),false,'no model list: no native audio');
-    const write=models=>fs.writeFile(path.join(home,'models_cache.json'),JSON.stringify({models}));
-    await write([{visibility:'list',input_modalities:['text','image']}]);assert.equal(audioSupported(home),false);
-    await write([{visibility:'list',input_modalities:['text','audio']},{visibility:'list',input_modalities:['text','image']}]);assert.equal(audioSupported(home),false,'one model without audio is enough to keep it off');
-    await write([{visibility:'list',input_modalities:['text','audio']},{visibility:'hide',input_modalities:['text']}]);assert.equal(audioSupported(home),true);
-  }finally{await fs.rm(home,{recursive:true,force:true});}
+  assert.deepEqual(codexInput('',[{kind:'file',path:'C:/in/语音消息.opus'}]).map(x=>x.type),['text'],'there is no audio input: only the path');
 });
 
 test('in a group, other people mentioned in plain text keep their names instead of @_user_N placeholders',()=>{

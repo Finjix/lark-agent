@@ -1,5 +1,5 @@
-import {terminal,BOT_DOWN,type Task,type PendingInteraction} from '../types.js';
-export const labels:Record<string,string>={QUEUED:'排队中',STARTING:'正在启动',RUNNING:'执行中',WAITING_APPROVAL:'等待你的确认',COMPLETED:'已完成',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'已中断',UNKNOWN:'等待核对 Desktop'};
+import {terminal,BOT_DOWN,type Task} from '../types.js';
+export const labels:Record<string,string>={QUEUED:'排队中',STARTING:'正在启动',RUNNING:'执行中',COMPLETED:'已完成',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'已中断'};
 export function limitText(text:string,bytes=18000){
   if(Buffer.byteLength(text,'utf8')<=bytes)return text;
   let result='',size=0;for(const c of text){const n=Buffer.byteLength(c);if(size+n>bytes-80)break;result+=c;size+=n;}return result+'\n\n（内容较长，完整结果以附件为准）';
@@ -11,13 +11,11 @@ export const withoutImages=(text:string)=>text.replace(/!\[([^\]]*)\]\((<[^>\n]*
   // A web address stays as a plain link (Feishu cannot show it as an image but the user can open it); data: URIs and local paths are dropped.
   const target=url.replace(/^<|>$/g,'').trim();return /^https?:\/\//i.test(target)?`[${alt||target}](${target})`:'';
 }).replace(/\n{3,}/g,'\n\n').trim();
-export function renderTask(task:Task,requests:PendingInteraction[]=[]){
+export function renderTask(task:Task){
   const parts:string[]=[];
   if(withoutImages(task.progress))parts.push(limitText(withoutImages(task.progress),7000));
   if(withoutImages(task.result))parts.push(limitText(withoutImages(task.result),12000));
   if(task.error)parts.push(limitText(task.error,1500));
-  for(const r of requests){parts.push(`**需要${r.kind==='input'?'补充信息':'确认'}：${r.id}**\n${limitText(r.summary,2500)}\n`+
-    (r.kind==='input'?`\`/answer ${task.id} ${r.id} 回答或JSON\``:`\`/approve ${task.id} ${r.id}\`\n\`/deny ${task.id} ${r.id}\``));}
   // The bot-down sentence stands alone: no status label after it.
   if(['FAILED','CANCELLED','INTERRUPTED'].includes(task.status)&&task.error!==BOT_DOWN)parts.push(labels[task.status]);
   if(!parts.length&&task.status==='COMPLETED')parts.push('本轮已完成。');

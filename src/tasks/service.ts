@@ -1,45 +1,40 @@
-import {randomUUID} from 'node:crypto';
-import path from 'node:path';
+import fs from 'node:fs/promises';
+import type {ThreadEvent,UserInput} from '@openai/codex-sdk';
 import {Store} from '../storage/database.js';
 import {sessionInputs} from '../feishu/inputs.js';
-import {NativeDesktop} from '../desktop/adapter.js';
-import {taskWorkspace} from '../layout.js';
+import {CodexRunner} from '../codex/runner.js';
+import {Turn} from '../codex/turn.js';
+import {codexInput} from '../codex/input.js';
+import {generatedImages} from '../feishu/images.js';
+import {userWorkspace} from '../layout.js';
 import {config} from '../config.js';
-import {terminal,BOT_DOWN,type Task,type TaskView,type IncomingMessage,type UserSession} from '../types.js';
+import {terminal,BOT_DOWN,type Task,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
-import {OutcomeUnknown,NotSubmitted,RpcRejected} from '../desktop/transport.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
-export const HELP='直接发送任务；群聊需 @机器人。\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID（无响应时再发一次强制结束）\n/approve 任务ID 请求ID\n/deny 任务ID 请求ID\n/answer 任务ID 请求ID 回答或JSON\n/whoami 查看自己的 Open ID';
+export const HELP='直接发送任务；群聊需 @机器人。\n/key 你的API Key 设置自己的 Key（请私聊发送）\n/new 忘掉之前的对话，重新开始\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID（无响应时再发一次强制结束）\n/whoami 查看自己的 Open ID';
 export const UNAVAILABLE=BOT_DOWN;
+export const KEY_NEEDED='使用前请先私聊机器人发送 /key 你的API Key，设置自己的 OpenAI API Key。';
+export const KEY_REJECTED='你的 API Key 被拒绝了（可能填错或已失效），请私聊机器人发送 /key 你的API Key 重新设置。';
+// What Codex says when the user's key is not accepted.
+const AUTH_FAILURE=/\b401\b|unauthorized|not logged in|log ?in again|sign ?in again|token.{0,20}(expired|revoked|invalid)/i;
 // Clock skew allowance for the start check, and how late a message may arrive: live ones take a second or two, Feishu's redeliveries of what was missed while the service was down take much longer.
 const STALE_GRACE_MS=1000,MAX_DELIVERY_LAG_MS=30000;
 export class TaskService {
   private startedAt=Date.now();
   /** Feishu's clock minus this machine's (ms), kept current by the main loop; message times are Feishu's. */
   clockOffsetMs=0;
-  private interruptSent=new Set<string>();
-  private starting=new Set<string>();
-  constructor(public store:Store,public desktop:NativeDesktop,private downloader?:ResourceDownloader){
-    desktop.on('state',(id:string)=>{try{this.onState(id);}catch(e){log.error({taskThread:id,error:safeError(e)},'Desktop 状态处理失败');}});
-    desktop.on('online',()=>this.interruptSent.clear());
-  }
+  /** One entry per task from the moment it starts until it is over: what stops its Codex process. */
+  private runs=new Map<string,AbortController>();
+  private stopping=false;
+  constructor(public store:Store,public codex:CodexRunner,private downloader?:ResourceDownloader){}
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
   authorized(message:IncomingMessage){return authorized(message);}
-  /** Marks a task as awaiting reconciliation once; repeating it on every pass would rewrite its events and card forever. */
-  private markUnknown(id:string){const task=this.store.get(id);if(task&&(task.status!=='UNKNOWN'||task.error!==BOT_DOWN))this.store.transition(id,'UNKNOWN',{error:BOT_DOWN});}
   private async refreshSessionName(session:UserSession){
     if(!this.downloader?.getUserName)return;
     try{const name=await this.downloader.getUserName(session.user_id);if(name)this.store.nameSession(session.id,name);}
     catch(e){log.warn({error:safeError(e)},'用户名称查询失败，会话和任务继续使用现有名称');}
-  }
-  async syncSessionNames(){
-    for(const session of this.store.sessions()){
-      if(!this.desktop.ready)break;
-      await this.refreshSessionName(session);
-      await this.desktop.syncSessionTitle?.(session.id);
-    }
   }
   async receive(message:IncomingMessage){
     // Feishu may redeliver events that arrived while this service was not running; those are stale and must not run now.
@@ -50,11 +45,13 @@ export class TaskService {
     if(message.error){this.notice(message,message.error);return;}
     if(message.text.trimStart().startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
+    // Codex runs on the user's own API key; until they set one nothing is queued.
+    if(!this.store.apiKey(message.tenant,message.user)){this.notice(message,KEY_NEEDED);return;}
     // One input runs at a time. Anything sent while the user's previous input is still unfinished gets no result back, so it is not an input at all:
     // it is dropped without a reply and never queued. (A redelivered event of the message already running lands here too and is equally harmless.)
     if(this.store.busy(message.tenant,message.user)){log.info({message:message.message,user:message.user},'忽略执行期间收到的输入');return;}
-    // Nothing is queued while Desktop is down: the user is told at once and sends it again, instead of a backlog running later and answering many times.
-    if(this.desktop.ready===false&&!this.store.taskForMessage(message.tenant,message.message)){this.notice(message,UNAVAILABLE);return;}
+    // Nothing is queued while Codex is down: the user is told at once and sends it again, instead of a backlog running later and answering many times.
+    if(this.codex.ready===false&&!this.store.taskForMessage(message.tenant,message.message)){this.notice(message,UNAVAILABLE);return;}
     const resources=config.resources.filter(r=>r.regex.test(message.text)).map(r=>r.key);
     const result=this.store.create({tenant_key:message.tenant,user_id:message.user,chat_id:message.chat,source_message_id:message.message,
       instruction:message.text},resources,message.attachments);
@@ -66,149 +63,138 @@ export class TaskService {
     return t;
   }
   private async command(message:IncomingMessage){
-    const [command,id,requestId,...rest]=message.text.trim().split(/\s+/);
+    const [command,id]=message.text.trim().split(/\s+/);
     try{
       if(command==='/help'){this.notice(message,HELP);return;}
       if(command==='/tasks'){
         const tasks=this.store.recent(message.tenant,message.user,10);
         this.notice(message,tasks.length?tasks.map(t=>`${t.id} ${t.status}`).join('\n'):'暂无任务');return;
       }
-      if(!['/status','/cancel','/approve','/deny','/answer'].includes(command)){this.notice(message,HELP);return;}
+      if(command==='/key'){this.notice(message,this.setKey(message,id));return;}
+      if(command==='/new'){
+        if(this.store.busy(message.tenant,message.user))throw Error('有任务正在执行，请等它结束，或先 /cancel');
+        this.notice(message,this.store.resetSession(message.tenant,message.user)?'已开始新的对话，之前的内容不再带入。':'还没有对话，直接发送任务即可。');return;
+      }
+      if(!['/status','/cancel'].includes(command)){this.notice(message,HELP);return;}
       const task=this.owned(message,id);
       if(command==='/status'){this.notice(message,`任务：${task.id}\n状态：${task.status}\n${task.error||task.result||task.progress||'等待执行'}`.slice(0,15000));return;}
-      if(command==='/cancel'){
+      if(terminal(task.status)||task.status==='QUEUED'){
         if(task.status==='QUEUED')this.store.transition(task.id,'CANCELLED');
-        else if(task.status==='UNKNOWN'&&!task.turn_id&&!this.starting.has(task.id)){
-          // Desktop never confirmed this task, so nothing can resolve it later. Release the user's queue instead of waiting forever.
-          this.store.transition(task.id,'CANCELLED',{error:''});
-          this.notice(message,this.store.submission(task.id)?'任务已取消。如果 Desktop 已收到该请求，它仍可能继续执行。':'任务已取消。');return;
-        }
-        else if(!terminal(task.status)&&task.cancel_requested){
-          // Asked before and Desktop has still not confirmed the interrupt (it may have crashed mid-turn). Waiting longer helps nobody and
-          // would keep the user's queue blocked for good, so the task ends here; Desktop is told once more, best effort.
-          this.store.transition(task.id,'CANCELLED',{error:'',progress:''});
-          if(task.thread_id&&task.turn_id)void this.interrupt(task).catch(e=>log.warn({taskId:task.id,error:safeError(e)},'强制结束后中断仍未确认'));
-          this.notice(message,'已强制结束任务。如果 Desktop 仍在执行，它可能继续运行，结果不会再回传。');return;
-        }
-        else if(!terminal(task.status)){
-          this.store.update(task.id,{cancel_requested:1});
-          // An interrupt that cannot be confirmed now is retried on the next state update; the user is not told the bot is down for it.
-          if(task.thread_id&&task.turn_id)await this.interrupt(task).catch(e=>log.warn({taskId:task.id,error:safeError(e)},'中断尚未确认'));
-        }
-        this.notice(message,terminal(task.status)||task.status==='QUEUED'?'任务已结束或已取消。':'已请求中断，等待 Desktop 确认。若长时间没有结果，再发一次 /cancel 可强制结束。');return;
+        this.notice(message,'任务已结束或已取消。');return;
       }
-      if(terminal(task.status))throw Error('任务已经结束');
-      const row=this.store.db.prepare("SELECT * FROM pending_requests WHERE task_id=? AND request_id=? AND status='PENDING'").get(task.id,requestId) as any;
-      if(!row||row.expires_at<Date.now())throw Error('交互请求不存在、已处理或已过期');
-      if(row.kind==='input'&&command!=='/answer')throw Error('此请求需要回答，请使用 /answer；也可用 /cancel 中断任务');
-      if(!task.thread_id||!task.turn_id)throw Error('Desktop 执行关联尚未确认');
-      // Persist before sending. A repeated Feishu event must not repeat an approval write.
-      const claimed=this.store.db.prepare("UPDATE pending_requests SET status='RESPONDING' WHERE task_id=? AND request_id=? AND status='PENDING'").run(task.id,requestId);
-      if(!claimed.changes)throw Error('该请求正在处理中');
-      try{
-        await this.desktop.respond(task.thread_id,task.turn_id,{id:row.request_id,kind:row.kind,summary:row.summary,payload:JSON.parse(row.payload)},command==='/approve'?'accept':command==='/deny'?'decline':rest.join(' '));
-        this.store.db.prepare("UPDATE pending_requests SET status='RESOLVED' WHERE task_id=? AND request_id=?").run(task.id,requestId);
-        this.notice(message,'响应已提交，等待 Desktop 继续执行。');
-      }catch(e){
-        // Validation errors are safe to fix; network uncertainty remains RESPONDING until snapshot reconciliation.
-        if(!(e instanceof OutcomeUnknown))this.store.db.prepare("UPDATE pending_requests SET status='PENDING' WHERE task_id=? AND request_id=?").run(task.id,requestId);
-        throw e;
+      if(task.cancel_requested){
+        // Asked before and the Codex process is still there. Waiting longer helps nobody and would keep the user's queue blocked, so the task ends here.
+        this.store.transition(task.id,'CANCELLED',{error:'',progress:''});this.interrupt(task);
+        this.notice(message,'已强制结束任务。如果 Codex 仍在执行，它可能继续运行，结果不会再回传。');return;
       }
-    }catch(e){
-      const desktopDown=e instanceof OutcomeUnknown||e instanceof NotSubmitted||e instanceof RpcRejected||/^Desktop/.test(safeError(e));
-      if(desktopDown)log.warn({error:safeError(e)},'命令无法送达 Desktop');
-      this.notice(message,desktopDown?BOT_DOWN:safeError(e));
+      this.store.update(task.id,{cancel_requested:1});
+      // A task nothing is running (a leftover) cannot answer, so it ends here.
+      if(!this.interrupt(task)){this.store.transition(task.id,'CANCELLED',{error:''});this.notice(message,'任务已取消。');return;}
+      this.notice(message,'已请求中断。若长时间没有结果，再发一次 /cancel 可强制结束。');
+    }catch(e){this.notice(message,safeError(e));}
+  }
+  /** /key <API key>, /key (what is set), /key clear. The key itself is never repeated or logged. */
+  private setKey(message:IncomingMessage,value?:string){
+    const {tenant,user}=message,current=this.store.apiKey(tenant,user);
+    if(!value)return current?`已设置 API Key：${current.slice(0,5)}...${current.slice(-4)}。发送 /key clear 清除，或 /key 新的Key 替换。`:KEY_NEEDED;
+    if(value==='clear')return this.store.clearApiKey(tenant,user)?'已清除你的 API Key。':'你还没有设置 API Key。';
+    // Everyone in a group can read what is sent there.
+    if(message.isGroup)return '请私聊机器人发送 /key，群里的消息大家都看得到。如果已经在群里发过，请撤回消息并到 OpenAI 后台作废这个 Key。';
+    if(!/^[\x21-\x7e]{16,}$/.test(value))return 'API Key 的格式不对：应是一整串字符（不含空格和中文）。';
+    this.store.setApiKey(tenant,user,value);
+    return '已保存你的 API Key，之后的任务都用它。为安全起见，建议撤回刚才这条消息。';
+  }
+  /** The user's workspace: Codex's working directory, where what it makes is delivered from, and where the attachments arrive. */
+  private async prepare(task:Task){
+    const named=this.store.sessionFor(task);await this.refreshSessionName(named);
+    const session=this.store.session(named.id)!,folder=userWorkspace(this.store,session);
+    await fs.mkdir(folder,{recursive:true});
+    if(session.workspace_path!==folder)this.store.setSessionWorkspace(session.id,folder);
+    this.store.update(task.id,{workspace_path:folder,thread_id:session.thread_id});
+    if(this.store.inputs(task.id).length){
+      if(!this.downloader)throw Error('附件下载服务不可用');
+      this.store.update(task.id,{progress:'正在接收附件'});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
+      await prepareInputs(this.store,task,this.downloader,sessionInputs(folder));
+      this.store.update(task.id,{progress:''});
     }
+    return {session:this.store.session(session.id)!,folder};
   }
   async start(task:Task){
-    if(this.starting.has(task.id))return;this.starting.add(task.id);
-    let submitting=false;
+    if(this.runs.has(task.id))return;
+    const abort=new AbortController();this.runs.set(task.id,abort);
+    let turn:Turn|undefined;
     try{
       if(this.store.get(task.id)?.cancel_requested){this.store.transition(task.id,'CANCELLED');return;}
-      if(this.store.inputs(task.id).length){
-        if(!this.downloader)throw Error('附件下载服务不可用');
-        this.store.update(task.id,{progress:'正在接收附件'});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
-        const owner=this.store.sessionFor(task);await this.refreshSessionName(owner);
-        // Attachments are saved in Codex's own folder for this chat, so the chat has to exist first.
-        const root=(await this.desktop.prepareSession(task)).workspace_path!;
-        await prepareInputs(this.store,task,this.downloader,sessionInputs(root));
-      }
+      const {session,folder}=await this.prepare(task);
       const current=this.store.get(task.id)!;
-      if(current.cancel_requested||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,'CANCELLED');return;}
-      const session=this.store.sessionFor(task);
-      await this.refreshSessionName(session);
-      this.store.event(task.id,'DESKTOP_SUBMITTING',{});submitting=true;
-      const created=await this.desktop.startTask(this.store.get(task.id)!);
-      this.store.update(task.id,{thread_id:created.threadId,workspace_path:created.workspace});
-      await this.desktop.follow(created.threadId);
+      if(current.cancel_requested||abort.signal.aborted||terminal(current.status)){if(!terminal(current.status))this.store.transition(task.id,this.stopping?'FAILED':'CANCELLED',this.stopping?{error:BOT_DOWN}:{});return;}
+      const input=codexInput(current.instruction,this.store.inputs(task.id));
+      // From here on the input has been handed over, and the task is never started a second time.
+      this.store.event(task.id,'CODEX_SUBMITTED',{});
+      turn=new Turn();
+      await this.execute(this.store.get(task.id)!,session,folder,input,turn,abort.signal);
     }catch(e){
       const current=this.store.get(task.id);
-      if(e instanceof NotSubmitted){
-        // Nothing reached Desktop. Cancel if asked to; otherwise fail now rather than run later, when the user has probably sent it again.
-        if(current?.cancel_requested)this.store.transition(task.id,'CANCELLED');
-        else this.store.transition(task.id,'FAILED',{error:UNAVAILABLE,progress:''});
-      }else if(e instanceof RpcRejected&&this.store.submission(task.id)&&!current?.turn_id){
-        // Desktop explicitly refused the business request, so it is certain nothing is running.
-        log.warn({taskId:task.id,error:safeError(e)},'Desktop 拒绝了请求，任务未执行');
-        this.store.transition(task.id,'FAILED',{error:BOT_DOWN});
+      if(!current||terminal(current.status))return;
+      if(abort.signal.aborted&&!this.stopping){
+        // The user stopped it: what Codex had said by then stays on the card.
+        await this.finish(current,turn,this.store.submitted(task.id)?'INTERRUPTED':'CANCELLED');
       }else{
-        // Only a persisted send attempt or a lost session creation makes the outcome uncertain; any other failure happened before anything reached Desktop.
-        const uncertain=submitting&&(!!this.store.submission(task.id)||e instanceof OutcomeUnknown);
-        log.warn({taskId:task.id,uncertain,error:safeError(e)},uncertain?'提交结果不明，需要核对 Desktop':'任务未提交给 Codex');
-        this.store.transition(task.id,uncertain?'UNKNOWN':'FAILED',{error:BOT_DOWN});
+        log.warn({taskId:task.id,error:safeError(e)},this.stopping?'服务停止，任务中断':'Codex 执行失败');
+        await this.finish(current,turn,'FAILED',BOT_DOWN);
       }
     }
-    finally{this.starting.delete(task.id);}
+    finally{this.runs.delete(task.id);}
   }
-  onState(threadId:string){
-    const task=this.store.byThread(threadId);if(!task||terminal(task.status))return;
-    const cached=this.desktop.stream.states.get(threadId);
-    const submission=this.store.submission(task.id);
-    const view=this.desktop.stream.view(threadId,task.turn_id,submission?.clientUserMessageId);
-    if(!view)return;
-    if(!task.turn_id){
-      const session=task.session_id?this.store.session(task.session_id):undefined;
-      const root=session?.workspace_path??cached?.state.projectlessOutputDirectory??cached?.state.cwd;
-      if(session&&root)this.store.bindSession(session.id,threadId,root);
-      this.store.update(task.id,{turn_id:view.turnId,workspace_path:task.workspace_path??(session&&root?taskWorkspace(root):root)});
-    }
-    const progress=view.commentary;
-    // Persist images before the terminal transition can release the Desktop subscription.
-    const imagesChanged=this.store.recordImages(task.id,view.images);
-    const patch={result:view.answer,error:view.error,progress,last_revision:view.revision};
-    const completed=({completed:'COMPLETED',failed:'FAILED',interrupted:'INTERRUPTED'} as const)[view.status as 'completed'];
-    if(completed){this.store.transition(task.id,completed,patch);this.store.meta('desktop_caller',{threadId,turnId:view.turnId});setImmediate(()=>{if(!this.store.byThread(threadId))this.desktop.unfollow(threadId);});log.info({taskId:task.id,status:completed},'任务结束');return;}
-    const previousRequests=JSON.stringify(this.store.pending(task.id));this.store.setRequests(task.id,view.requests);
-    const status=view.requests.length?'WAITING_APPROVAL':'RUNNING';
-    if(task.status!==status)this.store.transition(task.id,status,patch);
-    else if(imagesChanged||task.result!==view.answer||task.progress!==progress||task.error!==view.error||previousRequests!==JSON.stringify(this.store.pending(task.id))){this.store.update(task.id,patch);this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});}
-    else if(task.last_revision!==view.revision)this.store.update(task.id,{last_revision:view.revision});
-    if(task.cancel_requested)void this.interrupt(this.store.get(task.id)!).catch(e=>log.warn({taskId:task.id,error:safeError(e)},'中断尚未确认'));
-  }
-  async interrupt(task:Task){
-    if(!task.thread_id||!task.turn_id)return;
-    const key=`${task.id}:${task.turn_id}`;if(this.interruptSent.has(key))return;
-    this.interruptSent.add(key);
-    // Forget a failed attempt so /cancel and the next state update can retry it.
-    try{await this.desktop.interrupt(task.thread_id,task.turn_id);}catch(e){this.interruptSent.delete(key);throw e;}
-  }
-  async reconcile(){
-    // Nothing of this task reached Desktop. It is not run later, when the user has probably moved on or sent it again: it ends now, and the user is told once.
-    const voidTask=(id:string)=>this.store.transition(id,this.store.get(id)?.cancel_requested?'CANCELLED':'FAILED',{error:this.store.get(id)?.cancel_requested?'':BOT_DOWN,progress:''});
-    for(const task of this.store.active()){
-      if(this.starting.has(task.id))continue;
+  /** Runs one turn and ends the task by its outcome. */
+  private async execute(task:Task,session:UserSession,folder:string,input:UserInput[],turn:Turn,signal:AbortSignal){
+    let threadId=session.thread_id,received=false;
+    for(let renewed=false;;){
       try{
-        const session=task.session_id?this.store.session(task.session_id):undefined;
-        // Only a persisted send attempt makes the outcome uncertain. Without one the business input never left,
-        // so queue it again before following an old thread; startTask can then replace an archived or missing session.
-        if(!this.store.submission(task.id)&&!task.turn_id&&session?.thread_id&&session.workspace_path){voidTask(task.id);continue;}
-        if(task.thread_id)await this.desktop.follow(task.thread_id);
-        else if(this.store.inputs(task.id).length&&!this.store.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='DESKTOP_SUBMITTING' LIMIT 1").get(task.id))voidTask(task.id);
-        else{this.markUnknown(task.id);await this.desktop.recoverUnbound(task);}
-        // recoverUnbound may have bound the session after a lost creation response; an input that never went out is void like any other.
-        const current=this.store.get(task.id)!;
-        if(!terminal(current.status)&&!this.store.submission(task.id)&&!current.turn_id&&current.thread_id&&current.session_id&&this.store.session(current.session_id)?.workspace_path)voidTask(task.id);
-      }catch(e){log.warn({taskId:task.id,error:safeError(e)},'核对 Desktop 失败');this.markUnknown(task.id);}
+        for await(const event of this.codex.run({threadId,cwd:folder,input,apiKey:this.store.apiKey(task.tenant_key,task.user_id),signal})){received=true;this.onEvent(task,session,turn,event);}
+        break;
+      }catch(e){
+        // After a failed turn the process exits with an error code, which the SDK throws; the turn's own report is what counts.
+        if(turn.state!=='running'){log.debug({taskId:task.id,error:safeError(e)},'Codex 进程在本轮结束后以错误退出');break;}
+        // Codex no longer has the chat this conversation continues (its home was emptied, say). Resuming it fails before anything is sent, so the task goes on in a new chat.
+        if(!threadId||renewed||received||!/no rollout found/i.test(safeError(e)))throw e;
+        log.warn({taskId:task.id,threadId},'Codex 里已没有原对话，改用新对话');
+        session=this.store.renewSession(this.store.get(task.id)!,'missing');this.store.setSessionWorkspace(session.id,folder);
+        threadId=null;renewed=true;
+      }
+    }
+    if(turn.state==='running'){
+      // Killed on request, the process may end without an error of its own.
+      signal.throwIfAborted();
+      log.warn({taskId:task.id},'Codex 没有给出本轮的结果就结束了');await this.finish(this.store.get(task.id)!,turn,'FAILED',BOT_DOWN);return;
+    }
+    if(turn.state==='failed')log.warn({taskId:task.id,error:turn.error},'Codex 本轮失败');
+    await this.finish(this.store.get(task.id)!,turn,turn.state==='completed'?'COMPLETED':'FAILED',AUTH_FAILURE.test(turn.error)?KEY_REJECTED:turn.error);
+  }
+  private onEvent(task:Task,session:UserSession,turn:Turn,event:ThreadEvent){
+    if(event.type==='thread.started'){
+      if(!session.thread_id)this.store.bindSession(session.id,event.thread_id);
+      this.store.update(task.id,{thread_id:event.thread_id});
+    }
+    const changed=turn.apply(event);
+    if(this.store.get(task.id)?.status==='STARTING')this.store.transition(task.id,'RUNNING');
+    // The end of the turn is handled by finish, together with the images it made.
+    if(changed&&turn.state==='running'&&this.store.get(task.id)!.progress!==turn.progress){
+      this.store.update(task.id,{progress:turn.progress});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
     }
   }
+  /** Ends the task. The images Codex generated during it are recorded first: the final transition is what delivers them. */
+  private async finish(task:Task,turn:Turn|undefined,status:'COMPLETED'|'FAILED'|'INTERRUPTED'|'CANCELLED',error=''){
+    const threadId=turn?.threadId||this.store.get(task.id)?.thread_id;
+    if(threadId&&status!=='CANCELLED'){
+      try{this.store.recordImages(task.id,await generatedImages(threadId,task.started_at??task.created_at));}
+      catch(e){log.warn({taskId:task.id,error:safeError(e)},'读取生成的图片失败');}
+    }
+    this.store.transition(task.id,status,{result:turn?.answer??'',progress:turn?.progress??'',error});
+    log.info({taskId:task.id,status},'任务结束');
+  }
+  /** Stops the task's Codex process; false when nothing is running it. */
+  interrupt(task:Task){const run=this.runs.get(task.id);run?.abort();return !!run;}
+  /** Service shutdown: every Codex process ends, and its task is finished as failed, so no card is left saying "running". */
+  stop(){this.stopping=true;for(const run of this.runs.values())run.abort();}
 }

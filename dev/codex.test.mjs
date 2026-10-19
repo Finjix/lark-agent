@@ -1,0 +1,329 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {EventEmitter} from 'node:events';
+import {config} from '../dist/config.js';
+import {Store} from '../dist/storage/database.js';
+import {TaskService} from '../dist/tasks/service.js';
+import {Scheduler} from '../dist/tasks/scheduler.js';
+import {Turn} from '../dist/codex/turn.js';
+import {codexInput} from '../dist/codex/input.js';
+import {CodexRunner,codexEnv,codexConfig,threadOptions} from '../dist/codex/runner.js';
+import {BOT_DOWN} from '../dist/types.js';
+import {KEY_NEEDED,KEY_REJECTED} from '../dist/tasks/service.js';
+
+// ---- the events of `codex exec --experimental-json`, as the SDK hands them over
+const started=id=>({type:'thread.started',thread_id:id}),turnStarted={type:'turn.started'};
+const say=(id,text)=>({type:'item.completed',item:{id,type:'agent_message',text}});
+const completed={type:'turn.completed',usage:{input_tokens:1,cached_input_tokens:0,output_tokens:1,reasoning_output_tokens:0}};
+const failed=message=>({type:'turn.failed',error:{message}});
+const aborted=()=>Object.assign(Error('The operation was aborted'),{name:'AbortError'});
+const untilAborted=signal=>new Promise((_,reject)=>signal.aborted?reject(aborted()):signal.addEventListener('abort',()=>reject(aborted()),{once:true}));
+const until=async(condition)=>{for(let i=0;i<400;i++){if(condition())return;await new Promise(r=>setTimeout(r,5));}throw Error('condition never became true');};
+/** A runner whose turns are whatever `script(job,n)` yields, recording every job it is given. */
+function fakeCodex(script){
+  const codex=Object.assign(new EventEmitter(),{ready:true,jobs:[]});
+  codex.run=async function*(job){codex.jobs.push(job);yield* script(job,codex.jobs.length);};
+  return codex;
+}
+const input=(message='m1',user='u1',instruction='帮我做点事')=>({tenant_key:'t',user_id:user,chat_id:'c',source_message_id:message,instruction});
+function setup(script,{downloader}={}){
+  const store=new Store(':memory:'),codex=fakeCodex(script),service=new TaskService(store,codex,downloader);service.authorized=()=>true;store.apiKey=(tenant,user)=>`sk-${user}`;
+  const run=async(message='m1',user='u1',instruction)=>{
+    const task=store.create(input(message,user,instruction)).task;store.transition(task.id,'STARTING',{started_at:Date.now()});
+    await service.start(store.get(task.id));return store.get(task.id);
+  };
+  return {store,codex,service,run};
+}
+const notices=store=>store.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE' ORDER BY rowid").all().map(r=>JSON.parse(r.payload).text);
+
+// ---- what a turn looks like on a card
+test('while a turn runs every message is progress; when it completes the last one is the answer',()=>{
+  const turn=new Turn();
+  assert.equal(turn.apply(started('th')),false);assert.equal(turn.threadId,'th');assert.equal(turn.apply(turnStarted),false);
+  assert.equal(turn.apply(say('a','先看看文件')),true);assert.equal(turn.apply(say('a','先看看文件')),false,'the same message again changes nothing');
+  assert.equal(turn.apply({type:'item.started',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'PRIVATE',status:'in_progress'}}),false,'tool calls and their output are not shown');
+  assert.equal(turn.apply({type:'item.completed',item:{id:'r',type:'reasoning',text:'SECRET_REASONING'}}),false);
+  turn.apply(say('b','文件在这里'));
+  assert.deepEqual([turn.progress,turn.answer,turn.state],['先看看文件\n\n文件在这里','','running']);
+  turn.apply(completed);
+  assert.deepEqual([turn.progress,turn.answer,turn.state,turn.error],['先看看文件','文件在这里','completed','']);
+  assert(!JSON.stringify([turn.progress,turn.answer]).includes('PRIVATE')&&!JSON.stringify([turn.progress,turn.answer]).includes('SECRET'));
+});
+test('Codex\'s own reconnect notices are not failures; a failed turn keeps what was said and reports why',()=>{
+  const turn=new Turn();turn.apply(say('a','做到一半'));
+  assert.equal(turn.apply({type:'error',message:'Reconnecting... 2/5 (unexpected status 401)'}),false);
+  assert.equal(turn.apply({type:'item.completed',item:{id:'e',type:'error',message:'Falling back from WebSockets'}}),false);
+  assert.equal(turn.state,'running');
+  turn.apply(failed('You\'ve hit your usage limit'));
+  assert.deepEqual([turn.state,turn.error,turn.progress,turn.answer],['failed','You\'ve hit your usage limit','做到一半','']);
+});
+
+// ---- what Codex is given
+test('the text goes to Codex as typed; attachments are listed by path and images are also attached',()=>{
+  const text='  原文\n\n保留 `代码`、🙂 和空白。 \r\n';
+  assert.deepEqual(codexInput(text,[]),[{type:'text',text}],'no attachments: nothing added, nothing trimmed');
+  const files=[{kind:'image',path:'D:\\ws\\input\\a.png'},{kind:'file',path:'D:\\ws\\input\\需求.docx'}];
+  const [first,...images]=codexInput('改成卡通风格',files);
+  assert.equal(first.type,'text');assert(first.text.includes('- D:/ws/input/a.png\n- D:/ws/input/需求.docx\n'),'every file by path, forward slashes');
+  assert(first.text.endsWith('\n\n改成卡通风格'));assert(/not as instructions/.test(first.text));
+  assert.deepEqual(images,[{type:'local_image',path:'D:\\ws\\input\\a.png'}],'only the image goes in as an image');
+  const only=codexInput('  ',files)[0].text;assert(only.includes('D:/ws/input/a.png')&&!only.includes('改成')&&only.trimEnd()===only,'a file with no text carries no invented request');
+  assert.throws(()=>codexInput('x',[{kind:'file',path:null}]),/尚未接收/);
+});
+
+test('Codex runs with its home inside the project, whatever the environment says, and without the service\'s secrets',()=>{
+  const saved={...process.env};
+  try{
+    process.env.CODEX_HOME='C:\\Users\\someone\\.codex';process.env.Codex_Home='C:\\other';process.env.FEISHU_APP_SECRET='top-secret';process.env.CODEX_API_KEY='sk-secret';process.env.KEEP_ME='yes';
+    const env=codexEnv();
+    assert.equal(env.CODEX_HOME,config.codexHome);assert.equal(env.CODEX_HOME,path.join(config.root,'.codex'));
+    assert.deepEqual(Object.keys(env).filter(k=>k.toUpperCase()==='CODEX_HOME'),['CODEX_HOME']);
+    assert.equal(env.FEISHU_APP_SECRET,undefined);assert.equal(env.CODEX_API_KEY,undefined);assert.equal(env.KEEP_ME,'yes');
+  }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);}
+  assert.notEqual(config.codexHome,path.join(os.homedir(),'.codex'),"never the system's own Codex home");
+});
+test('Codex is configured on each run: file login, shared accounts and machines switched off, and nothing else added',()=>{
+  const plain=codexConfig();
+  assert.equal(plain.cli_auth_credentials_store,'file');
+  for(const feature of ['apps','plugins','browser_use','in_app_browser','computer_use','memories'])assert.equal(plain.features[feature],false,feature);
+  assert.deepEqual(Object.keys(plain).sort(),['cli_auth_credentials_store','features'],'no instructions, no tools, no MCP servers');
+  const saved={model:config.CODEX_MODEL,effort:config.CODEX_REASONING_EFFORT};
+  try{
+    Object.assign(config,{CODEX_MODEL:'',CODEX_REASONING_EFFORT:''});
+    assert.deepEqual(threadOptions('D:/w'),{workingDirectory:'D:/w',skipGitRepoCheck:true,sandboxMode:'danger-full-access',approvalPolicy:'never'},'no sandbox, nobody asked');
+    Object.assign(config,{CODEX_MODEL:'some-model',CODEX_REASONING_EFFORT:'low'});
+    const options=threadOptions('D:/w');assert.equal(options.sandboxMode,'danger-full-access');assert.equal(options.model,'some-model');assert.equal(options.modelReasoningEffort,'low');
+  }finally{Object.assign(config,{CODEX_MODEL:saved.model,CODEX_REASONING_EFFORT:saved.effort});}
+});
+test('a new chat is started or an existing one resumed with the shared environment',async()=>{
+  const made=[];
+  const factory=options=>{const rec={options,started:[],resumed:[]};made.push(rec);const thread=()=>({runStreamed:async(input,turn)=>({events:(async function*(){yield started('th');})(),input,turn})});
+    return {startThread:o=>{rec.started.push(o);return thread();},resumeThread:(id,o)=>{rec.resumed.push([id,o]);return thread();}};};
+  const runner=new CodexRunner(factory),controller=new AbortController(),input=[{type:'text',text:'hi'}];
+  const drain=async job=>{for await(const _ of runner.run(job));};
+  await drain({threadId:null,cwd:'D:/w',input,signal:controller.signal});
+  await drain({threadId:'th-1',cwd:'D:/w',input,signal:controller.signal});
+  assert.equal(made[0].started.length,1);assert.equal(made[0].resumed.length,0);
+  assert.equal(made[1].resumed[0][0],'th-1');assert.equal(made[1].resumed[0][1].workingDirectory,'D:/w');
+  assert.equal(made[0].options.env.CODEX_HOME,config.codexHome);assert.deepEqual(made[0].options.config,codexConfig());
+});
+test('Codex is ready when its binary runs; the real binary is found through the package, and no login is needed',async()=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved=config.codexHome;
+  try{
+    config.codexHome=home;
+    const runner=new CodexRunner(),events=[];runner.on('online',()=>events.push('online'));
+    assert.equal(await runner.probe(),true);assert.equal(runner.error,'');assert.match(runner.version,/^\d+\.\d+\.\d+/,'the binary itself answered');
+    assert.deepEqual(await fs.readdir(home).then(x=>x.filter(n=>n==='auth.json')),[],'there is no login: every user brings a key');
+    assert.equal(await runner.probe(),true);assert.deepEqual(events,['online'],'only changes are announced');
+  }finally{config.codexHome=saved;await fs.rm(home,{recursive:true,force:true});}
+});
+
+// ---- a task from message to result
+test('a task runs in the user\'s workspace as a new chat, is bound to it, and ends with the answer; the next task resumes that chat',async()=>{
+  const {store,codex,run}=setup(async function*(job,n){
+    yield started(job.threadId??`thread-${n}`);yield turnStarted;yield say('a','我先看一下');yield say('b',`第${n}次的答案`);yield completed;
+  });
+  const first=await run('m1');
+  assert.equal(first.status,'COMPLETED');assert.equal(first.result,'第1次的答案');assert.equal(first.progress,'我先看一下');assert.equal(first.error,'');
+  const job=codex.jobs[0],session=store.session(first.session_id);
+  assert.equal(job.threadId,null,'a first message starts a chat');assert.deepEqual(job.input,[{type:'text',text:'帮我做点事'}]);
+  assert.equal(session.thread_id,'thread-1');assert.equal(first.thread_id,'thread-1');
+  assert.equal(job.cwd,session.workspace_path);assert.equal(path.basename(job.cwd),'workspace');assert(job.cwd.startsWith(config.user),'inside user/');
+  assert.equal(first.workspace_path,job.cwd,'what Codex makes in its working folder is what is delivered');assert((await fs.stat(first.workspace_path)).isDirectory(),'the folder exists before Codex starts');
+  assert(store.submitted(first.id));
+  const second=await run('m2');
+  assert.equal(codex.jobs[1].threadId,'thread-1','the same chat continues');assert.equal(codex.jobs[1].cwd,job.cwd);
+  assert.equal(second.result,'第2次的答案');assert.equal(store.session(second.session_id).thread_id,'thread-1','a resumed chat keeps its binding');
+  assert.equal(store.sessions().length,1);store.close();
+});
+
+test('what Codex says shows up while the task runs, and the user\'s queue is held until it ends',async()=>{
+  let release;const gate=new Promise(r=>release=r);
+  const {store,service}=setup(async function*(){yield started('th');yield turnStarted;yield say('a','第一步完成');await gate;yield say('b','最后的答案');yield completed;});
+  const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});
+  const running=service.start(store.get(task.id));
+  await until(()=>store.get(task.id).progress==='第一步完成');
+  assert.equal(store.get(task.id).status,'RUNNING');assert.equal(store.get(task.id).result,'');assert(store.busy('t','u1'));
+  const row=store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`);assert.equal(row.status,'PENDING','the card is refreshed');
+  release();await running;assert.equal(store.get(task.id).status,'COMPLETED');assert.equal(store.busy('t','u1'),false);store.close();
+});
+
+test('a failed turn shows Codex\'s reason even though the process then exits with an error; any other way a run goes wrong is the one bot-down sentence',async()=>{
+  let mode;
+  const {store,run}=setup(async function*(job,n){
+    yield started(`th-${n}`);
+    if(mode==='failed'){yield say('a','做了一半');yield failed('You\'ve hit your usage limit');throw Error('Codex Exec exited with code 1: WARNING: proceeding');}
+    if(mode==='auth'){yield failed('unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses');throw Error('Codex Exec exited with code 1');}
+    if(mode==='crash')throw Error('Codex Exec exited with code 1: boom');
+    if(mode==='silent')return;
+    yield completed;
+  });
+  mode='failed';let task=await run('m1','u1');assert.equal(task.status,'FAILED');assert.equal(task.error,'You\'ve hit your usage limit');assert.equal(task.progress,'做了一半');
+  mode='auth';task=await run('m4','u4');assert.equal(task.status,'FAILED');assert.equal(task.error,KEY_REJECTED,'a key Codex does not accept is for the user to fix');
+  mode='crash';task=await run('m2','u2');assert.equal(task.status,'FAILED');assert.equal(task.error,BOT_DOWN);
+  mode='silent';task=await run('m3','u3');assert.equal(task.status,'FAILED');assert.equal(task.error,BOT_DOWN,'a run that ends without a result is not a success');
+  store.close();
+});
+
+test('a chat Codex no longer has is replaced before anything is sent, once; any other failure is not mistaken for it',async()=>{
+  const missing=Error('Codex Exec exited with code 1: Error: thread/resume: no rollout found for thread id th-old (code -32600)');
+  let behaviour;
+  const {store,codex,run}=setup(async function*(job,n){
+    if(job.threadId?.startsWith('th-old')&&behaviour==='missing')throw missing;
+    if(job.threadId?.startsWith('th-old')&&behaviour==='late'){yield started(job.threadId);throw missing;}
+    yield started(`th-${n}`);yield say('a','好的');yield completed;
+  });
+  behaviour='ok';const first=await run('m1');const old=store.session(first.session_id);
+  store.db.prepare('UPDATE user_sessions SET thread_id=? WHERE id=?').run('th-old',old.id);
+  behaviour='missing';const second=await run('m2');
+  assert.equal(second.status,'COMPLETED');assert.deepEqual(codex.jobs.slice(1).map(j=>j.threadId),['th-old',null],'resumed, then started anew');
+  const now=store.session(second.session_id);assert.notEqual(now.id,old.id);assert(store.session(old.id).retired_at);assert.equal(now.workspace_path,old.workspace_path,'same workspace');
+  assert.equal(second.thread_id,now.thread_id);assert(second.thread_id);
+  assert.equal(store.db.prepare("SELECT count(*) c FROM task_events WHERE task_id=? AND kind='SESSION_REPLACED'").get(second.id).c,1);
+  // Once Codex has said anything the same error is a real failure, and the chat is not swapped under the user.
+  store.db.prepare('UPDATE user_sessions SET thread_id=? WHERE id=?').run('th-old-2',now.id);
+  behaviour='late';const third=await run('m3');assert.equal(third.status,'FAILED');assert.equal(store.session(now.id).retired_at,null);
+  store.close();
+});
+
+test('/cancel stops the running Codex process; what it said stays; a second /cancel frees a stuck user',async()=>{
+  const {store,service}=setup(async function*(job){yield started('th');yield say('a','做了一点');await untilAborted(job.signal);});
+  const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});
+  const running=service.start(store.get(task.id));await until(()=>store.get(task.id).progress==='做了一点');
+  const message=(text,id)=>({tenant:'t',user:'u1',chat:'c',message:id,text});
+  await service.receive(message(`/cancel ${task.id}`,'c1'));await running;
+  const after=store.get(task.id);assert.equal(after.status,'INTERRUPTED');assert.equal(after.progress,'做了一点');assert.equal(after.cancel_requested,1);
+  assert(notices(store).at(-1).includes('已请求中断'));assert.equal(store.busy('t','u1'),false,'the next input is accepted');
+  // A process that ignores the abort: the second /cancel ends the task anyway.
+  const stuck=setup(async function*(){yield started('th');await new Promise(()=>{});});
+  const t2=stuck.store.create(input()).task;stuck.store.transition(t2.id,'STARTING',{started_at:Date.now()});void stuck.service.start(stuck.store.get(t2.id));await until(()=>stuck.store.get(t2.id).status==='RUNNING');
+  const m2=(text,id)=>({tenant:'t',user:'u1',chat:'c',message:id,text});
+  await stuck.service.receive(m2(`/cancel ${t2.id}`,'c1'));assert.equal(stuck.store.get(t2.id).status,'RUNNING','the first /cancel only asks');
+  await stuck.service.receive(m2(`/cancel ${t2.id}`,'c2'));assert.equal(stuck.store.get(t2.id).status,'CANCELLED');assert.equal(stuck.store.busy('t','u1'),false);assert(notices(stuck.store).at(-1).includes('强制结束'));
+  await stuck.service.receive(m2(`/cancel ${t2.id}`,'c3'));assert(notices(stuck.store).at(-1).includes('已结束'),'cancelling a finished task is harmless');
+  store.close();stuck.store.close();
+});
+test('a task cancelled before Codex was started is cancelled, not interrupted; a queued one just ends; a leftover nobody runs is ended',async()=>{
+  const {store,codex,service}=setup(async function*(){yield started('th');yield completed;});
+  const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});store.update(task.id,{cancel_requested:1});
+  await service.start(store.get(task.id));assert.equal(store.get(task.id).status,'CANCELLED');assert.equal(codex.jobs.length,0);
+  const queued=store.create(input('m2','u2')).task,leftover=store.create(input('m3','u3')).task;store.transition(leftover.id,'RUNNING');
+  const message=(text,id,user)=>({tenant:'t',user,chat:'c',message:id,text});
+  await service.receive(message(`/cancel ${queued.id}`,'x1','u2'));assert.equal(store.get(queued.id).status,'CANCELLED');
+  await service.receive(message(`/cancel ${leftover.id}`,'x2','u3'));assert.equal(store.get(leftover.id).status,'CANCELLED','nothing runs it, so nothing can answer');
+  store.close();
+});
+test('the task timeout stops the run through the same path as /cancel',async()=>{
+  const {store,service}=setup(async function*(job){yield started('th');await untilAborted(job.signal);});
+  const saved=config.TASK_TIMEOUT_MS;config.TASK_TIMEOUT_MS=50;
+  try{
+    service.codex.ready=true;const task=store.create(input()).task;const scheduler=new Scheduler(service);scheduler.tick();
+    await until(()=>store.get(task.id).status==='RUNNING');await new Promise(r=>setTimeout(r,80));scheduler.tick();
+    await until(()=>store.get(task.id).status==='INTERRUPTED');assert.equal(store.get(task.id).cancel_requested,1);await scheduler.stop();
+  }finally{config.TASK_TIMEOUT_MS=saved;store.close();}
+});
+
+test('stopping the service ends every Codex process and finishes its task as failed, so no card keeps saying "running"',async()=>{
+  const {store,service}=setup(async function*(job,n){yield started(`th-${n}`);yield say('a','进行中');await untilAborted(job.signal);});
+  const tasks=['a','b'].map(user=>{const t=store.create(input('m-'+user,user)).task;store.transition(t.id,'STARTING',{started_at:Date.now()});return t;});
+  const runs=tasks.map(t=>service.start(store.get(t.id)));await until(()=>tasks.every(t=>store.get(t.id).status==='RUNNING'));
+  service.stop();await Promise.all(runs);
+  for(const t of tasks){const after=store.get(t.id);assert.equal(after.status,'FAILED');assert.equal(after.error,BOT_DOWN);assert.equal(after.progress,'进行中');}
+  assert(tasks.every(t=>store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${t.id}`).status==='PENDING'),'their cards are updated');
+  store.close();
+});
+
+test('a restart finishes what was running as failed, cancels what was only queued, and drops what was never delivered',()=>{
+  const store=new Store(':memory:'),mk=n=>store.create({tenant_key:'t',user_id:n,chat_id:'c',source_message_id:n,instruction:'x'}).task;
+  const queued=mk('q'),starting=mk('s'),running=mk('r'),done=mk('d');
+  store.transition(starting.id,'STARTING');store.transition(running.id,'RUNNING',{progress:'做了一半'});store.transition(done.id,'COMPLETED');
+  store.enqueue('notice:1',null,'NOTICE',{chat:'c',message:'q',text:'late'});
+  const result=store.discardLeftovers();
+  assert.deepEqual(result,{cancelled:1,dropped:3,interrupted:2});
+  assert.equal(store.get(queued.id).status,'CANCELLED');for(const t of [starting,running]){assert.equal(store.get(t.id).status,'FAILED');assert.equal(store.get(t.id).error,BOT_DOWN);}
+  assert.equal(store.get(running.id).progress,'做了一半');
+  const status=id=>store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(id).status;
+  assert.equal(status('notice:1'),'FAILED');assert.equal(status(`view:${done.id}`),'FAILED');assert.equal(status(`view:${queued.id}`),'FAILED','a cancelled queued input says nothing');
+  assert.equal(status(`view:${running.id}`),'PENDING','but the card of a task that was running is finished');assert.equal(status(`view:${starting.id}`),'PENDING');
+  assert.deepEqual(store.due().map(r=>r.task_id).sort(),[running.id,starting.id].sort());
+  assert.equal(store.active().length,0);store.close();
+});
+
+test('/new forgets the conversation: the next task starts a new chat, in the same workspace; it is refused while a task runs',async()=>{
+  const {store,codex,service,run}=setup(async function*(job,n){yield started(`th-${n}`);yield say('a','ok');yield completed;});
+  const message=(text,id)=>({tenant:'t',user:'u1',chat:'c',message:id,text});
+  await service.receive(message('/new','n0'));assert.match(notices(store).at(-1),/还没有对话/);
+  const first=await run('m1');const old=store.session(first.session_id);
+  const busy=store.create(input('m-busy')).task;await service.receive(message('/new','n1'));assert.match(notices(store).at(-1),/有任务正在执行/);assert.equal(store.session(old.id).retired_at,null);
+  store.transition(busy.id,'CANCELLED');
+  await service.receive(message('/new','n2'));assert.match(notices(store).at(-1),/新的对话/);assert(store.session(old.id).retired_at);
+  const next=await run('m2');assert.equal(codex.jobs.at(-1).threadId,null);assert.notEqual(next.session_id,old.id);assert.equal(store.session(next.session_id).workspace_path,old.workspace_path);
+  assert.equal(store.session(old.id).thread_id,'th-1','the old chat is only set aside');store.close();
+});
+
+// ---- attachments, images
+test('attachments are saved in the workspace before Codex starts; images go in as images, every file by path',async()=>{
+  const downloader={downloadResource:async(_message,attachment,file)=>{await fs.writeFile(file,'data');return {size:4,contentType:attachment.kind==='image'?'image/png':'application/pdf'};}};
+  const {store,codex,service}=setup(async function*(){yield started('th');yield say('a','看到了');yield completed;},{downloader});
+  const task=store.create(input('m1','u1','总结一下'),[],[{kind:'image',key:'i',name:'图.png'},{kind:'file',key:'f',name:'报告.pdf'}]).task;
+  store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
+  const done=store.get(task.id);assert.equal(done.status,'COMPLETED');assert.equal(done.progress,'','the "receiving attachments" label does not linger');
+  const job=codex.jobs[0],[text,...rest]=job.input,saved=store.inputs(task.id).map(i=>i.path),realWorkspace=await fs.realpath(job.cwd);
+  assert(saved.every(file=>path.dirname(file)===path.join(realWorkspace,'input')),"in the workspace's input/ folder");
+  assert(saved.every(file=>text.text.includes(file.replaceAll('\\','/'))));assert(text.text.endsWith('\n\n总结一下'));
+  assert.deepEqual(rest,[{type:'local_image',path:saved[0]}]);assert.equal(await fs.readFile(saved[1],'utf8'),'data');
+  // A download that fails ends the task before Codex hears of it.
+  const bad=setup(async function*(){assert.fail('Codex must not start');},{downloader:{downloadResource:async()=>{throw Error('缺少 im:resource 权限');}}});
+  const t2=bad.store.create(input('m1','u1'),[],[{kind:'file',key:'f',name:'a.pdf'}]).task;bad.store.transition(t2.id,'STARTING');await bad.service.start(bad.store.get(t2.id));
+  assert.equal(bad.store.get(t2.id).status,'FAILED');assert.equal(bad.store.get(t2.id).error,BOT_DOWN);assert.equal(bad.codex.jobs.length,0);assert(!bad.store.submitted(t2.id));
+  store.close();bad.store.close();
+});
+test('the images Codex generated while the task ran are found in its chat\'s folder, and nowhere else',async()=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-gen-home-')),saved=config.codexHome;config.codexHome=home;
+  try{
+    const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+    const dir=thread=>path.join(home,'generated_images',thread);await fs.mkdir(dir('th-1'),{recursive:true});await fs.mkdir(dir('th-other'),{recursive:true});
+    await fs.writeFile(path.join(dir('th-1'),'before.png'),png);const long=new Date(Date.now()-3600000);await fs.utimes(path.join(dir('th-1'),'before.png'),long,long);
+    await fs.writeFile(path.join(dir('th-other'),'foreign.png'),png);
+    const {store,run}=setup(async function*(){yield started('th-1');await fs.writeFile(path.join(dir('th-1'),'new-image.png'),png);await fs.writeFile(path.join(dir('th-1'),'notes.txt'),'x');yield say('a','画好了');yield completed;});
+    const task=await run('m1');assert.equal(task.status,'COMPLETED');
+    assert.deepEqual(store.images(task.id).map(i=>[i.id,path.basename(i.savedPath)]),[['new-image','new-image.png']],'this chat, this task, PNG files only');
+    store.close();
+  }finally{config.codexHome=saved;await fs.rm(home,{recursive:true,force:true});}
+});
+
+// ---- every user's own API key
+test('nobody can start a task before setting a key; /key stores it privately, and each user\'s tasks run on their own key',async()=>{
+  const store=new Store(':memory:'),jobs=[],codex=Object.assign(new EventEmitter(),{ready:true,run:async function*(job){jobs.push(job);yield started('th-'+jobs.length);yield completed;}});
+  const service=new TaskService(store,codex);service.authorized=()=>true;
+  const say_=(user,text,id,extra={})=>service.receive({tenant:'t',user,chat:'c',message:id,text,...extra});
+  const last=()=>notices(store).at(-1);
+  await say_('u1','帮我做点事','a1');assert.equal(store.list().length,0,'nothing is queued');assert.equal(last(),KEY_NEEDED);
+  await say_('u1','/key','a2');assert.equal(last(),KEY_NEEDED,'/key alone says what is missing');
+  await say_('u1','/key sk-proj-abcdefghijklmnop1234','a3',{isGroup:true});assert.match(last(),/私聊/);assert.equal(store.apiKey('t','u1'),undefined,'never from a group');
+  assert(!last().includes('abcdefghijklmnop'),'the key is not repeated');
+  await say_('u1','/key not a key','a4');assert.match(last(),/格式/);await say_('u1','/key short','a5');assert.match(last(),/格式/);assert.equal(store.apiKey('t','u1'),undefined);
+  await say_('u1','/key sk-proj-abcdefghijklmnop1234','a6');assert.match(last(),/已保存/);assert(!last().includes('abcdefghijklmnop'));assert.equal(store.apiKey('t','u1'),'sk-proj-abcdefghijklmnop1234');
+  await say_('u1','/key','a7');assert.match(last(),/sk-pr\.\.\.1234/);assert(!last().includes('abcdefghijklmnop'),'only the ends are shown');
+  await say_('u1','帮我做点事','a8');assert.equal(store.list().length,1);
+  await say_('u2','/key sk-proj-zzzzzzzzzzzzzzzz9999','b1');await say_('u2','我也来','b2');
+  for(const task of store.list()){store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));}
+  assert.deepEqual(jobs.map(j=>j.apiKey),['sk-proj-abcdefghijklmnop1234','sk-proj-zzzzzzzzzzzzzzzz9999'],'each task runs on its own user\'s key');
+  await say_('u1','/key clear','a9');assert.match(last(),/已清除/);assert.equal(store.apiKey('t','u1'),undefined);assert.equal(store.apiKey('t','u2'),'sk-proj-zzzzzzzzzzzzzzzz9999');
+  await say_('u1','再来一个','a10');assert.equal(last(),KEY_NEEDED);
+  // Commands work without a key, and the key never lands in a task or in the log's task rows.
+  await say_('u3','/tasks','c1');assert.equal(last(),'暂无任务');
+  assert(!JSON.stringify(store.list()).includes('abcdefghijklmnop'),'a /key message is a command, not a task');
+  store.close();
+});
+test('the key is handed to the Codex process as its own, not through the shared environment',async()=>{
+  const made=[],factory=options=>{made.push(options);return {startThread:()=>({runStreamed:async()=>({events:(async function*(){})()})}),resumeThread:()=>({})};};
+  const saved=process.env.CODEX_API_KEY;process.env.CODEX_API_KEY='sk-from-the-environment';
+  try{
+    const runner=new CodexRunner(factory);for await(const _ of runner.run({threadId:null,cwd:'D:/w',input:[],apiKey:'sk-user-key-123456',signal:new AbortController().signal}));
+    assert.equal(made[0].apiKey,'sk-user-key-123456');assert.equal(made[0].env.CODEX_API_KEY,undefined);
+  }finally{if(saved===undefined)delete process.env.CODEX_API_KEY;else process.env.CODEX_API_KEY=saved;}
+});

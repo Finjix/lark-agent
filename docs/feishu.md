@@ -26,20 +26,9 @@
 - 收私聊/群 @ 消息：`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`
 - 上传交付文件和图片：`im:resource`
 - 下载用户附件：`im:message:readonly`（只有 `im:resource` 会被拒绝）
-- 会话命名查显示名：`contact:contact.base:readonly`、`contact:user.base:readonly`（缺后者时接口成功但无姓名）
+- 查用户显示名（用来给 `user/` 下该用户的目录命名）：`contact:contact.base:readonly`、`contact:user.base:readonly`（缺后者时接口成功但无姓名）
 
-飞书 CLI 以用户本人身份操作，用户登录时才获得权限。默认登录申请下面这组 `user` 权限，应用要先在后台开通并发布，否则用户在授权页会被拒绝（上面的 JSON 里 `user` 目前是空的）：
-
-```
-docx:document  docx:document:create  docs:document.content:read
-calendar:calendar:readonly  calendar:calendar.event:read  calendar:calendar.free_busy:read
-mail:user_mailbox.message:readonly  mail:user_mailbox.message.subject:read
-mail:user_mailbox.message.address:read  mail:user_mailbox.message.body:read  mail:user_mailbox.folder:read
-```
-
-其他能力（云盘、表格、知识库、任务等）在用户用到、命令提示缺权限时才增量授权，同样要先在后台为应用开通。
-
-机器人只处理订阅收到的消息，不扫描聊天历史或通讯录。应用可用范围需包含目标成员；缺少姓名时任务照常执行，会话沿用默认名称。
+机器人只处理订阅收到的消息，不扫描聊天历史或通讯录。应用可用范围需包含目标成员；缺少姓名时任务照常执行，用户目录改用 Open ID 命名。
 
 ## 事件与发布
 
@@ -56,5 +45,5 @@ mail:user_mailbox.message.address:read  mail:user_mailbox.message.body:read  mai
 
 - 收不到任务：查事件订阅、应用是否发布、可用范围、群里是否 @对机器人。
 - 文件发送失败：`im:resource` 未发布。附件下载失败：`im:message:readonly` 未发布。
-- `/ready` 503：检查凭证、白名单、Desktop 是否运行，看 `start.cmd doctor`。
-- 无回复：用 `/tasks`、`/status 任务ID` 看 Desktop 连接、同会话排队、`UNKNOWN`、资源冲突。
+- `/ready` 503：检查凭证、白名单、Codex 是否已登录（`start.cmd codex login`），看 `start.cmd doctor`。
+- 无回复：用 `/tasks`、`/status 任务ID` 看任务状态；同一用户的上一条输入未结束时，新输入不会被接收。

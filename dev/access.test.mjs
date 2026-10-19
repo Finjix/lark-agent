@@ -27,7 +27,7 @@ test('legacy user allowlist remains available and empty access configuration den
 });
 
 test('new enterprise members can create tasks but still cannot view or cancel one another tasks',async()=>{
-  const store=new Store(':memory:'),service=new TaskService(store,new EventEmitter());service.authorized=m=>authorized(m,policy);
+  const store=new Store(':memory:'),service=new TaskService(store,new EventEmitter());service.authorized=m=>authorized(m,policy);store.apiKey=()=>'sk-test';
   await service.receive(message('first-member'));await service.receive(message('second-member'));
   assert.equal(store.list().length,2);
   const [first,second]=store.list();assert.notEqual(store.sessionFor(first).id,store.sessionFor(second).id);

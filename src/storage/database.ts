@@ -1,15 +1,16 @@
 import {Database} from './sqlite.js';
 import {randomUUID} from 'node:crypto';
-import {terminal, type Task, type TaskStatus, type PendingInteraction,type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
-import {displayName,sessionTitle} from '../sessions/naming.js';
+import {terminal,BOT_DOWN, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
+import {displayName} from '../sessions/naming.js';
 
+const SESSION_COLUMNS=['id','tenant_key','user_id','thread_id','workspace_path','created_at','display_name','retired_at'];
 export class Store {
   db: Database; private columns?:Set<string>;
   constructor(file:string){
     this.db = new Database(file);
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
     const version = this.db.pragma('user_version',{simple:true}) as number;
-    if(version>5) throw Error('数据库版本高于当前程序支持版本');
+    if(version>6) throw Error('数据库版本高于当前程序支持版本');
     this.db.pragma('foreign_keys = OFF');
     try{this.db.transaction(()=>{
       this.db.exec(`
@@ -41,37 +42,42 @@ export class Store {
           path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,UNIQUE(task_id,path));
         CREATE TABLE IF NOT EXISTS task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,
           saved_path TEXT,base64 TEXT,PRIMARY KEY(task_id,item_id));
-        CREATE TABLE IF NOT EXISTS pending_requests (task_id TEXT NOT NULL REFERENCES tasks(id),request_id TEXT NOT NULL,
-          kind TEXT NOT NULL,summary TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING',
-          created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(task_id,request_id));
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS task_inputs (task_id TEXT NOT NULL REFERENCES tasks(id),ordinal INTEGER NOT NULL,
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
-          thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,UNIQUE(tenant_key,user_id));
+          thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,display_name TEXT,retired_at INTEGER);
+        CREATE TABLE IF NOT EXISTS user_keys (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,api_key TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
         CREATE TABLE IF NOT EXISTS user_dirs (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,name TEXT NOT NULL UNIQUE COLLATE NOCASE,created_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
-        PRAGMA user_version = 4;
       `);
       if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
       if(!(this.db.prepare('PRAGMA table_info(task_artifacts)').all() as any[]).some(c=>c.name==='kind'))this.db.exec("ALTER TABLE task_artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'");
-      const sessionColumns=new Set((this.db.prepare('PRAGMA table_info(user_sessions)').all() as any[]).map(c=>c.name));
-      for(const column of ['display_name','title','applied_title'])if(!sessionColumns.has(column))this.db.exec(`ALTER TABLE user_sessions ADD COLUMN ${column} TEXT`);
-      if(!sessionColumns.has('retired_at'))this.db.exec(`
-        CREATE TABLE user_sessions_next (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
-          thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,
-          display_name TEXT,title TEXT,applied_title TEXT,retired_at INTEGER);
-        INSERT INTO user_sessions_next(id,tenant_key,user_id,thread_id,workspace_path,created_at,display_name,title,applied_title)
-          SELECT id,tenant_key,user_id,thread_id,workspace_path,created_at,display_name,title,applied_title FROM user_sessions;
-        DROP TABLE user_sessions;
-        ALTER TABLE user_sessions_next RENAME TO user_sessions;
-      `);
-      this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS current_user_session ON user_sessions(tenant_key,user_id) WHERE retired_at IS NULL;
-        PRAGMA user_version = 5;`);
+      // Older databases keep sessions in an earlier shape (a UNIQUE user, chat titles for Desktop); rebuild into the current one and carry the common columns over.
+      const have=(this.db.prepare('PRAGMA table_info(user_sessions)').all() as any[]).map(c=>c.name as string);
+      if(have.length!==SESSION_COLUMNS.length||SESSION_COLUMNS.some(c=>!have.includes(c))){
+        const common=SESSION_COLUMNS.filter(c=>have.includes(c)).join(',');
+        this.db.exec(`
+          CREATE TABLE user_sessions_next (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
+            thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,display_name TEXT,retired_at INTEGER);
+          INSERT INTO user_sessions_next(${common}) SELECT ${common} FROM user_sessions;
+          DROP TABLE user_sessions;
+          ALTER TABLE user_sessions_next RENAME TO user_sessions;
+        `);
+      }
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS current_user_session ON user_sessions(tenant_key,user_id) WHERE retired_at IS NULL');
+      // Version 6 replaced the Desktop bridge by the Codex SDK. Interactive approvals no longer exist, and the chats of the old
+      // sessions live in Desktop's own Codex home, which this service no longer reads: those sessions are retired so each user starts a fresh chat.
+      this.db.exec('DROP TABLE IF EXISTS pending_requests');
+      if(version>0&&version<6)this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE retired_at IS NULL AND thread_id IS NOT NULL').run(Date.now());
+      this.db.exec('PRAGMA user_version = 6');
     })();}finally{this.db.pragma('foreign_keys = ON');}
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
-  byThread(id:string):Task|undefined {return this.db.prepare("SELECT * FROM tasks WHERE thread_id=? AND status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC,rowid DESC LIMIT 1").get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
+  /** The API key a user set with /key; Codex runs on it. Kept as typed, in this database, which is as private as .env. */
+  apiKey(tenant:string,user:string):string|undefined{return (this.db.prepare('SELECT api_key FROM user_keys WHERE tenant_key=? AND user_id=?').get(tenant,user) as {api_key:string}|undefined)?.api_key;}
+  setApiKey(tenant:string,user:string,key:string){this.db.prepare('INSERT INTO user_keys(tenant_key,user_id,api_key,updated_at) VALUES(?,?,?,?) ON CONFLICT(tenant_key,user_id) DO UPDATE SET api_key=excluded.api_key,updated_at=excluded.updated_at').run(tenant,user,key,Date.now());}
+  clearApiKey(tenant:string,user:string){return Number(this.db.prepare('DELETE FROM user_keys WHERE tenant_key=? AND user_id=?').run(tenant,user).changes)>0;}
   /** The user's directory name under user/: allocated once and never changed; another user with the same name gets 2, 3, ... appended. */
   userDirName(tenant:string,user:string,wanted:string):string{
     return this.db.transaction(()=>{
@@ -84,17 +90,12 @@ export class Store {
       }
     })();
   }
-  sessionByThread(threadId:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE thread_id=? AND retired_at IS NULL').get(threadId) as UserSession|undefined;}
   sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
     const normalized=displayName(name);if(!normalized)return session;
-    const title=sessionTitle(normalized,session.created_at);
-    this.db.prepare('UPDATE user_sessions SET display_name=?,title=? WHERE id=?').run(normalized,title,id);
+    this.db.prepare('UPDATE user_sessions SET display_name=? WHERE id=?').run(normalized,id);
     return this.session(id)!;
-  }
-  sessionTitleApplied(id:string,title:string){
-    this.db.prepare('UPDATE user_sessions SET applied_title=? WHERE id=? AND title=?').run(title,id,title);
   }
   sessionFor(task:Task):UserSession{
     return this.db.transaction(()=>{
@@ -103,24 +104,35 @@ export class Store {
       this.update(task.id,{session_id:session.id});return session;
     })();
   }
-  renewSession(task:Task,reason:'archived'|'missing'):UserSession{
+  /** Retires a user's chat and opens an empty one in its place; the next input starts a new Codex thread. */
+  private replaceSession(previous:UserSession):UserSession{
+    const id=randomUUID(),now=Date.now();
+    this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE id=?').run(now,previous.id);
+    this.db.prepare('INSERT INTO user_sessions(id,tenant_key,user_id,created_at,display_name) VALUES(?,?,?,?,?)').run(id,previous.tenant_key,previous.user_id,now,previous.display_name);
+    return this.session(id)!;
+  }
+  /** The chat this task was going to continue no longer exists in Codex's home; the task goes on in a new one. */
+  renewSession(task:Task,reason:'missing'):UserSession{
     return this.db.transaction(()=>{
-      const current=this.get(task.id);if(!current||current.turn_id||this.submission(task.id))throw Error('任务已尝试提交，不能切换会话或重复执行');
-      const previous=this.sessionFor(current),id=randomUUID(),createdAt=Date.now();
-      this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE id=?').run(createdAt,previous.id);
-      this.db.prepare('INSERT INTO user_sessions(id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(id,task.tenant_key,task.user_id,createdAt);
-      if(previous.display_name)this.nameSession(id,previous.display_name);
-      this.update(task.id,{session_id:id,thread_id:null,turn_id:null,workspace_path:null,last_revision:-1});
-      this.event(task.id,'DESKTOP_SESSION_REPLACED',{reason,previousSessionId:previous.id,previousThreadId:previous.thread_id,sessionId:id});
-      return this.session(id)!;
+      const previous=this.sessionFor(task),next=this.replaceSession(previous);
+      this.update(task.id,{session_id:next.id,thread_id:null});
+      this.event(task.id,'SESSION_REPLACED',{reason,previousSessionId:previous.id,previousThreadId:previous.thread_id,sessionId:next.id});
+      return next;
     })();
   }
-  /** The folder Codex itself works in for this chat; it follows Desktop if that ever changes. */
+  /** /new: forgets the conversation. False when the user has no chat yet, so there is nothing to forget. */
+  resetSession(tenant:string,user:string):boolean{
+    return this.db.transaction(()=>{
+      const current=this.db.prepare('SELECT * FROM user_sessions WHERE tenant_key=? AND user_id=? AND retired_at IS NULL').get(tenant,user) as UserSession|undefined;
+      if(!current?.thread_id)return false;this.replaceSession(current);return true;
+    })();
+  }
+  /** The folder Codex works in for this user. */
   setSessionWorkspace(id:string,directory:string){this.db.prepare('UPDATE user_sessions SET workspace_path=? WHERE id=?').run(directory,id);}
-  bindSession(id:string,threadId:string,workspace?:string){
+  bindSession(id:string,threadId:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
-    if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他 Desktop 聊天');
-    this.db.prepare('UPDATE user_sessions SET thread_id=?,workspace_path=COALESCE(?,workspace_path) WHERE id=?').run(threadId,workspace??null,id);
+    if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他 Codex 会话');
+    this.db.prepare('UPDATE user_sessions SET thread_id=? WHERE id=?').run(threadId,id);
   }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
   /** Started but unfinished tasks. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would keep getting slower. */
@@ -143,13 +155,12 @@ export class Store {
     })();
   }
   inputs(taskId:string):TaskInput[]{return this.db.prepare('SELECT ordinal,kind,key,name,path,size FROM task_inputs WHERE task_id=? ORDER BY ordinal').all(taskId) as unknown as TaskInput[];}
-  images(taskId:string):GeneratedImage[]{return this.db.prepare('SELECT item_id AS id,saved_path AS savedPath,base64 FROM task_generated_images WHERE task_id=? ORDER BY rowid').all(taskId) as unknown as GeneratedImage[];}
+  images(taskId:string):GeneratedImage[]{return this.db.prepare('SELECT item_id AS id,saved_path AS savedPath FROM task_generated_images WHERE task_id=? ORDER BY rowid').all(taskId) as unknown as GeneratedImage[];}
   recordImages(taskId:string,images:GeneratedImage[]){
     return this.db.transaction(()=>{
       let changed=0;
-      for(const image of images)changed+=Number(this.db.prepare(`INSERT INTO task_generated_images(task_id,item_id,saved_path,base64) VALUES(?,?,?,?)
-        ON CONFLICT(task_id,item_id) DO UPDATE SET saved_path=excluded.saved_path,base64=excluded.base64
-        WHERE saved_path IS NOT excluded.saved_path OR base64 IS NOT excluded.base64`).run(taskId,image.id,image.savedPath,image.base64).changes);
+      for(const image of images)changed+=Number(this.db.prepare(`INSERT INTO task_generated_images(task_id,item_id,saved_path) VALUES(?,?,?)
+        ON CONFLICT(task_id,item_id) DO UPDATE SET saved_path=excluded.saved_path WHERE saved_path IS NOT excluded.saved_path`).run(taskId,image.id,image.savedPath).changes);
       return changed>0;
     })();
   }
@@ -164,15 +175,11 @@ export class Store {
       const old=this.get(id); if(!old||terminal(old.status))return;
       this.update(id,{...patch,status,...terminal(status)?{finished_at:Date.now()}: {}});
       this.event(id,status,{}); this.enqueue(`view:${id}`,id,'VIEW',{});
-      if(terminal(status))this.db.prepare("UPDATE pending_requests SET status='EXPIRED' WHERE task_id=? AND status='PENDING'").run(id);
     })();
   }
   event(id:string,kind:string,payload:unknown){this.db.prepare('INSERT INTO task_events(task_id,kind,payload,created_at) VALUES(?,?,?,?)').run(id,kind,JSON.stringify(payload),Date.now());}
-  eventPayload(id:string,kind:string):any{
-    const row=this.db.prepare('SELECT payload FROM task_events WHERE task_id=? AND kind=? ORDER BY id DESC LIMIT 1').get(id,kind) as {payload:string}|undefined;
-    return row?JSON.parse(row.payload):undefined;
-  }
-  submission(id:string):{clientUserMessageId:string}|undefined{return this.eventPayload(id,'DESKTOP_TURN_SUBMITTING');}
+  /** True once the user's input was handed to a Codex process; from then on the task may have changed things and is never started again. */
+  submitted(id:string):boolean{return !!this.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='CODEX_SUBMITTED' LIMIT 1").get(id);}
   enqueue(id:string,taskId:string|null,kind:string,payload:unknown){
     this.db.prepare(`INSERT INTO delivery_outbox(id,task_id,kind,payload) VALUES(?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,status='PENDING',next_attempt_at=0,
@@ -186,35 +193,26 @@ export class Store {
       permanent?'FAILED':'RETRYING',error,Date.now()+Math.min(300000,1000*2**Math.min(8,(this.db.prepare('SELECT attempts FROM delivery_outbox WHERE id=?').get(id) as any)?.attempts??0))+Math.random()*500,id,version);
   }
   /**
-   * Called once when the service starts. Whatever the previous run left behind is dead: a message that never started is cancelled,
-   * and undelivered notices and replies of finished tasks are dropped, so starting the service never speaks to users about the past.
-   * Dropped rows stay as FAILED, so `retry-delivery` can still resend one on purpose. Tasks still running are untouched.
+   * Called once when the service starts. Whatever the previous run left behind is dead: Codex ran as a child of that process, so a task that was
+   * running is over (its card is finished once, instead of staying at "running" for ever), and a message that never started is cancelled.
+   * Undelivered notices and replies of finished tasks are dropped, so starting the service never speaks to users about the past.
+   * Dropped rows stay as FAILED, so `retry-delivery` can still resend one on purpose.
    */
   discardLeftovers(){
     return this.db.transaction(()=>{
-      // Also tasks that were mid-start or stranded but never sent their input to Desktop (no send attempt recorded); a lost session creation is left for reconciliation.
-      const cancelled=this.db.prepare(`UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE turn_id IS NULL AND (status='QUEUED' OR (status IN ('STARTING','UNKNOWN')
-        AND NOT EXISTS(SELECT 1 FROM task_events e WHERE e.task_id=tasks.id AND e.kind='DESKTOP_TURN_SUBMITTING')
-        AND (NOT EXISTS(SELECT 1 FROM task_events e WHERE e.task_id=tasks.id AND e.kind='DESKTOP_RAW_REQUEST')
-          OR EXISTS(SELECT 1 FROM user_sessions s WHERE s.id=tasks.session_id AND s.thread_id IS NOT NULL))))`).run(Date.now()).changes;
+      const cancelled=this.db.prepare("UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status='QUEUED'").run(Date.now()).changes;
       const dropped=this.db.prepare(`UPDATE delivery_outbox SET status='FAILED',error='服务重启，已丢弃重启前未送达的消息'
         WHERE status IN ('PENDING','RETRYING') AND (kind='NOTICE' OR task_id IN (SELECT id FROM tasks WHERE status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED')))`).run().changes;
-      return {cancelled:Number(cancelled),dropped:Number(dropped)};
+      // After the drop on purpose: the card update of an interrupted task is the one delivery that must still go out.
+      const running=this.active();
+      for(const task of running)this.transition(task.id,'FAILED',{error:BOT_DOWN});
+      return {cancelled:Number(cancelled),dropped:Number(dropped),interrupted:running.length};
     })();
   }
   /** Finished tasks whose files are still kept and whose retention period ended before `before`. */
   expired(before:number):Task[]{return this.db.prepare("SELECT * FROM tasks WHERE cleaned_at IS NULL AND finished_at IS NOT NULL AND finished_at<? AND status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY finished_at").all(before) as unknown as Task[];}
   messages(taskId:string):any{return this.db.prepare('SELECT * FROM task_messages WHERE task_id=?').get(taskId);}
   nextSequence(taskId:string){return this.db.prepare('UPDATE task_messages SET sequence=sequence+1 WHERE task_id=? RETURNING sequence').get(taskId) as {sequence:number};}
-  pending(taskId:string):PendingInteraction[]{return this.db.prepare("SELECT request_id AS id,kind,summary,payload FROM pending_requests WHERE task_id=? AND status='PENDING'").all(taskId).map((r:any)=>({...r,payload:JSON.parse(r.payload)}));}
-  setRequests(taskId:string,requests:PendingInteraction[]){
-    this.db.transaction(()=>{
-      for(const r of requests)this.db.prepare(`INSERT INTO pending_requests(task_id,request_id,kind,summary,payload,created_at,expires_at)
-        VALUES(?,?,?,?,?,?,?) ON CONFLICT(task_id,request_id) DO UPDATE SET payload=excluded.payload,summary=excluded.summary`).run(taskId,r.id,r.kind,r.summary,JSON.stringify(r.payload),Date.now(),Date.now()+86400000);
-      const unresolved=this.db.prepare("SELECT request_id AS id FROM pending_requests WHERE task_id=? AND status IN ('PENDING','RESPONDING')").all(taskId) as {id:string}[];
-      for(const r of unresolved)if(!requests.some(x=>x.id===r.id))this.db.prepare("UPDATE pending_requests SET status='RESOLVED' WHERE task_id=? AND request_id=?").run(taskId,r.id);
-    })();
-  }
   meta(key:string,value?:unknown):any{
     if(value!==undefined)this.db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));
     const row=this.db.prepare('SELECT value FROM metadata WHERE key=?').get(key) as any;return row?JSON.parse(row.value):undefined;

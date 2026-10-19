@@ -3,7 +3,7 @@ import {TaskService} from './service.js';
 import type {Task} from '../types.js';
 import {log,safeError} from '../log.js';
 export function canSchedule(task:Task,active:Task[]){
-  // Each user's messages share one Desktop conversation and must retain their order.
+  // Each user's messages share one Codex conversation and must retain their order.
   if(active.some(t=>t.tenant_key===task.tenant_key&&t.user_id===task.user_id))return false;
   if(task.thread_id&&active.some(t=>t.thread_id===task.thread_id))return false;
   const locks=new Set(active.flatMap(t=>JSON.parse(t.resources) as string[]));
@@ -15,7 +15,7 @@ export class Scheduler {
   constructor(private service:TaskService){}
   start(){this.timer=setInterval(()=>this.tick(),500);this.tick();}
   tick(){
-    if(this.stopped||!this.service.desktop.ready)return;
+    if(this.stopped||!this.service.codex.ready)return;
     // A database hiccup must cost one round, not the whole process: this runs inside a timer callback.
     try{this.schedule();}catch(e){log.error({error:safeError(e)},'调度轮询失败，下一轮重试');}
   }
@@ -33,8 +33,7 @@ export class Scheduler {
     }
     for(const task of this.service.store.active()){
       const expired=config.TASK_TIMEOUT_MS>0&&task.started_at&&Date.now()-task.started_at>config.TASK_TIMEOUT_MS;
-      const requestExpired=this.service.store.db.prepare("SELECT 1 FROM pending_requests WHERE task_id=? AND status='PENDING' AND expires_at<? LIMIT 1").get(task.id,Date.now());
-      if((expired||requestExpired)&&!task.cancel_requested){this.service.store.update(task.id,{cancel_requested:1});if(task.thread_id&&task.turn_id)void this.service.interrupt(task).catch(()=>{});}
+      if(expired&&!task.cancel_requested){this.service.store.update(task.id,{cancel_requested:1});this.service.interrupt(task);}
     }
   }
   async stop(){this.stopped=true;clearInterval(this.timer);await Promise.all(this.starts);}

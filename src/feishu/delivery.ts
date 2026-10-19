@@ -34,10 +34,11 @@ export async function ownedArtifact(workspace:string,candidate:string){
   return {path:file,name:path.basename(file),size:stat.size};
 }
 /**
- * Files Codex put in the output folder while this task ran: new or changed between its start and end (a file copied there counts
+ * Files Codex put in its working folder while this task ran: new or changed between its start and end (a file copied there counts
  * by its creation time). No dotfiles or symlinks, a few levels deep, capped so a stray tree cannot flood the chat.
  */
-const MAX_UNLINKED=10,SLACK_MS=2000;
+// The attachments the user sent live in the workspace's input/ and are not Codex's output.
+const MAX_UNLINKED=10,SLACK_MS=2000,INPUT_DIR='input';
 export async function outputFiles(root:string,window?:{from:number;to:number}){
   const found:string[]=[];
   const walk=async(directory:string,depth:number):Promise<void>=>{
@@ -49,7 +50,7 @@ export async function outputFiles(root:string,window?:{from:number;to:number}){
       if(entry.isFile()){
         if(window){const stat=await fs.stat(full),at=Math.max(stat.mtimeMs,stat.birthtimeMs);if(at<window.from-SLACK_MS||at>window.to+SLACK_MS)continue;}
         found.push(full);
-      }else if(entry.isDirectory()&&depth<3)await walk(full,depth+1);
+      }else if(entry.isDirectory()&&depth<3&&!(depth===0&&entry.name===INPUT_DIR))await walk(full,depth+1);
     }
   };
   await walk(root,0);return found;
@@ -85,7 +86,7 @@ export class Delivery {
     const files=this.pumpFiles();
     if(this.busy){await files;return;}this.busy=true;
     try{
-      // Refresh the timer even when Desktop has no new text. Preserve retry backoff and failures.
+      // Refresh the timer even when Codex has no new text. Preserve retry backoff and failures.
       for(const task of this.store.active())if(working(task)&&this.renderedSeconds.get(task.id)!==elapsedSeconds(task)){
         const row=this.store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`) as {status:string}|undefined;
         if(row?.status==='DELIVERED')this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
@@ -131,7 +132,7 @@ export class Delivery {
   }
   private uuid(id:string){return createHash('sha256').update(id).digest('hex').slice(0,32);}
   private async updateCard(task:Task){
-    const now=Date.now();let message=this.store.messages(task.id);const content=renderTask(task,this.store.pending(task.id))||(working(task)?' ':'');
+    const now=Date.now();let message=this.store.messages(task.id);const content=renderTask(task)||(working(task)?' ':'');
     // Queued tasks stay quiet until execution starts.
     if(!content&&!working(task))return;
     if(!message.card_id){
@@ -146,7 +147,7 @@ export class Delivery {
     // Feishu streaming sessions close after 10 minutes. Switch to full-card updates before that limit.
     const closeStream=terminal(task.status)||Date.now()-(task.started_at??task.created_at)>9*60*1000;
     if(!terminal(task.status)&&!message.finalized&&!closeStream){
-      // The colored header is outside the text element, so refresh the full card with the stream open (this also drops it while the task waits for the user).
+      // The colored header is outside the text element, so refresh the full card with the stream open.
       const {sequence}=this.store.nextSequence(task.id);
       await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,true,now))},sequence,uuid:`u_${task.id}_${sequence}`}));
     }else if(message.finalized){
@@ -165,7 +166,6 @@ export class Delivery {
         await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,false))},sequence:next,uuid:`u_${task.id}_${next}`}));
       }
     }
-    this.store.db.prepare('UPDATE task_messages SET last_revision=? WHERE task_id=?').run(task.last_revision,task.id);
     if(working(task))this.renderedSeconds.set(task.id,elapsedSeconds(task,now));else this.renderedSeconds.delete(task.id);
   }
   private async collectArtifacts(task:Task){
@@ -179,7 +179,7 @@ ${reason}`});
     };
     const images=this.store.images(task.id);
     if(!task.workspace_path){for(const image of images)reject(`codex-image-${image.id}.png`,Error('生成图片缺少交付目录'));return;}
-    // A reply often shows a generated image by its path in Desktop's image cache. That image is already delivered from its staged copy, so the link is not a second file.
+    // A reply often shows a generated image by its path in Codex's image folder. That image is already delivered from its staged copy, so the link is not a second file.
     const sources=new Set(images.flatMap(i=>i.savedPath?[path.resolve(i.savedPath).toLowerCase()]:[]));
     const paths=new Map(artifactLinks(task.result).filter(p=>!sources.has(path.resolve(p).toLowerCase())).map(p=>[p,'file']));
     for(const image of images){
@@ -197,7 +197,7 @@ ${reason}`});
         paths.set(file,'file');
       }catch(e){reject(path.basename(file),e);}
     }
-    // The task's output folder is the delivery folder: whatever Codex left there goes out even if the reply forgot to link it.
+    // The workspace is the delivery folder: whatever Codex created or changed there during the task goes out even if the reply forgot to link it.
     for(const file of await outputFiles(task.workspace_path,{from:task.started_at??task.created_at,to:task.finished_at??Date.now()}))if(!paths.has(file))paths.set(file,/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file');
     for(const [candidate,requestedKind] of paths){
       try{
@@ -212,5 +212,7 @@ ${reason}`});
       }catch(e){reject(path.basename(candidate),e,candidate);}
     }
   }
+  /** One more pass once the one that may be running is over (tick would just return while it is). */
+  async flush(){while(this.busy||this.filesBusy)await new Promise(r=>setTimeout(r,50));await this.tick();}
   async stop(){this.stopping=true;clearInterval(this.timer);while(this.busy||this.filesBusy)await new Promise(r=>setTimeout(r,50));await this.gate.onIdle();await this.fileGate.onIdle();}
 }

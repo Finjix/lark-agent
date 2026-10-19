@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
-import {userDirectory,userData,taskWorkspace,sessionInputs} from '../dist/layout.js';
+import {userDirectory,userWorkspace,taskWorkspace,sessionInputs} from '../dist/layout.js';
 
 const input=(user,tenant='t')=>({tenant_key:tenant,user_id:user,chat_id:'c',source_message_id:`m-${tenant}-${user}`,instruction:'x'});
 /** A session for `user`, named like the Feishu display name once it is known. */
@@ -15,13 +15,13 @@ function session(store,user,name,tenant='t'){
 }
 const rel=file=>path.relative(config.user,file).split(path.sep).join('/');
 
-test('each user gets user/<name>/data; a duplicate name gets a number and the name never changes',()=>{
+test('each user gets user/<name>/workspace; a duplicate name gets a number and the name never changes',()=>{
   const store=new Store(':memory:');
   const first=session(store,'ou_1','李小明'),second=session(store,'ou_2','李小明'),third=session(store,'ou_3','李小明');
   assert.equal(rel(userDirectory(store,first)),'李小明');
   assert.equal(rel(userDirectory(store,second)),'李小明2');
   assert.equal(rel(userDirectory(store,third)),'李小明3');
-  assert.equal(rel(userData(store,first)),'李小明/data');
+  assert.equal(rel(userWorkspace(store,first)),'李小明/workspace');
   // Renaming in Feishu later does not move anything.
   store.nameSession(first.id,'完全不同的名字');assert.equal(rel(userDirectory(store,store.session(first.id))),'李小明');
   // Names compare case-insensitively because Windows folders do.
@@ -39,16 +39,16 @@ test('user directory names cannot escape user/ and fall back to the open id when
   store.close();
 });
 
-test('files are exchanged in plain input/ and outputs/ folders of the chat folder, with no naming scheme',()=>{
-  const chat=path.join(config.user,'..','codex-chat-folder');
+test('attachments arrive in input/ of the workspace; outputs/ is the delivery folder of earlier versions',()=>{
+  const chat=path.join(config.user,'..','codex-workspace');
   assert.equal(taskWorkspace(chat),path.join(chat,'outputs'));assert.equal(sessionInputs(chat),path.join(chat,'input'));
   assert.equal(fs.existsSync(taskWorkspace(chat)),false,'nothing is created on disk by asking for the path');
 });
 
-test('user data outlives a chat: a renewed session shares the same user directory',()=>{
+test('user data and workspace outlive a chat: a renewed session shares the same user directory',()=>{
   const store=new Store(':memory:'),first=session(store,'ou_1','李小明'),task=store.create({...input('ou_1'),source_message_id:'again'}).task;
-  const before=userData(store,first);store.update(task.id,{status:'COMPLETED'});
-  const renewed=store.renewSession(store.get(task.id),'archived');
-  assert.notEqual(renewed.id,first.id);assert.equal(userData(store,store.session(renewed.id)),before);
+  const before=userWorkspace(store,first);store.update(task.id,{status:'COMPLETED'});
+  const renewed=store.renewSession(store.get(task.id),'missing');
+  assert.notEqual(renewed.id,first.id);assert.equal(userWorkspace(store,store.session(renewed.id)),before);
   store.close();
 });

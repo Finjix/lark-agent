@@ -3,114 +3,75 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {EventEmitter} from 'node:events';
-import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
-import {NativeDesktop,taskPrompt,taskWorkspace,SESSION_INIT_PROMPT} from '../dist/desktop/adapter.js';
-import {RpcRejected} from '../dist/desktop/transport.js';
-import {TaskService} from '../dist/tasks/service.js';
-import {StreamState} from '../dist/desktop/stream.js';
+import {taskWorkspace} from '../dist/layout.js';
 import {cleanup} from '../dist/maintenance.js';
-import {OutcomeUnknown} from '../dist/desktop/transport.js';
 
 const input=(message='one',user='user',tenant='tenant')=>({tenant_key:tenant,user_id:user,chat_id:'chat',source_message_id:message,instruction:message});
+/** A user's session bound to a Codex thread, working in `root`. */
+function bound(s,task,thread,root){const session=s.sessionFor(task);s.bindSession(session.id,thread);if(root)s.setSessionWorkspace(session.id,root);return s.session(session.id);}
 
 test('session ownership survives restart and is isolated by tenant and user',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-db-')),file=path.join(root,'db.sqlite');let s=new Store(file);
   const a=s.create(input()).task,b=s.create(input('two')).task,c=s.create(input('other-one','other')).task,d=s.create(input('one','user','other-tenant')).task;
-  const session=s.sessionFor(a);s.bindSession(session.id,'thread','workspace');
+  const session=bound(s,a,'thread','workspace');
   assert.equal(s.sessionFor(b).id,session.id);assert.notEqual(s.sessionFor(c).id,session.id);assert.notEqual(s.sessionFor(d).id,session.id);
   assert.throws(()=>s.bindSession(session.id,'wrong-thread'),/其他/);
   s.close();s=new Store(file);assert.equal(s.sessionFor(s.get(b.id)).thread_id,'thread');assert.equal(s.get(b.id).session_id,session.id);
   s.close();await fs.rm(root,{recursive:true});
 });
 
-test('Desktop creates one user thread and sends subsequent messages to that same thread with a shared output folder',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-native-')),s=new Store(':memory:'),desktop=new NativeDesktop(s,()=> 'active'),calls=[];
-  desktop.ready=true;desktop.follow=async()=>{};desktop.waitForIdle=async()=>{};
-  desktop.tools={call:async(name,args)=>{calls.push({name,args});return {threadId:'same-thread',thread:{cwd:root}};}};
-  desktop.ipc={request:async(name,args)=>{calls.push({name,args});return {result:{result:{turn:{id:`turn-${calls.length}`}}}};}};
-  const a=s.create(input()).task;s.sessionFor(a);const first=await desktop.startTask(s.get(a.id));
-  const b=s.create(input('two')).task;s.sessionFor(b);const second=await desktop.startTask(s.get(b.id));
-  assert.equal(first.threadId,second.threadId);assert.equal(first.workspace,second.workspace,'one plain output folder per chat');
-  assert.equal(first.workspace,path.join(root,'outputs'),"outputs live in Codex's own chat folder, not under user/");
-  await assert.rejects(fs.stat(first.workspace),{code:'ENOENT'},'the output folder is not created until something is written');
-  const real=calls.filter(c=>c.name!=='read_thread');
-  assert.deepEqual(real.map(c=>c.name),['create_thread','thread-follower-start-turn','thread-follower-start-turn']);
-  assert.equal(real[0].args.prompt,SESSION_INIT_PROMPT);
-  assert.equal(real[1].args.turnStart.request.input[0].text,'one');
-  const request=real[2].args.turnStart.request;
-  assert.equal(request.threadId,'same-thread');assert.equal(request.input[0].text,'two');
-  assert.equal(request.clientUserMessageId,b.id);assert.deepEqual(request.additionalContext,{},'nothing is injected into a turn without attachments');
-  assert.equal(s.get(b.id).thread_id,'same-thread');assert.equal(s.get(b.id).workspace_path,second.workspace);
-  s.close();await fs.rm(root,{recursive:true});
-});
-
-test('stream updates route to the active message and never reuse the previous turn reply',async()=>{
-  const s=new Store(':memory:'),desktop=Object.assign(new EventEmitter(),{stream:new StreamState(),unfollow:()=>{}}),service=new TaskService(s,desktop);
-  const old=s.create(input()).task,session=s.sessionFor(old);s.bindSession(session.id,'thread','workspace');
-  s.transition(old.id,'COMPLETED',{thread_id:'thread',turn_id:'old',result:'previous answer'});
-  const next=s.create(input('new message')).task;s.sessionFor(next);s.transition(next.id,'STARTING',{thread_id:'thread'});s.event(next.id,'DESKTOP_TURN_SUBMITTING',{clientUserMessageId:next.id});
-  const turn=(id,task,answer)=>({turnId:id,status:'completed',params:{clientUserMessageId:task.id},items:[{type:'agentMessage',phase:'final_answer',text:answer}]});
-  desktop.stream.receive({type:'broadcast',method:'thread-stream-state-changed',params:{hostId:'local',conversationId:'thread',change:{type:'snapshot',revision:1,conversationState:{turns:[turn('old',old,'previous answer')]}}}});
-  service.onState('thread');assert.equal(s.get(next.id).status,'STARTING');assert.equal(s.get(next.id).result,'');
-  desktop.stream.receive({type:'broadcast',method:'thread-stream-state-changed',params:{hostId:'local',conversationId:'thread',change:{type:'snapshot',revision:2,conversationState:{turns:[turn('old',old,'previous answer'),turn('new',next,'new answer')]}}}});
-  service.onState('thread');assert.equal(s.get(next.id).status,'COMPLETED');assert.equal(s.get(next.id).turn_id,'new');assert.equal(s.get(next.id).result,'new answer');assert.equal(s.get(old.id).result,'previous answer');
-  await new Promise(resolve=>setImmediate(resolve));s.close();
-});
-
-test('an uncertain continuation retains the known thread and never sends the message twice during reconciliation',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-unknown-')),s=new Store(':memory:'),d=new NativeDesktop(s,()=> 'active');let sent=0;
-  const first=s.create(input()).task,session=s.sessionFor(first);s.bindSession(session.id,'thread',root);s.transition(first.id,'COMPLETED');
-  const next=s.create(input('next')).task;d.ready=true;d.follow=async()=>{};d.waitForIdle=async()=>{};d.tools={};
-  d.ipc={request:async()=>{sent++;throw new OutcomeUnknown('lost response');}};
-  const service=new TaskService(s,d);s.transition(next.id,'STARTING');await service.start(s.get(next.id));
-  assert.equal(s.get(next.id).status,'UNKNOWN');assert.equal(s.get(next.id).thread_id,'thread');await service.reconcile();assert.equal(sent,1);
-  s.close();await fs.rm(root,{recursive:true});
+test('a chat replaced or reset keeps its history on the old session and is never shared between two users',()=>{
+  const s=new Store(':memory:'),a=s.create(input()).task,other=s.create(input('x','other')).task;
+  const first=bound(s,a,'thread-1','w');s.nameSession(first.id,'薯薯');
+  const next=s.renewSession(s.get(a.id),'missing');
+  assert.notEqual(next.id,first.id);assert.equal(next.thread_id,null);assert.equal(next.display_name,'薯薯','the name moves to the new session');
+  assert.equal(s.session(first.id).thread_id,'thread-1');assert(s.session(first.id).retired_at);assert.equal(s.get(a.id).session_id,next.id);assert.equal(s.get(a.id).thread_id,null);
+  assert.equal(s.sessions().length,1);
+  assert.equal(s.resetSession('tenant','other'),false,'nothing to forget before the first chat');s.sessionFor(other);assert.equal(s.resetSession('tenant','other'),false,'a session without a chat either');
+  bound(s,other,'thread-2');assert.equal(s.resetSession('tenant','other'),true);
+  assert.equal(s.sessionFor(s.get(other.id)).thread_id,null);assert.equal(s.session(s.get(other.id).session_id).display_name,null);
+  assert.deepEqual(s.db.pragma('foreign_key_check'),[]);s.close();
 });
 
 test('expiring a completed message removes only the files it delivered and keeps the output folder, the session and later files',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-retain-')),s=new Store(':memory:');
-  const old=s.create(input()).task,session=s.sessionFor(old);s.bindSession(session.id,'thread',root);
+  const old=s.create(input()).task,session=bound(s,old,'thread',root);
   const output=taskWorkspace(root);await fs.mkdir(output,{recursive:true});
   const oldFile=path.join(output,'old.txt'),laterFile=path.join(output,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
   s.transition(old.id,'COMPLETED',{thread_id:'thread',workspace_path:output});s.update(old.id,{finished_at:1});
   s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,oldFile,'old.txt',3,'file');
   const row=s.due()[0];s.ack(row.id,row.version);
-  const later=s.create(input('later')).task;s.sessionFor(later);
-  let archived=false;await cleanup(s,{archive:async()=>{archived=true;}});
-  assert.equal(archived,false);assert(s.get(old.id).cleaned_at);assert.equal(s.session(session.id).thread_id,'thread');
+  await cleanup(s);
+  assert(s.get(old.id).cleaned_at);assert.equal(s.session(session.id).thread_id,'thread');
   await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');assert((await fs.stat(output)).isDirectory());
-  assert.equal(taskPrompt(s.get(later.id),s),'later');s.close();await fs.rm(root,{recursive:true});
-});
-
-test("the chat folder is whatever Desktop says it is, and a stored folder follows it",async()=>{
-  const s=new Store(':memory:'),desktop=new NativeDesktop(s,()=>'active'),moved=path.join(os.tmpdir(),'lark-moved-chat');let cwd=path.join(os.tmpdir(),'lark-first-chat');
-  desktop.ready=true;desktop.tools={call:async(name)=>name==='read_thread'?{thread:{cwd}}:{threadId:'chat-thread'}};
-  const a=s.create(input('f1','folder-user')).task;
-  const session=await desktop.prepareSession(s.get(a.id));
-  assert.equal(session.thread_id,'chat-thread');assert.equal(session.workspace_path,path.resolve(cwd));
-  cwd=moved;const again=await desktop.prepareSession(s.get(a.id));
-  assert.equal(again.workspace_path,path.resolve(moved),'a later look at the thread updates the stored folder');
-  desktop.tools={call:async()=>({thread:{}})};
-  assert.equal((await desktop.prepareSession(s.get(a.id))).workspace_path,path.resolve(moved),'if Desktop cannot be asked, the known folder is kept');
-  // A brand-new chat whose folder cannot be read is not used, but it stays bound so a retry does not create a second chat.
-  desktop.tools={call:async(name)=>name==='read_thread'?{thread:{}}:{threadId:'new-thread'}};
-  const fresh=s.create(input('f2','other-user')).task;
-  await assert.rejects(desktop.prepareSession(s.get(fresh.id)),/工作目录/);
-  const bound=s.sessionFor(s.get(fresh.id));assert.equal(bound.thread_id,'new-thread');assert.equal(bound.workspace_path,null);
-  s.close();
+  s.close();await fs.rm(root,{recursive:true});
 });
 
 test('a task recorded under the earlier folder name output is still cleaned up, and only its own files go',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-legacy-')),s=new Store(':memory:');
-  const old=s.create(input()).task,session=s.sessionFor(old);s.bindSession(session.id,'thread',root);
+  const old=s.create(input()).task;bound(s,old,'thread',root);
   const output=path.join(root,'output');await fs.mkdir(output,{recursive:true});
   const oldFile=path.join(output,'old.txt'),laterFile=path.join(output,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
   s.transition(old.id,'COMPLETED',{thread_id:'thread',workspace_path:output});s.update(old.id,{finished_at:1});
   s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,oldFile,'old.txt',3,'file');
   const row=s.due()[0];s.ack(row.id,row.version);
-  await cleanup(s,{archive:async()=>assert.fail('the chat is not archived')});
+  await cleanup(s);
   assert(s.get(old.id).cleaned_at);await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');
   s.close();await fs.rm(root,{recursive:true});
+});
+
+test('files of a Desktop-era session are still found through that session, and only inside its own chat folder',async()=>{
+  // The old layout kept a chat's files in Documents\Codex\<date>\lark-<id>; that session is retired but its record says where.
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-desktop-era-')),s=new Store(':memory:');
+  const old=s.create(input()).task,session=bound(s,old,'old-thread',root);
+  const output=taskWorkspace(root),mine=path.join(output,'mine.txt'),foreign=path.join(root,'..',`foreign-${process.pid}.txt`);
+  await fs.mkdir(output,{recursive:true});await fs.writeFile(mine,'x');await fs.writeFile(foreign,'keep');
+  s.transition(old.id,'COMPLETED',{thread_id:'old-thread',workspace_path:output});s.update(old.id,{finished_at:1});
+  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,mine,'mine.txt',1,'file');
+  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a2',old.id,foreign,'foreign.txt',4,'file');
+  s.db.prepare('UPDATE user_sessions SET retired_at=1 WHERE id=?').run(session.id);const row=s.due()[0];s.ack(row.id,row.version);
+  await cleanup(s);
+  await assert.rejects(fs.stat(mine),{code:'ENOENT'});assert.equal(await fs.readFile(foreign,'utf8'),'keep','a path outside the folder is never removed');
+  await fs.rm(foreign);s.close();await fs.rm(root,{recursive:true});
 });
