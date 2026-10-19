@@ -80,7 +80,9 @@ async function main(){
   process.once('SIGINT',()=>{void stop();});process.once('SIGTERM',()=>{void stop();});
   // Before anything can run or send: what the previous run left unfinished is over and must not reach users now.
   const leftovers=store.discardLeftovers();if(leftovers.cancelled||leftovers.dropped||leftovers.interrupted)log.info(leftovers,'已作废上次运行遗留的任务和未送达消息');
-  scheduler.start();delivery.start();housekeep();
+  // The first round runs before anything can start: no task is running yet, so nothing is skipped.
+  housekeep();await sweeping;
+  scheduler.start();delivery.start();
   let polling=false;
   const reconnect=async()=>{
     if(polling||stopping)return;polling=true;
