@@ -42,7 +42,6 @@ export class Store {
           path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,UNIQUE(task_id,path));
         CREATE TABLE IF NOT EXISTS task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,
           saved_path TEXT,base64 TEXT,PRIMARY KEY(task_id,item_id));
-        CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS task_inputs (task_id TEXT NOT NULL REFERENCES tasks(id),ordinal INTEGER NOT NULL,
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
@@ -70,6 +69,8 @@ export class Store {
       this.db.exec('DROP TABLE IF EXISTS pending_requests');
       // Per-user API keys existed for a short while and are gone again: Codex runs on the one login of the project. No key stays behind.
       this.db.exec('DROP TABLE IF EXISTS user_keys');
+      // Key-value storage of the Desktop bridge; nothing has read or written it since.
+      this.db.exec('DROP TABLE IF EXISTS metadata');
       if(version>0&&version<6)this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE retired_at IS NULL AND thread_id IS NOT NULL').run(Date.now());
       this.db.exec('PRAGMA user_version = 6');
     })();}finally{this.db.pragma('foreign_keys = ON');}
@@ -88,6 +89,8 @@ export class Store {
       }
     })();
   }
+  /** Every user directory handed out under user/. */
+  userDirs():{tenant_key:string;user_id:string;name:string}[]{return this.db.prepare('SELECT tenant_key,user_id,name FROM user_dirs ORDER BY created_at').all() as any;}
   sessions():UserSession[]{return this.db.prepare('SELECT * FROM user_sessions WHERE retired_at IS NULL ORDER BY created_at,rowid').all() as unknown as UserSession[];}
   nameSession(id:string,name:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
@@ -212,10 +215,6 @@ export class Store {
   expired(before:number):Task[]{return this.db.prepare("SELECT * FROM tasks WHERE cleaned_at IS NULL AND finished_at IS NOT NULL AND finished_at<? AND status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY finished_at").all(before) as unknown as Task[];}
   messages(taskId:string):any{return this.db.prepare('SELECT * FROM task_messages WHERE task_id=?').get(taskId);}
   nextSequence(taskId:string){return this.db.prepare('UPDATE task_messages SET sequence=sequence+1 WHERE task_id=? RETURNING sequence').get(taskId) as {sequence:number};}
-  meta(key:string,value?:unknown):any{
-    if(value!==undefined)this.db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));
-    const row=this.db.prepare('SELECT value FROM metadata WHERE key=?').get(key) as any;return row?JSON.parse(row.value):undefined;
-  }
   stats(){return {tasks:this.db.prepare('SELECT status,count(*) AS count FROM tasks GROUP BY status').all(),deliveries:this.db.prepare('SELECT status,count(*) AS count FROM delivery_outbox GROUP BY status').all()};}
   close(){this.db.close();}
 }

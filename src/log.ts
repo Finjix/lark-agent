@@ -1,14 +1,12 @@
-import {mkdirSync,createWriteStream,readdirSync,statSync,rmSync,type WriteStream} from 'node:fs';
+import {mkdirSync,createWriteStream,type WriteStream} from 'node:fs';
 import path from 'node:path';
 import {config} from './config.js';
 const directory=path.join(config.data,'logs');mkdirSync(directory,{recursive:true});
-// A new file per day and process, old ones dropped; opened lazily so short CLI commands leave no empty file.
-const purge=()=>{try{for(const name of readdirSync(directory)){const old=path.join(directory,name);if(name.endsWith('.jsonl')&&Date.now()-statSync(old).mtimeMs>14*86400000)rmSync(old,{force:true});}}catch{}};
-purge();
+// A new file per day and process; opened lazily so short CLI commands leave no empty file. Old files are removed by maintenance.ts.
 let stream:WriteStream|undefined,day='';
 const file={write:(line:string)=>{
   const today=new Date().toISOString().slice(0,10);
-  if(!stream||today!==day){const first=!stream;stream?.end();day=today;stream=createWriteStream(path.join(directory,`${today}-${process.pid}.jsonl`),{flags:'a'});if(!first)purge();}
+  if(!stream||today!==day){stream?.end();day=today;stream=createWriteStream(path.join(directory,`${today}-${process.pid}.jsonl`),{flags:'a'});}
   return stream.write(line);
 }};
 const levels={debug:20,info:30,warn:40,error:50};

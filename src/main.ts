@@ -10,7 +10,7 @@ import {FeishuClient} from './feishu/client.js';
 import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
 import {Delivery} from './feishu/delivery.js';
-import {cleanup} from './maintenance.js';
+import {housekeeping} from './maintenance.js';
 import {accessConfigured} from './access.js';
 import {clockOffset} from './feishu/clock.js';
 
@@ -47,6 +47,9 @@ async function main(){
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
   let stopping=false;let poll:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
+  // Housekeeping is told to stop and awaited on shutdown, so it never meets a closed database.
+  const halt=new AbortController();let sweeping:Promise<void>=Promise.resolve();
+  const housekeep=()=>{sweeping=housekeeping(store,halt.signal);};
   let feishuStarted=false,lastFeishuAttempt=0,lastCodexProbe=0,lastCodexError='',lastClockSync=0;
   const token=randomBytes(32).toString('hex'),feishu=new FeishuClient();
   const service=new TaskService(store,codex,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
@@ -63,10 +66,10 @@ async function main(){
     response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},codex:{ready:codex.ready,version:codex.version,error:codex.error},feishu:{connected:feishu.connected,state:feishu.state,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
-    if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);server.close();
+    if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);halt.abort();server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
     // Codex runs as a child of this service and ends with it: the tasks are finished as failed, and one last delivery pass finishes their cards.
-    service.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();
+    service.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
     feishu.close();codex.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
   };
@@ -77,7 +80,7 @@ async function main(){
   process.once('SIGINT',()=>{void stop();});process.once('SIGTERM',()=>{void stop();});
   // Before anything can run or send: what the previous run left unfinished is over and must not reach users now.
   const leftovers=store.discardLeftovers();if(leftovers.cancelled||leftovers.dropped||leftovers.interrupted)log.info(leftovers,'已作废上次运行遗留的任务和未送达消息');
-  scheduler.start();delivery.start();
+  scheduler.start();delivery.start();housekeep();
   let polling=false;
   const reconnect=async()=>{
     if(polling||stopping)return;polling=true;
@@ -100,7 +103,7 @@ async function main(){
     }finally{polling=false;}
   };
   poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);
-  maintain=setInterval(()=>{void cleanup(store).catch(e=>log.warn({error:safeError(e)},'保留策略清理失败'));},3600000);
+  maintain=setInterval(housekeep,3600000);
   log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书 Codex 机器人已启动');
   if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭，可通过 /whoami 获取租户和 Open ID');
   await reconnect();

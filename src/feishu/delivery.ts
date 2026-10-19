@@ -104,7 +104,8 @@ export class Delivery {
   }
   private async deliverRow(row:any){
     try{await this.deliver(row);this.store.ack(row.id,row.version);}
-    catch(e){const error=safeError(e);const permanent=e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code);
+    // A file that is gone (cleaned up after the retention period, or removed by someone) cannot be uploaded however often it is retried.
+    catch(e){const error=safeError(e);const permanent=(e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code))||(e as NodeJS.ErrnoException)?.code==='ENOENT';
       this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
   }
   private async api<T>(fn:()=>Promise<T>,gate=this.gate):Promise<T>{return await gate.add(fn);}

@@ -15,7 +15,8 @@ export function userDirectory(store:Store,session:Pick<UserSession,'tenant_key'|
   const name=clean(session.display_name??'')||clean(session.user_id)||'user';
   return path.join(config.user,store.userDirName(session.tenant_key,session.user_id,name));
 }
-export const userWorkspace=(store:Store,session:Pick<UserSession,'tenant_key'|'user_id'|'display_name'>)=>path.join(userDirectory(store,session),'workspace');
+export const workspaceIn=(userDirectory:string)=>path.join(userDirectory,'workspace');
+export const userWorkspace=(store:Store,session:Pick<UserSession,'tenant_key'|'user_id'|'display_name'>)=>workspaceIn(userDirectory(store,session));
 
 /** Folder names of the earlier layouts, where deliveries came from <chat folder>/outputs (before that output); tasks recorded with them are still cleaned up. */
 export const taskWorkspace=(chatFolder:string)=>path.join(chatFolder,'outputs');
