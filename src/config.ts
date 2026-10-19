@@ -16,7 +16,7 @@ export const config = {
   FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
   CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250),
   // Codex runs through its SDK with everything it keeps (login, chats, generated images) in <project>/.codex. The CODEX_HOME of the system is never read.
-  CODEX_MODEL:text('CODEX_MODEL'), CODEX_REASONING_EFFORT:text('CODEX_REASONING_EFFORT'),
+  CODEX_API_KEY:text('CODEX_API_KEY'), CODEX_MODEL:text('CODEX_MODEL'), CODEX_REASONING_EFFORT:text('CODEX_REASONING_EFFORT'),
   TASK_TIMEOUT_MS:int('TASK_TIMEOUT_MS',0), TASK_RETENTION_DAYS:int('TASK_RETENTION_DAYS',30,1), HEALTH_PORT:int('HEALTH_PORT',8765,1,65535),
   root, database: path.resolve(root,text('DATABASE_PATH','./data/agent.sqlite')),
   data:path.join(root,'data'), user:path.join(root,'user'), codexHome:path.join(root,'.codex'),

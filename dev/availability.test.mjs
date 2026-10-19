@@ -10,7 +10,7 @@ const message=(id,user='u1',extra={})=>({tenant:'t',user,chat:'c',message:id,tex
 const notices=store=>store.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE' ORDER BY rowid").all().map(r=>JSON.parse(r.payload));
 function setup(ready){
   const store=new Store(':memory:'),codex=Object.assign(new EventEmitter(),{ready}),service=new TaskService(store,codex);
-  service.authorized=()=>true;store.apiKey=()=>'sk-test';return {store,codex,service};
+  service.authorized=()=>true;return {store,codex,service};
 }
 
 test('while Codex is unavailable nothing is queued; the user gets one plain refusal, never a promise to run later',async()=>{

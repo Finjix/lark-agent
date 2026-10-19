@@ -37,7 +37,7 @@ async function main(){
     const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
       sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
     await codex.probe();
-    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,model:config.CODEX_MODEL||'（Codex 默认）',...(codex.error?{error:codex.error}:{})};
+    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,login:config.CODEX_API_KEY?'API key（.env）':'codex login',model:config.CODEX_MODEL||'（Codex 默认）',...(codex.error?{error:codex.error}:{})};
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     store.close();console.log(JSON.stringify(checks,null,2));
     if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;

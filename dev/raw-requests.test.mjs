@@ -14,7 +14,7 @@ const input=(message,instruction='  原文\n\n保留 `代码`、🙂 和空白�
 
 test('private text and rich-text whitespace reach Codex unchanged; attachment-only input is not replaced with an invented request',async()=>{
   const s=new Store(':memory:'),event={tenant_key:'tenant',sender:{sender_type:'user',sender_id:{open_id:'user'}},message:{chat_type:'p2p',chat_id:'chat',message_id:'message',message_type:'text',content:JSON.stringify({text:input('m').instruction})}};
-  const jobs=[],codex=Object.assign(new EventEmitter(),{ready:true,run:async function*(job){jobs.push(job);yield {type:'thread.started',thread_id:'th'};yield {type:'turn.completed',usage:{}};}}),service=new TaskService(s,codex);service.authorized=()=>true;s.apiKey=()=>'sk-test';
+  const jobs=[],codex=Object.assign(new EventEmitter(),{ready:true,run:async function*(job){jobs.push(job);yield {type:'thread.started',thread_id:'th'};yield {type:'turn.completed',usage:{}};}}),service=new TaskService(s,codex);service.authorized=()=>true;
   const incoming=incomingMessage(event,'bot');await service.receive(incoming);
   assert.equal(s.list()[0].instruction,input('m').instruction);
   s.transition(s.list()[0].id,'STARTING');await service.start(s.get(s.list()[0].id));

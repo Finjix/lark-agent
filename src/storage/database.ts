@@ -47,7 +47,6 @@ export class Store {
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
           thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,display_name TEXT,retired_at INTEGER);
-        CREATE TABLE IF NOT EXISTS user_keys (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,api_key TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
         CREATE TABLE IF NOT EXISTS user_dirs (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,name TEXT NOT NULL UNIQUE COLLATE NOCASE,created_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
       `);
       if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
@@ -68,16 +67,14 @@ export class Store {
       // Version 6 replaced the Desktop bridge by the Codex SDK. Interactive approvals no longer exist, and the chats of the old
       // sessions live in Desktop's own Codex home, which this service no longer reads: those sessions are retired so each user starts a fresh chat.
       this.db.exec('DROP TABLE IF EXISTS pending_requests');
+      // Per-user API keys existed for a short while and are gone again: Codex runs on the one login of the project. No key stays behind.
+      this.db.exec('DROP TABLE IF EXISTS user_keys');
       if(version>0&&version<6)this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE retired_at IS NULL AND thread_id IS NOT NULL').run(Date.now());
       this.db.exec('PRAGMA user_version = 6');
     })();}finally{this.db.pragma('foreign_keys = ON');}
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
-  /** The API key a user set with /key; Codex runs on it. Kept as typed, in this database, which is as private as .env. */
-  apiKey(tenant:string,user:string):string|undefined{return (this.db.prepare('SELECT api_key FROM user_keys WHERE tenant_key=? AND user_id=?').get(tenant,user) as {api_key:string}|undefined)?.api_key;}
-  setApiKey(tenant:string,user:string,key:string){this.db.prepare('INSERT INTO user_keys(tenant_key,user_id,api_key,updated_at) VALUES(?,?,?,?) ON CONFLICT(tenant_key,user_id) DO UPDATE SET api_key=excluded.api_key,updated_at=excluded.updated_at').run(tenant,user,key,Date.now());}
-  clearApiKey(tenant:string,user:string){return Number(this.db.prepare('DELETE FROM user_keys WHERE tenant_key=? AND user_id=?').run(tenant,user).changes)>0;}
   /** The user's directory name under user/: allocated once and never changed; another user with the same name gets 2, 3, ... appended. */
   userDirName(tenant:string,user:string,wanted:string):string{
     return this.db.transaction(()=>{

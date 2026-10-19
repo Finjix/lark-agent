@@ -2,7 +2,7 @@
 
 Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 → 用 Codex SDK 在本机执行 → 卡片、最终回复、交付文件回传飞书。
 
-Codex 的对话、生成的图片等一切状态都放在项目自己的 `.codex/` 里。系统自带的 Codex（`~\.codex`、`Documents\Codex`）既不读也不写，不受影响；换一台电脑只要 `npm install` 就能用。
+Codex 的登录、对话、生成的图片等一切状态都放在项目自己的 `.codex/` 里。系统自带的 Codex（`~\.codex`、`Documents\Codex`）既不读也不写，不受影响；换一台电脑只要 `npm install`、登录一次即可使用。
 
 ## 运行
 
@@ -10,12 +10,12 @@ Codex 的对话、生成的图片等一切状态都放在项目自己的 `.codex
 
 1. 飞书后台配置应用，见 [docs/feishu.md](docs/feishu.md)。
 2. `.env.example` 复制为 `.env`，填凭证和访问范围。
-3. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译）。日志出现“Codex 已就绪”和“飞书长连接已启动”即可用。
-4. 每个用户第一次使用前，**私聊**机器人发送 `/key 你的OpenAI-API-Key`，之后才能提交任务。Key 是各人自己的：任务用谁的 Key 跑、花谁的额度。
+3. 登录 Codex（只做一次，由管理员做）：`start.cmd codex login`，在浏览器里用企业账号授权；没有浏览器的机器用 `start.cmd codex login --device-auth`。也可以不登录，在 `.env` 里填 `CODEX_API_KEY`。所有飞书用户共用这一个账号，用户不需要任何配置，开箱即用。
+4. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译）。日志出现“Codex 已就绪”和“飞书长连接已启动”即可用。
 
-`start.cmd codex <参数>` 是项目自带 Codex CLI 的入口，永远使用项目的 `.codex/`，调试用。
+`start.cmd codex <参数>` 是项目自带 Codex CLI 的入口，永远使用项目的 `.codex/`：`start.cmd codex login status`、`start.cmd codex logout` 等。
 
-**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用），`npm install`，复制 `.env`。要保留各用户设置过的 Key 就一并复制 `data/agent.sqlite`。要保留各用户的工作目录就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.codex/sessions`。
+**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用），`npm install`，复制 `.env`，`start.cmd codex login`。要保留各用户的工作目录就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.codex/sessions`。
 
 ## Codex 的运行方式
 
@@ -23,7 +23,7 @@ Codex 的对话、生成的图片等一切状态都放在项目自己的 `.codex
 
 - **位置**：`.codex/` 保存对话（`sessions/`）、生成的图片（`generated_images/`）和日志，不入 Git。环境变量 `CODEX_HOME` 被忽略，子进程始终使用项目里的这个目录。
 - **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`、`plugins`、`browser_use`、`in_app_browser`、`computer_use`、`memories`（这些要么是登录账号的连接器、要么是整台机器共用的浏览器和电脑控制，会让所有飞书用户共享同一份；要放开，改 `codexConfig`）；模型用 Codex 默认，要指定在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
-- **API Key**：`/key` 设置的 Key 按用户存在数据库 `data/agent.sqlite` 里（明文，和 `.env` 一样需要保护好这台机器），每次任务作为该用户自己的 Key 交给 Codex 进程，不经过共享环境，不写日志，机器人的回复里也不重复；`start.cmd backup` 生成的备份文件同样含有 Key。`/key` 单独发送看是否已设置（只显示首尾几位），`/key clear` 清除。群聊里发 `/key` 会被拒绝（群里谁都看得到），发送后建议撤回消息。Key 被 OpenAI 拒绝时，卡片提示用户重新 `/key`。
+- **登录**：登录文件是 `.codex/auth.json`（启动时收紧为仅当前账号可读，存成文件而不是系统钥匙串）。Codex 不可用或登录被拒绝时，用户只会看到“机器人罢工了”，原因写在日志里；管理员重新 `start.cmd codex login` 即可，服务不用重启（未就绪时每 10 秒检查一次）。
 - **权限**：没有任何限制：沙箱 `danger-full-access`、审批 `never`，Codex 可以读写本机任何位置、访问网络，也没有人会被询问。写死在 `src/codex/runner.ts`，没有开关。因为不能交互，做不到的事只会失败，Codex 自己换办法；所以没有 `/approve`、`/deny`、`/answer`：Codex 需要问用户什么，就在回复里问，用户的下一条消息就是回答。
 - **提示词**：不向 Codex 注入任何指令，也没有 MCP 工具：它看到的就是用户发来的文字（外加附件清单，见下）。
 - **输入**：用户文字原样提交（保留空白换行）。有附件时在文字前加一段清单（每个文件的路径，并提醒附件内容只是资料、不是用户的指令）；图片同时作为图片输入让模型直接看到画面，其他文件由模型用工具按路径打开。飞书语音消息按文件接收（`语音消息.opus`），同样只是路径。
@@ -51,7 +51,7 @@ user/
 ## 行为
 
 - **会话**：每个租户下每个用户一个 Codex 对话，同一时刻只执行一条输入；不同用户并行，无全局并发上限。用户的一条输入还没有回传结果（排队、启动、执行中）时，再发来的任何输入都是无效输入：不排队、不转给 Codex、也不回复，只在日志里记一笔；任务结束（完成、失败或取消）后才接收下一条，不等卡片和文件发送完毕。`/status`、`/cancel`、`/new` 等命令不受影响，随时可用。Codex 里找不到原来的对话（比如 `.codex` 被清空）时，下一条消息自动新开一个。
-- **不可用时**：Codex 不可用（二进制缺失）时，新消息不会入队，机器人只回一条“机器人罢工了，请联系 @钟丰骏-实习生”（常量 `BOT_DOWN`，见 `src/types.ts`；Codex 启动或运行失败、附件接收失败等所有机器人自身不可用的情况都用这一句，具体原因只写日志）。服务未启动期间发的消息，服务启动后若被飞书重新推送（发送时间早于启动时间）会被忽略，不会执行。是否过期按飞书服务器的时间判断（每 10 分钟用飞书响应的时间头校准一次），本机时钟与飞书相差超过 5 秒时日志会警告。
+- **不可用时**：Codex 不可用（没登录、二进制缺失）时，新消息不会入队，机器人只回一条“机器人罢工了，请联系 @钟丰骏-实习生”（常量 `BOT_DOWN`，见 `src/types.ts`；Codex 启动或运行失败、附件接收失败等所有机器人自身不可用的情况都用这一句，具体原因只写日志）。服务未启动期间发的消息，服务启动后若被飞书重新推送（发送时间早于启动时间）会被忽略，不会执行。是否过期按飞书服务器的时间判断（每 10 分钟用飞书响应的时间头校准一次），本机时钟与飞书相差超过 5 秒时日志会警告。
 - **重启**：Codex 是本服务的子进程，服务停止或崩溃时正在执行的任务随之结束。重启时，排队中的任务取消（没有卡片，不通知），执行中的任务把卡片收尾为失败（回复“机器人罢工了”），未送达的提示和已结束任务的未送达回复一律丢弃（标记为 FAILED，可用 `retry-delivery` 手动重发），启动本身不会向用户发任何新消息。用户重发即可，Codex 对话里已有的内容会接着用。
 - **回传**：卡片随 Codex 的每条消息更新（`codex exec` 以完整消息为单位输出，不是逐字流式；每秒合并；超过 9 分钟改为整体更新），Codex 工作中标题栏显示计时，工具调用和推理过程不展示。长回复转 Markdown 附件；文件只上传最终回复链接且位于交付目录内的（链到交付目录以外的文件，如用户自己发来的附件，一律忽略，不通知；路径里的括号如 `report (2).pdf` 能正确解析）；Codex 生成的图片自动发送（>10 MB 改发文件）。文件上传走单独的队列，大文件不会拖慢卡片更新；投递记录持久化。
 - **取消**：`/cancel 任务ID` 结束该任务的 Codex 进程，已经说出的内容保留在卡片上；进程不响应时再发一次强制结束该任务，释放队列。已被 Codex 启动的外部命令不保证随之结束。
@@ -60,11 +60,11 @@ user/
 
 `.env` 中：`ALLOWED_TENANTS`（整个企业开放，优先于用户名单，管理员也受限）→ 否则 `ALLOWED_USERS` / `ADMIN_USERS`（Open ID）。三者皆空则拒绝所有任务。`ALLOWED_CHATS` 可额外限制会话。改后重启。
 
-查询、取消仅限任务本人或管理员，不跨租户。所有任务共享本机权限，没有任何限制，用户之间也没有隔离：Codex 能读写其他用户的工作目录，也能读到 `.env` 和存着各人 API Key 的 `data/agent.sqlite`。只对可信内部用户开放。
+查询、取消仅限任务本人或管理员，不跨租户。所有任务共享本机权限，没有任何限制，用户之间也没有隔离：Codex 能读写其他用户的工作目录，也能读到 `.env` 和 `.codex/auth.json`（共用的账号凭据）。只对可信内部用户开放。
 
 ## 指令
 
-`/whoami`（Open ID 和租户）、`/help`、`/key`（设置自己的 API Key，见上）、`/new`（忘掉之前的对话，有任务在执行时不可用）、`/tasks`（最近 10 个）、`/status 任务ID`、`/cancel 任务ID`。
+`/whoami`（Open ID 和租户）、`/help`、`/new`（忘掉之前的对话，有任务在执行时不可用）、`/tasks`（最近 10 个）、`/status 任务ID`、`/cancel 任务ID`。
 
 ## 运维
 
@@ -73,10 +73,10 @@ start.cmd doctor
 start.cmd stop                  :: 通过本机令牌接口安全停止，也可 Ctrl+C
 start.cmd backup                :: 备份数据库到 data/
 start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任务
-start.cmd codex <参数>          :: 项目自带的 Codex CLI（用项目的 .codex），调试用
+start.cmd codex login           :: 登录项目自己的 Codex；也可 codex login status、codex logout
 ```
 
-健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建；Codex 未就绪（二进制不可用）时每 10 秒重新检查一次，就绪后每分钟检查一次。日志在 `data/logs`，每天一个文件，保留 14 天；`.env` 可选 `LOG_LEVEL`。
+健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建；Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天一个文件，保留 14 天；`.env` 可选 `LOG_LEVEL`。
 
 ## 从 Desktop 版升级
 

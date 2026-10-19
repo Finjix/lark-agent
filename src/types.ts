@@ -21,7 +21,7 @@ export interface UserSession {
 export interface GeneratedImage {id:string;savedPath:string;}
 export interface IncomingMessage {
   tenant: string; user: string; chat: string; message: string; text: string; createdAt?: number;
-  attachments?: IncomingAttachment[]; error?: string; isGroup?: boolean;
+  attachments?: IncomingAttachment[]; error?: string;
 }
 export interface IncomingAttachment {kind:'image'|'file'; key:string; name:string;}
 export interface TaskInput extends IncomingAttachment {ordinal:number; path:string|null; size:number|null;}

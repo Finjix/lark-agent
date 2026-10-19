@@ -12,7 +12,6 @@ import {Turn} from '../dist/codex/turn.js';
 import {codexInput} from '../dist/codex/input.js';
 import {CodexRunner,codexEnv,codexConfig,threadOptions} from '../dist/codex/runner.js';
 import {BOT_DOWN} from '../dist/types.js';
-import {KEY_NEEDED,KEY_REJECTED} from '../dist/tasks/service.js';
 
 // ---- the events of `codex exec --experimental-json`, as the SDK hands them over
 const started=id=>({type:'thread.started',thread_id:id}),turnStarted={type:'turn.started'};
@@ -30,7 +29,7 @@ function fakeCodex(script){
 }
 const input=(message='m1',user='u1',instruction='帮我做点事')=>({tenant_key:'t',user_id:user,chat_id:'c',source_message_id:message,instruction});
 function setup(script,{downloader}={}){
-  const store=new Store(':memory:'),codex=fakeCodex(script),service=new TaskService(store,codex,downloader);service.authorized=()=>true;store.apiKey=(tenant,user)=>`sk-${user}`;
+  const store=new Store(':memory:'),codex=fakeCodex(script),service=new TaskService(store,codex,downloader);service.authorized=()=>true;
   const run=async(message='m1',user='u1',instruction)=>{
     const task=store.create(input(message,user,instruction)).task;store.transition(task.id,'STARTING',{started_at:Date.now()});
     await service.start(store.get(task.id));return store.get(task.id);
@@ -110,15 +109,16 @@ test('a new chat is started or an existing one resumed with the shared environme
   assert.equal(made[1].resumed[0][0],'th-1');assert.equal(made[1].resumed[0][1].workingDirectory,'D:/w');
   assert.equal(made[0].options.env.CODEX_HOME,config.codexHome);assert.deepEqual(made[0].options.config,codexConfig());
 });
-test('Codex is ready when its binary runs; the real binary is found through the package, and no login is needed',async()=>{
-  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved=config.codexHome;
+test('Codex is ready when its binary runs and there is a login or an API key; the real binary is found through the package',async()=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved={home:config.codexHome,key:config.CODEX_API_KEY};
   try{
-    config.codexHome=home;
-    const runner=new CodexRunner(),events=[];runner.on('online',()=>events.push('online'));
-    assert.equal(await runner.probe(),true);assert.equal(runner.error,'');assert.match(runner.version,/^\d+\.\d+\.\d+/,'the binary itself answered');
-    assert.deepEqual(await fs.readdir(home).then(x=>x.filter(n=>n==='auth.json')),[],'there is no login: every user brings a key');
-    assert.equal(await runner.probe(),true);assert.deepEqual(events,['online'],'only changes are announced');
-  }finally{config.codexHome=saved;await fs.rm(home,{recursive:true,force:true});}
+    config.codexHome=home;config.CODEX_API_KEY='';
+    const runner=new CodexRunner(),events=[];runner.on('online',()=>events.push('online'));runner.on('offline',()=>events.push('offline'));
+    assert.equal(await runner.probe(),false);assert.match(runner.error,/尚未登录/);assert.match(runner.error,/codex login/);assert.match(runner.version,/^\d+\.\d+\.\d+/,'the binary itself answered');
+    assert.deepEqual(await fs.readdir(home).then(x=>x.filter(n=>n==='auth.json')),[],'probing creates no login');
+    config.CODEX_API_KEY='sk-test';assert.equal(await runner.probe(),true);assert.equal(runner.error,'');
+    config.CODEX_API_KEY='';assert.equal(await runner.probe(),false);assert.deepEqual(events,['online','offline'],'only changes are announced');
+  }finally{Object.assign(config,{codexHome:saved.home,CODEX_API_KEY:saved.key});await fs.rm(home,{recursive:true,force:true});}
 });
 
 // ---- a task from message to result
@@ -162,7 +162,7 @@ test('a failed turn shows Codex\'s reason even though the process then exits wit
     yield completed;
   });
   mode='failed';let task=await run('m1','u1');assert.equal(task.status,'FAILED');assert.equal(task.error,'You\'ve hit your usage limit');assert.equal(task.progress,'做了一半');
-  mode='auth';task=await run('m4','u4');assert.equal(task.status,'FAILED');assert.equal(task.error,KEY_REJECTED,'a key Codex does not accept is for the user to fix');
+  mode='auth';task=await run('m4','u4');assert.equal(task.status,'FAILED');assert.equal(task.error,BOT_DOWN,'a login Codex no longer accepts is the bot being down, not a message for the user');
   mode='crash';task=await run('m2','u2');assert.equal(task.status,'FAILED');assert.equal(task.error,BOT_DOWN);
   mode='silent';task=await run('m3','u3');assert.equal(task.status,'FAILED');assert.equal(task.error,BOT_DOWN,'a run that ends without a result is not a success');
   store.close();
@@ -295,35 +295,3 @@ test('the images Codex generated while the task ran are found in its chat\'s fol
   }finally{config.codexHome=saved;await fs.rm(home,{recursive:true,force:true});}
 });
 
-// ---- every user's own API key
-test('nobody can start a task before setting a key; /key stores it privately, and each user\'s tasks run on their own key',async()=>{
-  const store=new Store(':memory:'),jobs=[],codex=Object.assign(new EventEmitter(),{ready:true,run:async function*(job){jobs.push(job);yield started('th-'+jobs.length);yield completed;}});
-  const service=new TaskService(store,codex);service.authorized=()=>true;
-  const say_=(user,text,id,extra={})=>service.receive({tenant:'t',user,chat:'c',message:id,text,...extra});
-  const last=()=>notices(store).at(-1);
-  await say_('u1','帮我做点事','a1');assert.equal(store.list().length,0,'nothing is queued');assert.equal(last(),KEY_NEEDED);
-  await say_('u1','/key','a2');assert.equal(last(),KEY_NEEDED,'/key alone says what is missing');
-  await say_('u1','/key sk-proj-abcdefghijklmnop1234','a3',{isGroup:true});assert.match(last(),/私聊/);assert.equal(store.apiKey('t','u1'),undefined,'never from a group');
-  assert(!last().includes('abcdefghijklmnop'),'the key is not repeated');
-  await say_('u1','/key not a key','a4');assert.match(last(),/格式/);await say_('u1','/key short','a5');assert.match(last(),/格式/);assert.equal(store.apiKey('t','u1'),undefined);
-  await say_('u1','/key sk-proj-abcdefghijklmnop1234','a6');assert.match(last(),/已保存/);assert(!last().includes('abcdefghijklmnop'));assert.equal(store.apiKey('t','u1'),'sk-proj-abcdefghijklmnop1234');
-  await say_('u1','/key','a7');assert.match(last(),/sk-pr\.\.\.1234/);assert(!last().includes('abcdefghijklmnop'),'only the ends are shown');
-  await say_('u1','帮我做点事','a8');assert.equal(store.list().length,1);
-  await say_('u2','/key sk-proj-zzzzzzzzzzzzzzzz9999','b1');await say_('u2','我也来','b2');
-  for(const task of store.list()){store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));}
-  assert.deepEqual(jobs.map(j=>j.apiKey),['sk-proj-abcdefghijklmnop1234','sk-proj-zzzzzzzzzzzzzzzz9999'],'each task runs on its own user\'s key');
-  await say_('u1','/key clear','a9');assert.match(last(),/已清除/);assert.equal(store.apiKey('t','u1'),undefined);assert.equal(store.apiKey('t','u2'),'sk-proj-zzzzzzzzzzzzzzzz9999');
-  await say_('u1','再来一个','a10');assert.equal(last(),KEY_NEEDED);
-  // Commands work without a key, and the key never lands in a task or in the log's task rows.
-  await say_('u3','/tasks','c1');assert.equal(last(),'暂无任务');
-  assert(!JSON.stringify(store.list()).includes('abcdefghijklmnop'),'a /key message is a command, not a task');
-  store.close();
-});
-test('the key is handed to the Codex process as its own, not through the shared environment',async()=>{
-  const made=[],factory=options=>{made.push(options);return {startThread:()=>({runStreamed:async()=>({events:(async function*(){})()})}),resumeThread:()=>({})};};
-  const saved=process.env.CODEX_API_KEY;process.env.CODEX_API_KEY='sk-from-the-environment';
-  try{
-    const runner=new CodexRunner(factory);for await(const _ of runner.run({threadId:null,cwd:'D:/w',input:[],apiKey:'sk-user-key-123456',signal:new AbortController().signal}));
-    assert.equal(made[0].apiKey,'sk-user-key-123456');assert.equal(made[0].env.CODEX_API_KEY,undefined);
-  }finally{if(saved===undefined)delete process.env.CODEX_API_KEY;else process.env.CODEX_API_KEY=saved;}
-});

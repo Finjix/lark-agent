@@ -17,7 +17,7 @@ test('user names are looked up only for authorized tasks and name the user\'s fo
   const s=new Store(':memory:'),lookups=[],jobs=[];
   const codex=Object.assign(new EventEmitter(),{ready:true,run:async function*(job){jobs.push(job);yield {type:'thread.started',thread_id:`th-${jobs.length}`};yield {type:'turn.completed',usage:{}};}});
   const service=new TaskService(s,codex,{getUserName:async user=>{lookups.push(user);if(user==='blocked')throw Error('contact scope missing');return '薯薯';}});
-  s.apiKey=()=>'sk-test';const message={tenant:'tenant',user:'user',chat:'chat',message:'m',text:'  原文\n',isGroup:false};service.authorized=()=>false;await service.receive(message);assert.equal(lookups.length,0);
+  const message={tenant:'tenant',user:'user',chat:'chat',message:'m',text:'  原文\n',isGroup:false};service.authorized=()=>false;await service.receive(message);assert.equal(lookups.length,0);
   service.authorized=()=>true;await service.receive(message);let task=s.list()[0];s.transition(task.id,'STARTING');await service.start(s.get(task.id));
   const named=s.session(s.get(task.id).session_id);assert.equal(named.display_name,'薯薯');assert.equal(jobs[0].input[0].text,message.text);
   assert.equal(userDirectory(s,named).split(/[\\/]/).at(-1),'薯薯');assert(named.workspace_path.includes('薯薯'),'Codex works in a folder named for the user');

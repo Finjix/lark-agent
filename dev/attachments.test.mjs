@@ -132,7 +132,7 @@ test('download API uses the source message resource endpoint and enforces the st
 });
 
 test('a rich-text event is deduplicated, downloaded, and handed to Codex with its original instruction',async()=>{
-  const store=new Store(':memory:'),c=codex();let downloads=0;store.apiKey=()=>'sk-test';
+  const store=new Store(':memory:'),c=codex();let downloads=0;
   const service=new TaskService(store,c,{downloadResource:async(_message,_attachment,file)=>{
     downloads++;await fs.writeFile(file,'image-data');return {size:10,contentType:'image/png'};
   }});service.authorized=()=>true;

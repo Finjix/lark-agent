@@ -13,11 +13,9 @@ import {safeError,log} from '../log.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
-export const HELP='直接发送任务；群聊需 @机器人。\n/key 你的API Key 设置自己的 Key（请私聊发送）\n/new 忘掉之前的对话，重新开始\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID（无响应时再发一次强制结束）\n/whoami 查看自己的 Open ID';
+export const HELP='直接发送任务；群聊需 @机器人。\n/new 忘掉之前的对话，重新开始\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID（无响应时再发一次强制结束）\n/whoami 查看自己的 Open ID';
 export const UNAVAILABLE=BOT_DOWN;
-export const KEY_NEEDED='使用前请先私聊机器人发送 /key 你的API Key，设置自己的 OpenAI API Key。';
-export const KEY_REJECTED='你的 API Key 被拒绝了（可能填错或已失效），请私聊机器人发送 /key 你的API Key 重新设置。';
-// What Codex says when the user's key is not accepted.
+// What Codex says when the login of the project is no longer accepted. That is the bot being unavailable, not something for the user to read.
 const AUTH_FAILURE=/\b401\b|unauthorized|not logged in|log ?in again|sign ?in again|token.{0,20}(expired|revoked|invalid)/i;
 // Clock skew allowance for the start check, and how late a message may arrive: live ones take a second or two, Feishu's redeliveries of what was missed while the service was down take much longer.
 const STALE_GRACE_MS=1000,MAX_DELIVERY_LAG_MS=30000;
@@ -45,8 +43,6 @@ export class TaskService {
     if(message.error){this.notice(message,message.error);return;}
     if(message.text.trimStart().startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
-    // Codex runs on the user's own API key; until they set one nothing is queued.
-    if(!this.store.apiKey(message.tenant,message.user)){this.notice(message,KEY_NEEDED);return;}
     // One input runs at a time. Anything sent while the user's previous input is still unfinished gets no result back, so it is not an input at all:
     // it is dropped without a reply and never queued. (A redelivered event of the message already running lands here too and is equally harmless.)
     if(this.store.busy(message.tenant,message.user)){log.info({message:message.message,user:message.user},'忽略执行期间收到的输入');return;}
@@ -70,7 +66,6 @@ export class TaskService {
         const tasks=this.store.recent(message.tenant,message.user,10);
         this.notice(message,tasks.length?tasks.map(t=>`${t.id} ${t.status}`).join('\n'):'暂无任务');return;
       }
-      if(command==='/key'){this.notice(message,this.setKey(message,id));return;}
       if(command==='/new'){
         if(this.store.busy(message.tenant,message.user))throw Error('有任务正在执行，请等它结束，或先 /cancel');
         this.notice(message,this.store.resetSession(message.tenant,message.user)?'已开始新的对话，之前的内容不再带入。':'还没有对话，直接发送任务即可。');return;
@@ -92,17 +87,6 @@ export class TaskService {
       if(!this.interrupt(task)){this.store.transition(task.id,'CANCELLED',{error:''});this.notice(message,'任务已取消。');return;}
       this.notice(message,'已请求中断。若长时间没有结果，再发一次 /cancel 可强制结束。');
     }catch(e){this.notice(message,safeError(e));}
-  }
-  /** /key <API key>, /key (what is set), /key clear. The key itself is never repeated or logged. */
-  private setKey(message:IncomingMessage,value?:string){
-    const {tenant,user}=message,current=this.store.apiKey(tenant,user);
-    if(!value)return current?`已设置 API Key：${current.slice(0,5)}...${current.slice(-4)}。发送 /key clear 清除，或 /key 新的Key 替换。`:KEY_NEEDED;
-    if(value==='clear')return this.store.clearApiKey(tenant,user)?'已清除你的 API Key。':'你还没有设置 API Key。';
-    // Everyone in a group can read what is sent there.
-    if(message.isGroup)return '请私聊机器人发送 /key，群里的消息大家都看得到。如果已经在群里发过，请撤回消息并到 OpenAI 后台作废这个 Key。';
-    if(!/^[\x21-\x7e]{16,}$/.test(value))return 'API Key 的格式不对：应是一整串字符（不含空格和中文）。';
-    this.store.setApiKey(tenant,user,value);
-    return '已保存你的 API Key，之后的任务都用它。为安全起见，建议撤回刚才这条消息。';
   }
   /** The user's workspace: Codex's working directory, where what it makes is delivered from, and where the attachments arrive. */
   private async prepare(task:Task){
@@ -151,7 +135,7 @@ export class TaskService {
     let threadId=session.thread_id,received=false;
     for(let renewed=false;;){
       try{
-        for await(const event of this.codex.run({threadId,cwd:folder,input,apiKey:this.store.apiKey(task.tenant_key,task.user_id),signal})){received=true;this.onEvent(task,session,turn,event);}
+        for await(const event of this.codex.run({threadId,cwd:folder,input,signal})){received=true;this.onEvent(task,session,turn,event);}
         break;
       }catch(e){
         // After a failed turn the process exits with an error code, which the SDK throws; the turn's own report is what counts.
@@ -169,7 +153,7 @@ export class TaskService {
       log.warn({taskId:task.id},'Codex 没有给出本轮的结果就结束了');await this.finish(this.store.get(task.id)!,turn,'FAILED',BOT_DOWN);return;
     }
     if(turn.state==='failed')log.warn({taskId:task.id,error:turn.error},'Codex 本轮失败');
-    await this.finish(this.store.get(task.id)!,turn,turn.state==='completed'?'COMPLETED':'FAILED',AUTH_FAILURE.test(turn.error)?KEY_REJECTED:turn.error);
+    await this.finish(this.store.get(task.id)!,turn,turn.state==='completed'?'COMPLETED':'FAILED',AUTH_FAILURE.test(turn.error)?BOT_DOWN:turn.error);
   }
   private onEvent(task:Task,session:UserSession,turn:Turn,event:ThreadEvent){
     if(event.type==='thread.started'){
