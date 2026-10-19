@@ -103,7 +103,7 @@ async function main(){
     }finally{polling=false;}
   };
   poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);
-  maintain=setInterval(housekeep,3600000);
+  maintain=setInterval(housekeep,86400000);
   log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书 Codex 机器人已启动');
   if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭，可通过 /whoami 获取租户和 Open ID');
   await reconnect();

@@ -111,7 +111,7 @@ export async function purge(store:Store,options:{now?:number;roots?:Roots;signal
 }
 
 let running:Promise<void>|undefined;
-/** One round of housekeeping, run at start and then every hour. It never rejects, and a round that is still running is not started a second time. */
+/** One round of housekeeping, run at start and then every 24 hours. It never rejects, and a round that is still running is not started a second time. */
 export function housekeeping(store:Store,signal?:AbortSignal):Promise<void>{
   return running??=(async()=>{
     try{await cleanup(store);}catch(e){log.warn({error:safeError(e)},'保留策略清理失败');}
