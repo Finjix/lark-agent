@@ -75,14 +75,6 @@ test('scheduler launches every independent user without a numeric cap and stop a
   for(const release of releases)release();await stopping;assert.equal(stopped,true);
   s.transition(tasks[0].id,'COMPLETED');scheduler.tick();assert.equal(s.get(next.id).status,'QUEUED');s.close();
 });
-test('cross-user and cross-tenant commands cannot cancel another task',async()=>{
-  const s=memory(),service=new TaskService(s,new EventEmitter()),task=s.create(input()).task;
-  const message={tenant:'t1',user:'u2',chat:'c',message:'command',text:`/cancel ${task.id}`};
-  // Invoke command authorization itself, independently of the configured allowlist.
-  await service.command(message);assert.equal(s.get(task.id).status,'QUEUED');
-  const out=s.due().find(x=>x.kind==='NOTICE');assert(JSON.parse(out.payload).text.includes('无权'));
-  await service.command({...message,tenant:'t2',user:'u1',message:'command2'});assert.equal(s.get(task.id).status,'QUEUED');s.close();
-});
 test('file collection rejects traversal and symlinks, accepts spaces and unicode',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-files-')),workspace=path.join(dir,'任务 空格');await fs.mkdir(workspace);
   const file=path.join(workspace,'报告.txt'),outside=path.join(dir,'secret.txt');await fs.writeFile(file,'safe');await fs.writeFile(outside,'secret');

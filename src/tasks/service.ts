@@ -13,7 +13,6 @@ import {safeError,log} from '../log.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
 
-export const HELP='直接发送任务；群聊需 @机器人。\n/new 忘掉之前的对话，重新开始\n/tasks 列出自己的任务\n/status 任务ID\n/cancel 任务ID（无响应时再发一次强制结束）\n/whoami 查看自己的 Open ID';
 export const UNAVAILABLE=BOT_DOWN;
 // What Codex says when the login of the project is no longer accepted. That is the bot being unavailable, not something for the user to read.
 const AUTH_FAILURE=/\b401\b|unauthorized|not logged in|log ?in again|sign ?in again|token.{0,20}(expired|revoked|invalid)/i;
@@ -26,6 +25,8 @@ export class TaskService {
   /** One entry per task from the moment it starts until it is over: what stops its Codex process. */
   private runs=new Map<string,AbortController>();
   private stopping=false;
+  /** How long /new waits for a stopped Codex process to be gone before it ends the task regardless. */
+  stopWaitMs=5000;
   constructor(public store:Store,public codex:CodexRunner,private downloader?:ResourceDownloader){}
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
   authorized(message:IncomingMessage){return authorized(message);}
@@ -38,10 +39,11 @@ export class TaskService {
     // Feishu may redeliver events that arrived while this service was not running; those are stale and must not run now.
     const lagMs=Date.now()+this.clockOffsetMs-(message.createdAt??0);
     if(message.createdAt&&(message.createdAt<this.startedAt+this.clockOffsetMs-STALE_GRACE_MS||lagMs>MAX_DELIVERY_LAG_MS)){log.info({message:message.message,lagMs},'忽略服务不可用期间发送、事后才送达的消息');return;}
-    if(message.text.trim()==='/whoami'){this.notice(message,`你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
-    if(!this.authorized(message)){this.notice(message,config.tenants.length?'当前企业或会话尚未开放机器人使用权限，请联系管理员。':`尚未获授权。请让管理员将你的 Open ID 加入 ALLOWED_USERS：${message.user}`);return;}
+    // Without this there is no way to learn what to put in the allowlist, so the refusal says who the user is.
+    if(!this.authorized(message)){this.notice(message,`尚未获授权，请联系管理员开通。\n你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(message.error){this.notice(message,message.error);return;}
-    if(message.text.trimStart().startsWith('/')&&!message.attachments?.length){await this.command(message);return;}
+    // The one thing the bot itself answers: Codex's own /new. Everything else, a slash included, is for Codex.
+    if(message.text.trim()==='/new'&&!message.attachments?.length){await this.newConversation(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
     // One input runs at a time. Anything sent while the user's previous input is still unfinished gets no result back, so it is not an input at all:
     // it is dropped without a reply and never queued. (A redelivered event of the message already running lands here too and is equally harmless.)
@@ -53,40 +55,18 @@ export class TaskService {
       instruction:message.text},resources,message.attachments);
     if(result.created)log.info({taskId:result.task.id},'任务已入队');
   }
-  private owned(message:IncomingMessage,id:string){
-    const t=this.store.get(id);
-    if(!t||t.tenant_key!==message.tenant||(t.user_id!==message.user&&!config.admins.includes(message.user)))throw Error('任务不存在或无权操作');
-    return t;
-  }
-  private async command(message:IncomingMessage){
-    const [command,id]=message.text.trim().split(/\s+/);
-    try{
-      if(command==='/help'){this.notice(message,HELP);return;}
-      if(command==='/tasks'){
-        const tasks=this.store.recent(message.tenant,message.user,10);
-        this.notice(message,tasks.length?tasks.map(t=>`${t.id} ${t.status}`).join('\n'):'暂无任务');return;
+  /** /new: forget the conversation. A task still running is stopped first, so this is also how a user gets going again when one hangs. */
+  private async newConversation(message:IncomingMessage){
+    const {tenant,user}=message,unfinished=this.store.unfinished(tenant,user);
+    for(const task of unfinished){
+      if(task.status!=='QUEUED'){
+        this.store.update(task.id,{cancel_requested:1});
+        if(this.interrupt(task))for(const until=Date.now()+this.stopWaitMs;this.runs.has(task.id)&&Date.now()<until;)await new Promise(r=>setTimeout(r,50));
       }
-      if(command==='/new'){
-        if(this.store.busy(message.tenant,message.user))throw Error('有任务正在执行，请等它结束，或先 /cancel');
-        this.notice(message,this.store.resetSession(message.tenant,message.user)?'已开始新的对话，之前的内容不再带入。':'还没有对话，直接发送任务即可。');return;
-      }
-      if(!['/status','/cancel'].includes(command)){this.notice(message,HELP);return;}
-      const task=this.owned(message,id);
-      if(command==='/status'){this.notice(message,`任务：${task.id}\n状态：${task.status}\n${task.error||task.result||task.progress||'等待执行'}`.slice(0,15000));return;}
-      if(terminal(task.status)||task.status==='QUEUED'){
-        if(task.status==='QUEUED')this.store.transition(task.id,'CANCELLED');
-        this.notice(message,'任务已结束或已取消。');return;
-      }
-      if(task.cancel_requested){
-        // Asked before and the Codex process is still there. Waiting longer helps nobody and would keep the user's queue blocked, so the task ends here.
-        this.store.transition(task.id,'CANCELLED',{error:'',progress:''});this.interrupt(task);
-        this.notice(message,'已强制结束任务。如果 Codex 仍在执行，它可能继续运行，结果不会再回传。');return;
-      }
-      this.store.update(task.id,{cancel_requested:1});
-      // A task nothing is running (a leftover) cannot answer, so it ends here.
-      if(!this.interrupt(task)){this.store.transition(task.id,'CANCELLED',{error:''});this.notice(message,'任务已取消。');return;}
-      this.notice(message,'已请求中断。若长时间没有结果，再发一次 /cancel 可强制结束。');
-    }catch(e){this.notice(message,safeError(e));}
+      // Ends it here if the process did not (a no-op for a task that has ended): the user's queue must not stay blocked.
+      this.store.transition(task.id,task.status==='QUEUED'?'CANCELLED':'INTERRUPTED',{error:''});
+    }
+    this.notice(message,this.store.resetSession(tenant,user)||unfinished.length?'已开始新的对话，之前的内容不再带入。':'还没有对话，直接发送任务即可。');
   }
   /** The user's workspace: Codex's working directory, where what it makes is delivered from, and where the attachments arrive. */
   private async prepare(task:Task){

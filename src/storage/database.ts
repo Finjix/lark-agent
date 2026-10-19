@@ -134,9 +134,10 @@ export class Store {
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
   /** Started but unfinished tasks. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would keep getting slower. */
   active():Task[]{return this.db.prepare("SELECT * FROM tasks WHERE status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at,rowid").all() as unknown as Task[];}
-  recent(tenant:string,user:string,limit:number):Task[]{return this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND user_id=? ORDER BY created_at DESC,rowid DESC LIMIT ?').all(tenant,user,limit) as unknown as Task[];}
   /** True while the user has a task that has not finished (queued, starting, running or waiting): their next input is not accepted until it ends. */
   busy(tenant:string,user:string):boolean {return !!this.db.prepare("SELECT 1 FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') LIMIT 1").get(tenant,user);}
+  /** The user's tasks that have not ended, queued or running. */
+  unfinished(tenant:string,user:string):Task[]{return this.db.prepare("SELECT * FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at,rowid").all(tenant,user) as unknown as Task[];}
   taskForMessage(tenant:string,messageId:string):Task|undefined{return this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(tenant,messageId) as Task|undefined;}
   create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[],attachments:IncomingAttachment[]=[]){
     return this.db.transaction(()=>{

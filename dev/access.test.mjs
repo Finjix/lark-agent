@@ -26,14 +26,11 @@ test('legacy user allowlist remains available and empty access configuration den
   const empty={tenants:[],users:[],admins:[],chats:[]};assert.equal(accessConfigured(empty),false);assert.equal(authorized(message(),empty),false);
 });
 
-test('new enterprise members can create tasks but still cannot view or cancel one another tasks',async()=>{
+test('new enterprise members can create tasks; anybody else is refused, and told who they are so an administrator can add them',async()=>{
   const store=new Store(':memory:'),service=new TaskService(store,new EventEmitter());service.authorized=m=>authorized(m,policy);
   await service.receive(message('first-member'));await service.receive(message('second-member'));
   assert.equal(store.list().length,2);
   const [first,second]=store.list();assert.notEqual(store.sessionFor(first).id,store.sessionFor(second).id);
-  await service.receive({...message('second-member'),message:'cancel-other',text:`/cancel ${first.id}`});
-  await service.receive({...message('second-member'),message:'read-other',text:`/status ${first.id}`});
-  assert.equal(store.get(first.id).status,'QUEUED');
-  const notices=store.due().filter(r=>r.kind==='NOTICE').map(r=>JSON.parse(r.payload).text);assert.equal(notices.length,2);assert(notices.every(text=>text.includes('无权')));
-  await service.receive(message('external-member','external-company'));assert.equal(store.list().length,2);store.close();
+  await service.receive(message('external-member','external-company'));assert.equal(store.list().length,2);
+  const [refusal]=store.due().filter(r=>r.kind==='NOTICE').map(r=>JSON.parse(r.payload).text);assert(refusal.includes('external-member')&&refusal.includes('external-company'));store.close();
 });

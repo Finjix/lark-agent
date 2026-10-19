@@ -35,13 +35,13 @@ test('deliveries only wait for the client to start, not for the long connection 
   fake.started=true;await delivery.tick();assert(raw>0);await delivery.stop();s.close();
 });
 
-test('active() returns only unfinished work, and recent() the newest tasks of one user',()=>{
+test('active() returns only unfinished work, and unfinished() the unfinished tasks of one user',()=>{
   const s=new Store(':memory:'),ids=[];
   for(let i=0;i<12;i++){const t=s.create(input('m'+i)).task;s.update(t.id,{created_at:1000+i});ids.push(t.id);}
   s.transition(ids[0],'RUNNING');s.transition(ids[1],'STARTING');s.transition(ids[2],'COMPLETED');s.transition(ids[3],'FAILED');
   assert.deepEqual(s.active().map(t=>t.id),[ids[0],ids[1]]);
   s.create(input('other','u2'));
-  assert.deepEqual(s.recent('t1','u1',10).map(t=>t.id),ids.slice(2).reverse());s.close();
+  assert.deepEqual(s.unfinished('t1','u1').map(t=>t.id),ids.filter((_,i)=>i!==2&&i!==3),'queued and running, not finished, not another user\'s');s.close();
 });
 
 test('a lock timeout on BEGIN does not leave later transactions half-nested',async()=>{

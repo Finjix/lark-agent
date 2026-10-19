@@ -189,34 +189,41 @@ test('a chat Codex no longer has is replaced before anything is sent, once; any 
   store.close();
 });
 
-test('/cancel stops the running Codex process; what it said stays; a second /cancel frees a stuck user',async()=>{
-  const {store,service}=setup(async function*(job){yield started('th');yield say('a','做了一点');await untilAborted(job.signal);});
+test('/new while a task runs stops its Codex process, keeps what it said, and starts a new chat; a process that will not stop does not hold the user',async()=>{
+  const {store,codex,service}=setup(async function*(job,n){yield started(`th-${n}`);yield say('a','做了一点');await untilAborted(job.signal);});
   const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});
   const running=service.start(store.get(task.id));await until(()=>store.get(task.id).progress==='做了一点');
-  const message=(text,id)=>({tenant:'t',user:'u1',chat:'c',message:id,text});
-  await service.receive(message(`/cancel ${task.id}`,'c1'));await running;
+  const message=(text,id,user='u1')=>({tenant:'t',user,chat:'c',message:id,text});
+  const old=store.session(store.get(task.id).session_id);
+  await service.receive(message('/new','c1'));await running;
   const after=store.get(task.id);assert.equal(after.status,'INTERRUPTED');assert.equal(after.progress,'做了一点');assert.equal(after.cancel_requested,1);
-  assert(notices(store).at(-1).includes('已请求中断'));assert.equal(store.busy('t','u1'),false,'the next input is accepted');
-  // A process that ignores the abort: the second /cancel ends the task anyway.
-  const stuck=setup(async function*(){yield started('th');await new Promise(()=>{});});
+  assert.match(notices(store).at(-1),/新的对话/);assert.equal(store.busy('t','u1'),false,'the next input is accepted');assert(store.session(old.id).retired_at,'and it starts a new chat');
+  // A process that ignores the abort: /new ends the task anyway, once it has waited a moment.
+  const stuck=setup(async function*(){yield started('th');await new Promise(()=>{});});stuck.service.stopWaitMs=30;
   const t2=stuck.store.create(input()).task;stuck.store.transition(t2.id,'STARTING',{started_at:Date.now()});void stuck.service.start(stuck.store.get(t2.id));await until(()=>stuck.store.get(t2.id).status==='RUNNING');
-  const m2=(text,id)=>({tenant:'t',user:'u1',chat:'c',message:id,text});
-  await stuck.service.receive(m2(`/cancel ${t2.id}`,'c1'));assert.equal(stuck.store.get(t2.id).status,'RUNNING','the first /cancel only asks');
-  await stuck.service.receive(m2(`/cancel ${t2.id}`,'c2'));assert.equal(stuck.store.get(t2.id).status,'CANCELLED');assert.equal(stuck.store.busy('t','u1'),false);assert(notices(stuck.store).at(-1).includes('强制结束'));
-  await stuck.service.receive(m2(`/cancel ${t2.id}`,'c3'));assert(notices(stuck.store).at(-1).includes('已结束'),'cancelling a finished task is harmless');
+  await stuck.service.receive(message('/new','c1'));assert.equal(stuck.store.get(t2.id).status,'INTERRUPTED');assert.equal(stuck.store.busy('t','u1'),false);
   store.close();stuck.store.close();
 });
-test('a task cancelled before Codex was started is cancelled, not interrupted; a queued one just ends; a leftover nobody runs is ended',async()=>{
+test('a task cancelled before Codex was started is cancelled, not interrupted; /new ends a queued one and a leftover nobody runs',async()=>{
   const {store,codex,service}=setup(async function*(){yield started('th');yield completed;});
   const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});store.update(task.id,{cancel_requested:1});
   await service.start(store.get(task.id));assert.equal(store.get(task.id).status,'CANCELLED');assert.equal(codex.jobs.length,0);
   const queued=store.create(input('m2','u2')).task,leftover=store.create(input('m3','u3')).task;store.transition(leftover.id,'RUNNING');
   const message=(text,id,user)=>({tenant:'t',user,chat:'c',message:id,text});
-  await service.receive(message(`/cancel ${queued.id}`,'x1','u2'));assert.equal(store.get(queued.id).status,'CANCELLED');
-  await service.receive(message(`/cancel ${leftover.id}`,'x2','u3'));assert.equal(store.get(leftover.id).status,'CANCELLED','nothing runs it, so nothing can answer');
+  await service.receive(message('/new','x1','u2'));assert.equal(store.get(queued.id).status,'CANCELLED');
+  await service.receive(message('/new','x2','u3'));assert.equal(store.get(leftover.id).status,'INTERRUPTED','nothing runs it, so nothing can answer');
+  assert(!store.busy('t','u2')&&!store.busy('t','u3'));store.close();
+});
+test('the bot answers /new and nothing else: other slashes are the user\'s words for Codex',async()=>{
+  const {store,codex,service}=setup(async function*(){yield started('th');yield completed;});
+  const say_=(text,id,user)=>service.receive({tenant:'t',user,chat:'c',message:id,text});
+  for(const [i,text] of ['/help','/status 123','/whoami','/etc/hosts 这是什么'].entries())await say_(text,'s'+i,'u'+i);
+  assert.deepEqual(store.list().map(t=>t.instruction),['/help','/status 123','/whoami','/etc/hosts 这是什么'],'each is a task');assert.equal(notices(store).length,0,'and the bot says nothing of its own');
+  await say_('/new 帮我做点事','n1','u9');assert.equal(store.list().length,5,'only the exact /new is the command');
+  await say_('/new','n2','u10');assert.match(notices(store).at(-1),/还没有对话/);
   store.close();
 });
-test('the task timeout stops the run through the same path as /cancel',async()=>{
+test('the task timeout stops the run, as /new does',async()=>{
   const {store,service}=setup(async function*(job){yield started('th');await untilAborted(job.signal);});
   const saved=config.TASK_TIMEOUT_MS;config.TASK_TIMEOUT_MS=50;
   try{
@@ -252,13 +259,11 @@ test('a restart finishes what was running as failed, cancels what was only queue
   assert.equal(store.active().length,0);store.close();
 });
 
-test('/new forgets the conversation: the next task starts a new chat, in the same workspace; it is refused while a task runs',async()=>{
+test('/new forgets the conversation: the next task starts a new chat, in the same workspace',async()=>{
   const {store,codex,service,run}=setup(async function*(job,n){yield started(`th-${n}`);yield say('a','ok');yield completed;});
   const message=(text,id)=>({tenant:'t',user:'u1',chat:'c',message:id,text});
   await service.receive(message('/new','n0'));assert.match(notices(store).at(-1),/还没有对话/);
   const first=await run('m1');const old=store.session(first.session_id);
-  const busy=store.create(input('m-busy')).task;await service.receive(message('/new','n1'));assert.match(notices(store).at(-1),/有任务正在执行/);assert.equal(store.session(old.id).retired_at,null);
-  store.transition(busy.id,'CANCELLED');
   await service.receive(message('/new','n2'));assert.match(notices(store).at(-1),/新的对话/);assert(store.session(old.id).retired_at);
   const next=await run('m2');assert.equal(codex.jobs.at(-1).threadId,null);assert.notEqual(next.session_id,old.id);assert.equal(store.session(next.session_id).workspace_path,old.workspace_path);
   assert.equal(store.session(old.id).thread_id,'th-1','the old chat is only set aside');store.close();

@@ -133,7 +133,7 @@ test('only one input runs at a time: anything sent while the previous one is unf
   await service.receive(message('other-user','u2'));assert.equal(store.list().length,2,'another user is not affected');
   store.transition(store.list()[0].id,'RUNNING',{started_at:Date.now()});await service.receive(message('while-running'));assert.equal(store.list().length,2,'still dropped while running');
   store.transition(store.list()[0].id,'COMPLETED');await service.receive(message('after'));assert.equal(store.list().length,3,'accepted again once the result is back');
-  await service.receive({...message('cmd'),text:'/tasks'});assert(notices(store).length>0,'commands still work while a task runs');
+  await service.receive({...message('cmd'),text:'/new'});assert(notices(store).length>0,'/new works while a task runs');assert.equal(store.busy('t','u1'),false);
   store.close();
 });
 
