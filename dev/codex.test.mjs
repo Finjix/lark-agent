@@ -346,3 +346,12 @@ test('a running task keeps its steps on the task, and they are what the card is 
   assert.equal(store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get('view:'+task.id).status,'PENDING');
   release();await running;const done=store.get(task.id);assert.deepEqual(JSON.parse(done.steps).map(x=>[x.type,x.status??'']),[['command','done'],['message','']]);assert.equal(done.result,'好了');store.close();
 });
+
+test('every turn is handed the user it is for: their own folder (not the workspace in it) and their Open ID',async()=>{
+  const {codex,store,run}=setup(async function*(){yield started('th');yield turnStarted;yield say('a','好');yield completed;});
+  const task=await run('m1','ou_alice'),job=codex.jobs[0],session=store.session(task.session_id);
+  assert.equal(job.user.openId,'ou_alice');
+  assert.equal(job.user.dir,path.dirname(session.workspace_path),'user/<name>, the parent of workspace/');
+  assert(path.isAbsolute(job.user.dir)&&job.user.dir.startsWith(config.user));
+  await run('m2','ou_bob');assert.notEqual(codex.jobs[1].user.dir,job.user.dir,'another user, another folder');assert.equal(codex.jobs[1].user.openId,'ou_bob');
+});

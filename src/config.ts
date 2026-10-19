@@ -22,6 +22,8 @@ export const config = {
   RETENTION_DAYS:int('RETENTION_DAYS',7,1),
   root, database: path.resolve(root,text('DATABASE_PATH','./data/agent.sqlite')),
   data:path.join(root,'data'), user:path.join(root,'user'), codexHome:path.join(root,'.codex'),
+  // Plugins are dropped here as folders (see plugins.ts).
+  plugins:path.join(root,'plugins'),
   users:list(text('ALLOWED_USERS')), admins:list(text('ADMIN_USERS')), chats:list(text('ALLOWED_CHATS')), tenants:list(text('ALLOWED_TENANTS')),
   resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
 };

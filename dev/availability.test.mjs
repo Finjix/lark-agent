@@ -95,7 +95,7 @@ test('every unavailable case tells the user the same one sentence, and nothing a
   codex.run=async function*(){throw Error('Codex Exec exited with code 1: 401 Unauthorized');};
   await service.receive(message('m1'));const [task]=store.list();
   store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
-  assert.equal(store.get(task.id).error,BOT_DOWN);assert(!JSON.stringify(store.get(task.id)).includes('401'),'the cause is for the log');
+  assert.equal(store.get(task.id).error,BOT_DOWN);assert(!JSON.stringify(store.get(task.id)).includes('Unauthorized'),'the cause is for the log');
   codex.ready=false;await service.receive(message('m2','u2'));assert.equal(notices(store).at(-1).text,BOT_DOWN);
   store.close();
 });

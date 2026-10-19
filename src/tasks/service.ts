@@ -6,7 +6,7 @@ import {CodexRunner} from '../codex/runner.js';
 import {Turn} from '../codex/turn.js';
 import {codexInput} from '../codex/input.js';
 import {generatedImages} from '../feishu/images.js';
-import {userWorkspace} from '../layout.js';
+import {userWorkspace,userDirectory} from '../layout.js';
 import {config} from '../config.js';
 import {terminal,BOT_DOWN,type Task,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
@@ -115,7 +115,9 @@ export class TaskService {
     let threadId=session.thread_id,received=false;
     for(let renewed=false;;){
       try{
-        for await(const event of this.codex.run({threadId,cwd:folder,input,signal})){received=true;this.onEvent(task,session,turn,event);}
+        // The user's own folder (not the workspace in it) and Open ID are what plugins serve this turn with.
+        const user={dir:userDirectory(this.store,session),openId:session.user_id};
+        for await(const event of this.codex.run({threadId,cwd:folder,input,signal,user})){received=true;this.onEvent(task,session,turn,event);}
         break;
       }catch(e){
         // After a failed turn the process exits with an error code, which the SDK throws; the turn's own report is what counts.

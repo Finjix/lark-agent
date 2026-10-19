@@ -5,7 +5,8 @@ import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {config,ensureDirectories,restrictSecret} from './config.js';
 import {log,safeError} from './log.js';
 import {Store} from './storage/database.js';
-import {CodexRunner,codexCli} from './codex/runner.js';
+import {CodexRunner,codexCli,codexOutput} from './codex/runner.js';
+import {syncPlugins,inspectPlugins,type Skipped} from './plugins.js';
 import {FeishuClient} from './feishu/client.js';
 import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
@@ -37,10 +38,12 @@ async function main(){
     const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
       sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
     await codex.probe();
+    // What `start` would do with each folder in plugins/ (nothing is installed or changed here).
+    checks.plugins=await inspectPlugins().catch(e=>[{folder:'',state:'invalid',reason:safeError(e)}]);
     checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,login:config.CODEX_API_KEY?'API key（.env）':'codex login',model:config.CODEX_MODEL||'（Codex 默认）',...(codex.error?{error:codex.error}:{})};
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     store.close();console.log(JSON.stringify(checks,null,2));
-    if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured())process.exitCode=1;return;
+    if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured()||checks.plugins.some((p:any)=>p.state==='invalid'))process.exitCode=1;return;
   }
   if(action!=='start')throw Error('支持命令：start、codex、doctor、stop、backup、retry-delivery');
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
@@ -51,6 +54,7 @@ async function main(){
   const halt=new AbortController();let sweeping:Promise<void>=Promise.resolve();
   const housekeep=()=>{sweeping=housekeeping(store,halt.signal);};
   let feishuStarted=false,lastFeishuAttempt=0,lastCodexProbe=0,lastCodexError='',lastClockSync=0;
+  let pluginsSkipped:Skipped[]=[];
   const token=randomBytes(32).toString('hex'),feishu=new FeishuClient();
   const service=new TaskService(store,codex,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
   const server=http.createServer((request,response)=>{
@@ -63,7 +67,7 @@ async function main(){
     }
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
     const ready=codex.ready&&feishu.connected&&accessConfigured();
-    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},codex:{ready:codex.ready,version:codex.version,error:codex.error},feishu:{connected:feishu.connected,state:feishu.state,error:feishu.lastError},...store.stats()}));
+    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},codex:{ready:codex.ready,version:codex.version,error:codex.error},plugins:{loaded:codex.plugins.map(p=>({name:p.name,version:p.version})),skipped:pluginsSkipped},feishu:{connected:feishu.connected,state:feishu.state,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);halt.abort();server.close();
@@ -82,6 +86,9 @@ async function main(){
   const leftovers=store.discardLeftovers();if(leftovers.cancelled||leftovers.dropped||leftovers.interrupted)log.info(leftovers,'已作废上次运行遗留的任务和未送达消息');
   // The first round runs before anything can start: no task is running yet, so nothing is skipped.
   housekeep();await sweeping;
+  // What was dropped into plugins/ is installed before any task can run, so every turn has it. A plugin that fails is reported and left out; the bot runs without it.
+  const loaded=await syncPlugins(codexOutput);codex.plugins=loaded.plugins;pluginsSkipped=loaded.skipped;
+  if(loaded.plugins.length)log.info({plugins:loaded.plugins.map(p=>`${p.name}@${p.version}`)},'插件已就绪');
   scheduler.start();delivery.start();
   let polling=false;
   const reconnect=async()=>{

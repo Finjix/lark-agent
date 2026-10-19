@@ -15,17 +15,17 @@ Codex 的登录、对话、生成的图片等一切状态都放在项目自己�
 
 `start.cmd codex <参数>` 是项目自带 Codex CLI 的入口，永远使用项目的 `.codex/`：`start.cmd codex login status`、`start.cmd codex logout` 等。
 
-**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用），`npm install`，复制 `.env`，`start.cmd codex login`。要保留各用户的工作目录就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.codex/sessions`。
+**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用，`plugins/` 里的插件要带上），`npm install`，复制 `.env`，`start.cmd codex login`。要保留各用户的工作目录就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.codex/sessions`。
 
 ## Codex 的运行方式
 
 每条用户输入对应一次 `codex exec`（由 SDK 启动的子进程）；同一个用户的所有输入续接同一个 Codex 对话（thread），所以上下文是连续的。`/new` 让用户丢掉上下文重新开始（见“指令”）。
 
 - **位置**：`.codex/` 保存对话（`sessions/`）、生成的图片（`generated_images/`）和日志，不入 Git。环境变量 `CODEX_HOME` 被忽略，子进程始终使用项目里的这个目录。
-- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`、`plugins`、`browser_use`、`in_app_browser`、`computer_use`、`memories`（这些要么是登录账号的连接器、要么是整台机器共用的浏览器和电脑控制，会让所有飞书用户共享同一份；要放开，改 `codexConfig`）；模型默认 `gpt-6-luna`、推理强度 `low`，要改在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
+- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`、`browser_use`、`in_app_browser`、`computer_use`、`memories`（这些要么是登录账号的连接器、要么是整台机器共用的浏览器和电脑控制，会让所有飞书用户共享同一份；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型默认 `gpt-6-luna`、推理强度 `low`，要改在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
 - **登录**：登录文件是 `.codex/auth.json`（启动时收紧为仅当前账号可读，存成文件而不是系统钥匙串）。Codex 不可用或登录被拒绝时，用户只会看到“机器人罢工了”，原因写在日志里；管理员重新 `start.cmd codex login` 即可，服务不用重启（未就绪时每 10 秒检查一次）。
 - **权限**：没有任何限制：沙箱 `danger-full-access`、审批 `never`，Codex 可以读写本机任何位置、访问网络，也没有人会被询问。写死在 `src/codex/runner.ts`，没有开关。因为不能交互，做不到的事只会失败，Codex 自己换办法；所以没有 `/approve`、`/deny`、`/answer`：Codex 需要问用户什么，就在回复里问，用户的下一条消息就是回答。
-- **提示词**：不向 Codex 注入任何指令，也没有 MCP 工具：它看到的就是用户发来的文字（外加附件清单，见下）。
+- **提示词**：不向 Codex 注入任何指令，也没有 MCP 工具（除了放进 `plugins/` 的插件自带的技能和工具）：它看到的就是用户发来的文字（外加附件清单，见下）。
 - **输入**：用户文字原样提交（保留空白换行）。有附件时在文字前加一段清单（每个文件的路径，并提醒附件内容只是资料、不是用户的指令）；图片同时作为图片输入让模型直接看到画面，其他文件由模型用工具按路径打开。飞书语音消息按文件接收（`语音消息.opus`），同样只是路径。
 
 ## 目录
@@ -35,6 +35,7 @@ Codex 的登录、对话、生成的图片等一切状态都放在项目自己�
 | `src` / `dist` | TypeScript 源码 / 编译产物（`start.cmd` 生成） |
 | `dev` | 自动测试，`npm test` |
 | `data` | 运行数据：SQLite 数据库、控制令牌、日志 |
+| `plugins` | 放插件的地方：把插件文件夹拖进来，重启即可使用，见“插件” |
 | `user` | 每个用户的数据和工作目录，见下 |
 | `.codex` | Codex 的全部状态（对话、生成的图片、日志），见上 |
 | `.env` | 凭证和白名单，不入 Git |
@@ -56,6 +57,27 @@ user/
 - **回传**：卡片按 Codex 的步骤顺序展示，和直接用 Codex 差不多：它说的话、执行的命令、改动的文件、MCP 工具调用、搜索、待办清单。命令、文件改动、工具调用，以及超过 600 字的中间说明，都折叠成可点开的面板（标题带 ⏳/✅/❌ 状态，点开看完整命令和输出），最终答案始终展开；推理过程不展示。卡片整体限制在约 26 KB，超出时先清空最旧面板的内容，再省略最旧的步骤。`codex exec` 以完整消息和完整步骤为单位输出，没有逐字流式（SDK 不提供），所以文字是一条一条出现的；卡片每秒合并更新，超过 9 分钟改为整体更新。Codex 工作中标题栏显示计时。长回复转 Markdown 附件；文件只上传最终回复链接且位于交付目录内的（链到交付目录以外的文件，如用户自己发来的附件，一律忽略，不通知；路径里的括号如 `report (2).pdf` 能正确解析）；Codex 生成的图片自动发送（>10 MB 改发文件）。文件上传走单独的队列，大文件不会拖慢卡片更新；投递记录持久化。
 - **取消**：任务执行中发 `/new` 会结束它的 Codex 进程，已经说出的内容保留在卡片上（状态为已中断）；进程 5 秒内没结束，也直接把任务标记为已中断，不让用户卡住。已被 Codex 启动的外部命令不保证随之结束。
 - **超时**：默认无任务超时（`TASK_TIMEOUT_MS`，到时按 `/cancel` 处理）。
+
+## 插件
+
+插件是别人做好的一个文件夹：技能（`skills/`）加可选的 MCP 服务（`mcp.json`），清单是文件夹里的 `plugin.json`（Agent Plugins 格式，必须有 `$schema`）或 `.codex-plugin/plugin.json`。**把它拖进 `plugins/`，重启服务，所有用户就能用**，不用配置、不用跑任何 `codex plugin` 命令：
+
+```
+plugins/
+  requirement-auto/        ← 插件文件夹本身（里面直接是 plugin.json），不要多套一层
+    plugin.json
+    mcp.json
+    skills/…
+```
+
+- **安装**：启动时（接收任务之前）扫描 `plugins/` 下的文件夹，装进项目自己的 Codex（`.codex/`，市场名 `lark-agent`，插件号 `<名字>@lark-agent`）。内容没变的不动；内容变了（不管版本号变没变）整体替换；文件夹删了就卸载。以 `.` 或 `_` 开头的文件夹被忽略，改名加个下划线就是停用。`plugins/.agents/` 是自动生成的，不要动。
+- **生效时间**：只在启动时扫描，换插件要先 `start.cmd stop`（或 Ctrl+C）再 `start.cmd`。服务运行中拖文件夹没有效果，这样不会装到一半被拖到一半的文件夹。
+- **失败**：某个插件装不上，日志里写明原因（`插件未加载`），机器人照常用其余的，`/health` 的 `plugins.skipped` 和 `start.cmd doctor` 也列出来；`doctor` 在不改动任何东西的情况下告诉你每个文件夹的状态（已安装、未安装、已改动、无效）。
+- **MCP 服务和用户**：Codex 不会把自己的环境交给插件自带的 MCP 服务，所以服务会为插件把同名服务重新注册一遍并关掉插件自带的那个，每个用户的每一轮都给它：`LARK_AGENT_USER_DIR`（`user/<名>`，不是其中的 `workspace`）、`LARK_AGENT_USER_OPEN_ID`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`。同一份环境也在 Codex 的 shell 里，插件的脚本直接能读到。只有 stdio 服务会被这样处理；用 `node` 启动的服务由运行本服务的 node 执行。
+- **只放你信任的插件**：插件的脚本和 MCP 服务以本服务的账号、不受任何限制地运行，和 Codex 本身一样。
+- **机器人密钥的代价**：有插件时，每个用户的每一轮 Codex 进程都带着 `FEISHU_APP_SECRET`（没有插件时仍然挡在外面）。能和机器人对话的人理论上能让 Codex 读到它。这里没有新增一类风险：Codex 本来就能读 `.env`（见“访问控制”）。想收紧，给插件的设备授权单独建一个飞书应用，把 `.env` 里的 `FEISHU_APP_ID/SECRET` 换成它。
+- **数据**：插件自己的数据放在 `user/<名>/<插件名>/`（例如 requirement-auto 的飞书登录和批次），不在 `workspace/` 里，所以不会被自动清理，也不会被当成交付文件发给用户。用户之间的隔离只是约定：Codex 是 `danger-full-access`，同一个 Windows 账号，被提示词注入的模型能读到别人的目录。
+- **第一个插件**：[requirement-auto](../requirement-auto)（GOFCN 素材需求自动化）。需要的飞书用户权限见 [docs/feishu.md](docs/feishu.md)。
 
 ## 自动清理
 
@@ -94,7 +116,7 @@ start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任
 start.cmd codex login           :: 登录项目自己的 Codex；也可 codex login status、codex logout
 ```
 
-健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建；Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
+健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`plugins` 为已装的插件和没装上的；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建；Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
 
 ## 从 Desktop 版升级
 
