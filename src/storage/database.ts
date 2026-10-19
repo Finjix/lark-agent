@@ -50,6 +50,7 @@ export class Store {
         CREATE TABLE IF NOT EXISTS user_dirs (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,name TEXT NOT NULL UNIQUE COLLATE NOCASE,created_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
       `);
       if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
+      if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='steps'))this.db.exec("ALTER TABLE tasks ADD COLUMN steps TEXT NOT NULL DEFAULT '[]'");
       if(!(this.db.prepare('PRAGMA table_info(task_artifacts)').all() as any[]).some(c=>c.name==='kind'))this.db.exec("ALTER TABLE task_artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'");
       // Older databases keep sessions in an earlier shape (a UNIQUE user, chat titles for Desktop); rebuild into the current one and carry the common columns over.
       const have=(this.db.prepare('PRAGMA table_info(user_sessions)').all() as any[]).map(c=>c.name as string);

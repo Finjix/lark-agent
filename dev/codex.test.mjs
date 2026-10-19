@@ -8,7 +8,8 @@ import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
 import {Scheduler} from '../dist/tasks/scheduler.js';
-import {Turn} from '../dist/codex/turn.js';
+import {Turn,plainCommand} from '../dist/codex/turn.js';
+import {cardJson,cardElements,renderTask} from '../dist/feishu/cards.js';
 import {codexInput} from '../dist/codex/input.js';
 import {CodexRunner,codexEnv,codexConfig,threadOptions} from '../dist/codex/runner.js';
 import {BOT_DOWN} from '../dist/types.js';
@@ -43,13 +44,15 @@ test('while a turn runs every message is progress; when it completes the last on
   const turn=new Turn();
   assert.equal(turn.apply(started('th')),false);assert.equal(turn.threadId,'th');assert.equal(turn.apply(turnStarted),false);
   assert.equal(turn.apply(say('a','先看看文件')),true);assert.equal(turn.apply(say('a','先看看文件')),false,'the same message again changes nothing');
-  assert.equal(turn.apply({type:'item.started',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'PRIVATE',status:'in_progress'}}),false,'tool calls and their output are not shown');
+  assert.equal(turn.apply({type:'item.started',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'',status:'in_progress'}}),true,'a command that starts is a step of its own');
+  assert.equal(turn.apply({type:'item.started',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'',status:'in_progress'}}),false);
   assert.equal(turn.apply({type:'item.completed',item:{id:'r',type:'reasoning',text:'SECRET_REASONING'}}),false);
   turn.apply(say('b','文件在这里'));
   assert.deepEqual([turn.progress,turn.answer,turn.state],['先看看文件\n\n文件在这里','','running']);
   turn.apply(completed);
   assert.deepEqual([turn.progress,turn.answer,turn.state,turn.error],['先看看文件','文件在这里','completed','']);
-  assert(!JSON.stringify([turn.progress,turn.answer]).includes('PRIVATE')&&!JSON.stringify([turn.progress,turn.answer]).includes('SECRET'));
+  assert(!JSON.stringify(turn.steps).includes('SECRET'),'reasoning is not shown');
+  assert.deepEqual(turn.steps.map(x=>x.type),['message','command','message'],'in the order Codex took them');assert.equal(turn.progress.includes('dir'),false,'a command is not part of the text');
 });
 test('Codex\'s own reconnect notices are not failures; a failed turn keeps what was said and reports why',()=>{
   const turn=new Turn();turn.apply(say('a','做到一半'));
@@ -300,3 +303,46 @@ test('the images Codex generated while the task ran are found in its chat\'s fol
   }finally{config.codexHome=saved;await fs.rm(home,{recursive:true,force:true});}
 });
 
+
+// ---- the steps of a turn on a card
+test('commands, file changes, tools, searches and plans become steps, the shell wrapper is dropped, and a step is updated in place',()=>{
+  const turn=new Turn(),command=(status,output='',exit)=>({type:'item.'+(status==='in_progress'?'started':'completed'),item:{id:'c1',type:'command_execution',command:'"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-ChildItem -Force"',aggregated_output:output,status,exit_code:exit}});
+  turn.apply(command('in_progress'));assert.deepEqual(turn.steps[0],{id:'c1',type:'command',command:'Get-ChildItem -Force',output:'',status:'running'});
+  turn.apply(command('completed','a.txt',0));assert.equal(turn.steps.length,1,'the same command, finished');assert.deepEqual([turn.steps[0].status,turn.steps[0].exit,turn.steps[0].output],['done',0,'a.txt']);
+  turn.apply({type:'item.completed',item:{id:'c2',type:'command_execution',command:'false',aggregated_output:'',status:'completed',exit_code:1}});assert.equal(turn.steps[1].status,'failed','a non-zero exit is a failure even when Codex ran it');
+  turn.apply({type:'item.completed',item:{id:'f',type:'file_change',status:'completed',changes:[{path:'a.txt',kind:'add'}]}});
+  turn.apply({type:'item.completed',item:{id:'t',type:'mcp_tool_call',server:'docs',tool:'find',arguments:{q:'x'},status:'completed',result:{content:[{type:'text',text:'found'},{type:'image'}]}}});
+  turn.apply({type:'item.completed',item:{id:'w',type:'web_search',query:'番薯'}});turn.apply({type:'item.updated',item:{id:'p',type:'todo_list',items:[{text:'a',completed:false}]}});
+  assert.deepEqual(turn.steps.slice(2).map(x=>x.type),['files','tool','search','todo']);assert.equal(turn.steps[3].result,'found\n[image]');
+  const long=new Turn();long.apply({type:'item.completed',item:{id:'l',type:'command_execution',command:'x',aggregated_output:'a'.repeat(10000)+'END',status:'completed',exit_code:0}});
+  assert(long.steps[0].output.length<3100&&long.steps[0].output.endsWith('END'),'the end of a long output is what is kept');
+  assert.equal(plainCommand('git status'),'git status');assert.equal(plainCommand('pwsh -NoProfile -Command "ls"'),'ls');
+});
+test('the card lists the steps as Codex took them: tool calls fold away, long notes fold, the answer stays open, and the whole card fits',()=>{
+  const steps=[{id:'1',type:'message',text:'先看一下。'},{id:'2',type:'command',command:'dir',output:'a.txt',status:'done',exit:0},{id:'3',type:'message',text:'长'.repeat(700)},
+    {id:'4',type:'files',changes:[{path:'D:/w/a.txt',kind:'add'}],status:'done'},{id:'5',type:'message',text:'这是最终答案'}];
+  const task={status:'COMPLETED',progress:'',result:'这是最终答案',error:'',steps:JSON.stringify(steps),workspace_path:'D:/w',started_at:1,created_at:1};
+  const tags=cardElements(task,renderTask(task)).map(e=>e.tag+(e.tag==='collapsible_panel'?':'+[...e.header.title.content].slice(0,5).join(''):''));
+  assert.deepEqual(tags,['markdown','collapsible_panel:✅ dir','collapsible_panel:💬 长长长','collapsible_panel:✅ 修改了','markdown']);
+  const elements=cardElements(task,'');assert.equal(elements.at(-1).content,'这是最终答案');assert(elements[1].elements[0].content.includes('$ dir')&&elements[1].elements[0].content.includes('a.txt'));
+  assert(elements[3].elements[0].content.includes('`a.txt`')&&elements[3].elements[0].content.includes('新增'),'paths are shown relative to the workspace');
+  assert.equal(elements.every(e=>e.expanded!==true),true,'folded by default');
+  const failed={...task,status:'FAILED',error:'出错了'};assert.equal(cardElements(failed,'').at(-1).content,'出错了\n\n执行失败');
+  // A card with no steps (an older task, or one that never started) is the plain text it always was.
+  assert.deepEqual(cardElements({...task,steps:'[]'},'正文'),[{tag:'markdown',element_id:'task_content',content:'正文'}]);assert.equal(cardElements({...task,steps:undefined},'x')[0].element_id,'task_content');assert.equal(cardElements({...task,steps:'not json'},'x')[0].element_id,'task_content');
+  // The whole card has to fit in what Feishu accepts: the oldest panels give up their contents first, then the oldest steps go.
+  const many=Array.from({length:80},(_,i)=>({id:'c'+i,type:'command',command:'cmd '+i,output:'x'.repeat(3000),status:'done',exit:0})).concat([{id:'m',type:'message',text:'完成'}]);
+  const big=cardJson({...task,steps:JSON.stringify(many)},'完成',false);assert(Buffer.byteLength(JSON.stringify(big))<28000);
+  const body=big.body.elements;assert.equal(body.at(-1).content,'完成','the answer is never what gets dropped');assert(JSON.stringify(body).includes('内容已省略')||JSON.stringify(body).includes('已省略'));
+  const header=cardJson({...task,status:'RUNNING',started_at:Date.now()-3000},'',true);assert.match(header.header.title.content,/^番薯搬砖中\.\.\.\.\.\. \d+s$/,'the working header stays');
+});
+test('a running task keeps its steps on the task, and they are what the card is made from',async()=>{
+  let release;const gate=new Promise(r=>release=r);
+  const {store,service}=setup(async function*(){yield started('th');yield {type:'item.started',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'',status:'in_progress'}};await gate;
+    yield {type:'item.completed',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'a.txt',status:'completed',exit_code:0}};yield say('m','好了');yield completed;});
+  const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});const running=service.start(store.get(task.id));
+  await until(()=>JSON.parse(store.get(task.id).steps).length===1);
+  assert.equal(JSON.parse(store.get(task.id).steps)[0].status,'running');assert.equal(store.get(task.id).progress,'','no text yet, but the card shows the command');
+  assert.equal(store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get('view:'+task.id).status,'PENDING');
+  release();await running;const done=store.get(task.id);assert.deepEqual(JSON.parse(done.steps).map(x=>[x.type,x.status??'']),[['command','done'],['message','']]);assert.equal(done.result,'好了');store.close();
+});

@@ -143,8 +143,9 @@ export class TaskService {
     const changed=turn.apply(event);
     if(this.store.get(task.id)?.status==='STARTING')this.store.transition(task.id,'RUNNING');
     // The end of the turn is handled by finish, together with the images it made.
-    if(changed&&turn.state==='running'&&this.store.get(task.id)!.progress!==turn.progress){
-      this.store.update(task.id,{progress:turn.progress});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
+    const steps=JSON.stringify(turn.steps);
+    if(changed&&turn.state==='running'&&this.store.get(task.id)!.steps!==steps){
+      this.store.update(task.id,{progress:turn.progress,steps});this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
     }
   }
   /** Ends the task. The images Codex generated during it are recorded first: the final transition is what delivers them. */
@@ -154,7 +155,7 @@ export class TaskService {
       try{this.store.recordImages(task.id,await generatedImages(threadId,task.started_at??task.created_at));}
       catch(e){log.warn({taskId:task.id,error:safeError(e)},'读取生成的图片失败');}
     }
-    this.store.transition(task.id,status,{result:turn?.answer??'',progress:turn?.progress??'',error});
+    this.store.transition(task.id,status,{result:turn?.answer??'',progress:turn?.progress??'',...(turn?{steps:JSON.stringify(turn.steps)}:{}),error});
     log.info({taskId:task.id,status},'任务结束');
   }
   /** Stops the task's Codex process; false when nothing is running it. */

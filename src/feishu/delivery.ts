@@ -155,7 +155,7 @@ export class Delivery {
       await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,false,now))},sequence,uuid:`u_${task.id}_${sequence}`}));
     }else{
       const {sequence}=this.store.nextSequence(task.id);
-      try{await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}/elements/task_content/content`,{content,sequence,uuid:`c_${task.id}_${sequence}`}));}
+      try{await this.api(()=>this.feishu.raw('PUT',`/open-apis/cardkit/v1/cards/${message.card_id}`,{card:{type:'card_json',data:JSON.stringify(cardJson(task,content,true,now))},sequence,uuid:`c_${task.id}_${sequence}`}));}
       catch(e){if(e instanceof FeishuError&&/stream|流式/i.test(e.message)){this.store.db.prepare('UPDATE task_messages SET finalized=1 WHERE task_id=?').run(task.id);}throw e;}
       if(closeStream){
         const {sequence}=this.store.nextSequence(task.id);
