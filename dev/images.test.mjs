@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
-import {Database} from '../dist/storage/sqlite.js';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
 import {Delivery} from '../dist/feishu/delivery.js';
@@ -96,11 +95,9 @@ test('saved images over 10 MB use file delivery and remain within the 30 MB atta
   }finally{await delivery.stop();store.close();}
 }));
 
-test('v3 migration preserves file artifacts while adding image metadata and image upload uses the SDK image endpoint',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-image-migration-')),file=path.join(root,'agent.sqlite');let store=new Store(file);
-  const task=store.create(input).task;store.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,file_key) VALUES(?,?,?,?,?,?)').run('artifact',task.id,'file.txt','file.txt',4,'file-key');store.close();
-  const db=new Database(file);db.exec('DROP TABLE task_generated_images; ALTER TABLE task_artifacts DROP COLUMN kind; PRAGMA user_version=3');db.close();
-  store=new Store(file);assert.equal(store.db.prepare('SELECT kind,file_key FROM task_artifacts').get().kind,'file');assert.equal(store.db.prepare('SELECT file_key FROM task_artifacts').get().file_key,'file-key');assert.deepEqual(store.images(task.id),[]);store.close();
+test('image upload uses the SDK image endpoint, and a task without images has none',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-image-upload-')),store=new Store(':memory:');
+  const task=store.create(input).task;assert.deepEqual(store.images(task.id),[]);store.close();
   const client=new FeishuClient({appId:'cli_offline_test',appSecret:'offline-test-placeholder'}),source=path.join(root,'image.png');await fs.writeFile(source,png);let received;
   client.sdk.im.image.create=async({data})=>{received={type:data.image_type,bytes:Buffer.concat(await Array.fromAsync(data.image))};return {code:0,data:{image_key:'img-test'}};};
   assert.deepEqual(await client.uploadImage(source),{image_key:'img-test'});assert.deepEqual(received,{type:'message',bytes:png});client.close();await fs.rm(root,{recursive:true});

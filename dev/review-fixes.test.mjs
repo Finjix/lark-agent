@@ -54,10 +54,11 @@ test('a lock timeout on BEGIN does not leave later transactions half-nested',asy
   assert.equal(db.prepare('SELECT count(*) c FROM x').get().c,2);db.close();await fs.rm(dir,{recursive:true,force:true});
 });
 
-test('retention cleanup marks a task cleaned when its output directory is already gone',async()=>{
+test('retention cleanup marks a task cleaned when its workspace is already gone',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'review-clean-')),s=new Store(':memory:'),task=s.create(input('old')).task;
   const session=s.sessionFor(task);s.bindSession(session.id,'thr');s.setSessionWorkspace(session.id,root);
-  s.transition(task.id,'COMPLETED',{thread_id:'thr',workspace_path:path.join(root,'tasks',task.id)});
+  s.transition(task.id,'COMPLETED',{thread_id:'thr',workspace_path:root});
   s.update(task.id,{finished_at:1000});s.db.exec("UPDATE delivery_outbox SET status='DELIVERED'");
-  await cleanup(s);assert(s.get(task.id).cleaned_at);s.close();await fs.rm(root,{recursive:true,force:true});
+  await fs.rm(root,{recursive:true,force:true});
+  await cleanup(s);assert(s.get(task.id).cleaned_at);s.close();
 });

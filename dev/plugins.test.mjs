@@ -26,17 +26,17 @@ async function drop(root,folder,{name=folder,version='1.0.0',mcp=true,files={}}=
 
 test('a folder with a plugin.json is a plugin; dotted and underscored folders, loose files and broken ones are not, and each says why',async()=>{
   const root=await temp();
-  await drop(root,'requirement-auto');await drop(root,'second',{name:'second-name'});
+  await drop(root,'plugin-one');await drop(root,'second',{name:'second-name'});
   await drop(root,'.hidden');await drop(root,'_off');                                   // switched off by their names
   await fs.writeFile(path.join(root,'notes.txt'),'not a plugin');
   await fs.mkdir(path.join(root,'.agents','plugins'),{recursive:true});                     // the generated marketplace
-  await fs.mkdir(path.join(root,'wrapped','requirement-auto'),{recursive:true});await fs.writeFile(path.join(root,'wrapped','requirement-auto','plugin.json'),'{"name":"x"}');
+  await fs.mkdir(path.join(root,'wrapped','plugin-one'),{recursive:true});await fs.writeFile(path.join(root,'wrapped','plugin-one','plugin.json'),'{"name":"x"}');
   await fs.mkdir(path.join(root,'broken'));await fs.writeFile(path.join(root,'broken','plugin.json'),'{oops');
   await drop(root,'badname',{name:'bad name@x'});await drop(root,'twin',{name:'second-name'});
   await fs.mkdir(path.join(root,'plain'));await fs.writeFile(path.join(root,'plain','plugin.json'),'{"name":"plain","version":"1.0.0"}');   // no $schema: Codex does not see it
   await fs.mkdir(path.join(root,'native','.codex-plugin'),{recursive:true});await fs.writeFile(path.join(root,'native','.codex-plugin','plugin.json'),'{"name":"native"}');
   const {found,skipped}=await discover(root);
-  assert.deepEqual(found,[{name:'native',version:'',folder:'native'},{name:'requirement-auto',version:'1.0.0',folder:'requirement-auto'},{name:'second-name',version:'1.0.0',folder:'second'}]);
+  assert.deepEqual(found,[{name:'native',version:'',folder:'native'},{name:'plugin-one',version:'1.0.0',folder:'plugin-one'},{name:'second-name',version:'1.0.0',folder:'second'}]);
   const why=Object.fromEntries(skipped.map(s=>[s.folder,s.reason]));
   assert.deepEqual(Object.keys(why).sort(),['badname','broken','plain','twin','wrapped']);assert.match(why.plain,/没有 [$]schema/);
   assert.match(why.wrapped,/缺少 plugin\.json.*多套一层/);assert.match(why.broken,/无法解析/);assert.match(why.badname,/name/);assert.match(why.twin,/同名/);
@@ -74,11 +74,11 @@ const plugin=(name,servers)=>({id:`${name}@${MARKETPLACE}`,name,version:'1.0.0',
 test('with plugins, Codex runs with its plugin feature on, each plugin\'s own MCP servers off, and the host\'s copy of them forwarding the user\'s environment',()=>{
   assert.deepEqual(pluginConfig([]),{},'no plugins, no change to what Codex is configured with');
   assert.equal(codexConfig().features.plugins,false);assert.deepEqual(Object.keys(codexConfig()).sort(),['cli_auth_credentials_store','features']);
-  const plugins=[plugin('requirement-auto',['feishu-auth']),plugin('other',['feishu-auth','my.tools']),plugin('no-servers',[])];
+  const plugins=[plugin('plugin-one',['feishu-auth']),plugin('other',['feishu-auth','my.tools']),plugin('no-servers',[])];
   const given=codexConfig(plugins);
-  assert.equal(given.features.plugins,true);for(const f of ['apps','browser_use','in_app_browser','computer_use','memories'])assert.equal(given.features[f],false,f);
+  assert.equal(given.features.plugins,true);for(const f of ['apps','memories'])assert.equal(given.features[f],false,f);
   // The plugin id has an @ and must carry its own quotes: the SDK joins the segments of a path as they are.
-  assert.deepEqual(given.plugins,{'"requirement-auto@lark-agent"':{mcp_servers:{'feishu-auth':{enabled:false}}},'"other@lark-agent"':{mcp_servers:{'"my.tools"':{enabled:false}}}});
+  assert.deepEqual(given.plugins,{'"plugin-one@lark-agent"':{mcp_servers:{'feishu-auth':{enabled:false}}},'"other@lark-agent"':{mcp_servers:{'"my.tools"':{enabled:false}}}});
   assert.deepEqual(Object.keys(given.mcp_servers).sort(),['"my.tools"','feishu-auth'],'one server of a name: the first plugin keeps it');
   assert.deepEqual(given.mcp_servers['feishu-auth'].env_vars,[...PLUGIN_ENV],'names only, never values');
   assert.deepEqual(PLUGIN_ENV,['LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','FEISHU_APP_ID','FEISHU_APP_SECRET']);
@@ -105,7 +105,7 @@ test('the runner gives a turn the plugins and the user\'s environment, and witho
   const runner=new CodexRunner(factory),job={threadId:null,cwd:'D:/w',input:[],signal:new AbortController().signal,user:{dir:'D:\\u',openId:'ou_1'}};
   for await(const _ of runner.run(job));
   assert.equal(made[0].env.LARK_AGENT_USER_DIR,undefined);assert.deepEqual(made[0].config,codexConfig());
-  runner.plugins=[plugin('requirement-auto',['feishu-auth'])];
+  runner.plugins=[plugin('plugin-one',['feishu-auth'])];
   for await(const _ of runner.run(job));
   assert.equal(made[1].env.LARK_AGENT_USER_DIR,'D:\\u');assert.equal(made[1].env.LARK_AGENT_USER_OPEN_ID,'ou_1');assert.equal(made[1].config.features.plugins,true);
   for await(const _ of runner.run({...job,user:undefined}));
@@ -125,44 +125,44 @@ test('plugins dropped into the folder are installed, left alone while unchanged,
   // Nothing dropped, nothing ever installed: Codex is not even started.
   assert.deepEqual(await syncPlugins(cli,{root,home}),{plugins:[],skipped:[]});assert.deepEqual(cli.calls,[]);
 
-  const dir=await drop(root,'requirement-auto',{files:{'skills/demo/old.md':'old'}});await drop(root,'second');
+  const dir=await drop(root,'plugin-one',{files:{'skills/demo/old.md':'old'}});await drop(root,'second');
   await fs.mkdir(path.join(root,'broken'));await fs.writeFile(path.join(root,'broken','plugin.json'),'nope');
-  assert.deepEqual((await inspectPlugins({root,home})).map(p=>[p.folder,p.state]),[['broken','invalid'],['requirement-auto','not installed'],['second','not installed']]);
+  assert.deepEqual((await inspectPlugins({root,home})).map(p=>[p.folder,p.state]),[['broken','invalid'],['plugin-one','not installed'],['second','not installed']]);
   let result=await syncPlugins(cli,{root,home});
-  assert.deepEqual(result.plugins.map(p=>p.id),['requirement-auto@lark-agent','second@lark-agent'],'the broken one does not hold the others back');
+  assert.deepEqual(result.plugins.map(p=>p.id),['plugin-one@lark-agent','second@lark-agent'],'the broken one does not hold the others back');
   assert.deepEqual(result.skipped.map(s=>s.folder),['broken']);
-  assert.deepEqual(await installed(cli),['requirement-auto@lark-agent','second@lark-agent']);
+  assert.deepEqual(await installed(cli),['plugin-one@lark-agent','second@lark-agent']);
   const first=result.plugins[0];
   assert(first.path.toLowerCase().startsWith(path.join(home,'plugins','cache').toLowerCase()),'installed inside the Codex home');
-  assert.equal((await fs.readFile(path.join(first.path,'skills','demo','SKILL.md'),'utf8')).includes('demo skill of requirement-auto'),true);
-  assert.deepEqual(first.mcp['requirement-auto-tools'].args,[path.join(first.path,'server','main.mjs'),'--flag'],'resolved to the installed copy');
+  assert.equal((await fs.readFile(path.join(first.path,'skills','demo','SKILL.md'),'utf8')).includes('demo skill of plugin-one'),true);
+  assert.deepEqual(first.mcp['plugin-one-tools'].args,[path.join(first.path,'server','main.mjs'),'--flag'],'resolved to the installed copy');
   const marketplace=JSON.parse(await fs.readFile(path.join(root,'.agents','plugins','marketplace.json'),'utf8'));
-  assert.equal(marketplace.name,MARKETPLACE);assert.deepEqual(marketplace.plugins.map(p=>p.source.path),['./requirement-auto','./second']);
-  assert.deepEqual((await inspectPlugins({root,home})).map(p=>[p.folder,p.state]),[['broken','invalid'],['requirement-auto','installed'],['second','installed']]);
+  assert.equal(marketplace.name,MARKETPLACE);assert.deepEqual(marketplace.plugins.map(p=>p.source.path),['./plugin-one','./second']);
+  assert.deepEqual((await inspectPlugins({root,home})).map(p=>[p.folder,p.state]),[['broken','invalid'],['plugin-one','installed'],['second','installed']]);
 
   // Unchanged: no plugin is installed again.
   cli.calls.length=0;result=await syncPlugins(cli,{root,home});
-  assert.deepEqual(result.plugins.map(p=>p.id),['requirement-auto@lark-agent','second@lark-agent']);assert.equal(cli.calls.some(c=>c.startsWith('plugin add')),false,cli.calls.join(' | '));
+  assert.deepEqual(result.plugins.map(p=>p.id),['plugin-one@lark-agent','second@lark-agent']);assert.equal(cli.calls.some(c=>c.startsWith('plugin add')),false,cli.calls.join(' | '));
 
   // Changed under the same version (a folder dropped over the old one, a file gone): the installed copy is replaced as a whole.
   await fs.rm(path.join(dir,'skills','demo','old.md'));await fs.writeFile(path.join(dir,'skills','demo','SKILL.md'),'---\nname: demo\ndescription: changed\n---\n');
-  assert.equal((await inspectPlugins({root,home})).find(p=>p.folder==='requirement-auto').state,'changed');
+  assert.equal((await inspectPlugins({root,home})).find(p=>p.folder==='plugin-one').state,'changed');
   cli.calls.length=0;result=await syncPlugins(cli,{root,home});
-  assert.deepEqual(cli.calls.filter(c=>c.startsWith('plugin add')),['plugin add requirement-auto@lark-agent'],'only the one that changed');
-  const copy=result.plugins.find(p=>p.name==='requirement-auto').path;
+  assert.deepEqual(cli.calls.filter(c=>c.startsWith('plugin add')),['plugin add plugin-one@lark-agent'],'only the one that changed');
+  const copy=result.plugins.find(p=>p.name==='plugin-one').path;
   assert.match(await fs.readFile(path.join(copy,'skills','demo','SKILL.md'),'utf8'),/changed/);
   await assert.rejects(fs.stat(path.join(copy,'skills','demo','old.md')),'what is gone from the folder is gone from the installed copy');
 
   // A new version lands next to nothing: Codex keeps one copy.
-  await fs.writeFile(path.join(dir,'plugin.json'),JSON.stringify({$schema:SCHEMA,name:'requirement-auto',version:'1.1.0'}));
-  result=await syncPlugins(cli,{root,home});assert.equal(result.plugins.find(p=>p.name==='requirement-auto').version,'1.1.0');
-  assert.deepEqual(await fs.readdir(path.join(home,'plugins','cache',MARKETPLACE,'requirement-auto')),['1.1.0']);
+  await fs.writeFile(path.join(dir,'plugin.json'),JSON.stringify({$schema:SCHEMA,name:'plugin-one',version:'1.1.0'}));
+  result=await syncPlugins(cli,{root,home});assert.equal(result.plugins.find(p=>p.name==='plugin-one').version,'1.1.0');
+  assert.deepEqual(await fs.readdir(path.join(home,'plugins','cache',MARKETPLACE,'plugin-one')),['1.1.0']);
 
   // Deleting the folder uninstalls the plugin.
   await fs.rm(path.join(root,'second'),{recursive:true});
   result=await syncPlugins(cli,{root,home});
-  assert.deepEqual(result.plugins.map(p=>p.id),['requirement-auto@lark-agent']);assert.deepEqual(await installed(cli),['requirement-auto@lark-agent']);
-  await fs.rm(path.join(root,'requirement-auto'),{recursive:true});
+  assert.deepEqual(result.plugins.map(p=>p.id),['plugin-one@lark-agent']);assert.deepEqual(await installed(cli),['plugin-one@lark-agent']);
+  await fs.rm(path.join(root,'plugin-one'),{recursive:true});
   result=await syncPlugins(cli,{root,home});assert.deepEqual(result.plugins,[]);assert.deepEqual(await installed(cli),[]);
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(home,'lark-agent-plugins.json'),'utf8')),{},'nothing is remembered about what is gone');
   assert.deepEqual(await syncPlugins(cli,{root,home}),{plugins:[],skipped:[{folder:'broken',reason:result.skipped[0].reason}]},'still reports the broken folder');

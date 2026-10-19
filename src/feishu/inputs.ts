@@ -43,15 +43,13 @@ export async function prepareInputs(store:Store,task:Task,downloader:ResourceDow
     }finally{await fs.rm(temporary,{force:true});}
   }
 }
-/** Deletes the attachment files received for a task. Only files inside the chat folder's input/ (or the older inputs/) are ever touched. */
-export async function removeInputs(files:string[],chatFolder:string){
-  let root:string;try{root=await fs.realpath(chatFolder);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
+/** Deletes the attachment files received for a task. Only files directly inside the workspace's input/ are ever touched. */
+export async function removeInputs(files:string[],workspace:string){
+  let root:string;try{root=await fs.realpath(workspace);}catch(e:any){if(e.code==='ENOENT')return;throw e;}
   for(const file of files){
     let actual:string;try{actual=await fs.realpath(file);}catch(e:any){if(e.code==='ENOENT')continue;throw e;}
-    const parts=path.relative(root,actual).split(path.sep);
-    if(parts[0]==='..'||path.isAbsolute(path.relative(root,actual))||!['input','inputs'].includes(parts[0])||parts.length<2)throw Error('附件不属于当前会话，跳过清理');
+    const relative=path.relative(root,actual),parts=relative.split(path.sep);
+    if(path.isAbsolute(relative)||parts.length!==2||parts[0]!=='input')throw Error('附件不属于当前会话，跳过清理');
     await fs.rm(actual,{force:false});
-    // Folders of earlier layouts (input/<task>/) go away with their last file.
-    if(parts.length>2)await fs.rmdir(path.dirname(actual)).catch(()=>{});
   }
 }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
-import {userDirectory,userWorkspace,taskWorkspace,sessionInputs} from '../dist/layout.js';
+import {userDirectory,userWorkspace,workspaceIn,sessionInputs} from '../dist/layout.js';
 
 const input=(user,tenant='t')=>({tenant_key:tenant,user_id:user,chat_id:'c',source_message_id:`m-${tenant}-${user}`,instruction:'x'});
 /** A session for `user`, named like the Feishu display name once it is known. */
@@ -39,10 +39,10 @@ test('user directory names cannot escape user/ and fall back to the open id when
   store.close();
 });
 
-test('attachments arrive in input/ of the workspace; outputs/ is the delivery folder of earlier versions',()=>{
-  const chat=path.join(config.user,'..','codex-workspace');
-  assert.equal(taskWorkspace(chat),path.join(chat,'outputs'));assert.equal(sessionInputs(chat),path.join(chat,'input'));
-  assert.equal(fs.existsSync(taskWorkspace(chat)),false,'nothing is created on disk by asking for the path');
+test('the workspace is the folder Codex works in, directly under the user directory, and attachments arrive in its input/',()=>{
+  const directory=path.join(config.user,'李小明'),workspace=workspaceIn(directory);
+  assert.equal(workspace,path.join(directory,'workspace'));assert.equal(sessionInputs(workspace),path.join(workspace,'input'));
+  assert.equal(fs.existsSync(sessionInputs(workspace)),false,'nothing is created on disk by asking for the path');
 });
 
 test('user data and workspace outlive a chat: a renewed session shares the same user directory',()=>{

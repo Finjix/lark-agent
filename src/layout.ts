@@ -18,7 +18,5 @@ export function userDirectory(store:Store,session:Pick<UserSession,'tenant_key'|
 export const workspaceIn=(userDirectory:string)=>path.join(userDirectory,'workspace');
 export const userWorkspace=(store:Store,session:Pick<UserSession,'tenant_key'|'user_id'|'display_name'>)=>workspaceIn(userDirectory(store,session));
 
-/** Folder names of the earlier layouts, where deliveries came from <chat folder>/outputs (before that output); tasks recorded with them are still cleaned up. */
-export const taskWorkspace=(chatFolder:string)=>path.join(chatFolder,'outputs');
-export const legacyTaskWorkspace=(chatFolder:string)=>path.join(chatFolder,'output');
+/** Where the attachments a user sends arrive, inside their workspace. */
 export const sessionInputs=(sessionRoot:string)=>path.join(sessionRoot,'input');

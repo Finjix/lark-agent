@@ -87,10 +87,11 @@ test('Codex runs with its home inside the project, whatever the environment says
   }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);}
   assert.notEqual(config.codexHome,path.join(os.homedir(),'.codex'),"never the system's own Codex home");
 });
-test('Codex is configured on each run: file login, shared accounts and machines switched off, and nothing else added',()=>{
+test('Codex is configured on each run: file login, the shared connectors and memories switched off, and nothing else added',()=>{
   const plain=codexConfig();
   assert.equal(plain.cli_auth_credentials_store,'file');
-  for(const feature of ['apps','plugins','browser_use','in_app_browser','computer_use','memories'])assert.equal(plain.features[feature],false,feature);
+  for(const feature of ['apps','plugins','memories'])assert.equal(plain.features[feature],false,feature);
+  assert.deepEqual(Object.keys(plain.features).sort(),['apps','memories','plugins'],'no other feature is touched');
   assert.deepEqual(Object.keys(plain).sort(),['cli_auth_credentials_store','features'],'no instructions, no tools, no MCP servers');
   const saved={model:config.CODEX_MODEL,effort:config.CODEX_REASONING_EFFORT};
   try{

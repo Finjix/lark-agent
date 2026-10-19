@@ -4,12 +4,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {Store} from '../dist/storage/database.js';
-import {taskWorkspace} from '../dist/layout.js';
 import {cleanup} from '../dist/maintenance.js';
 
 const input=(message='one',user='user',tenant='tenant')=>({tenant_key:tenant,user_id:user,chat_id:'chat',source_message_id:message,instruction:message});
 /** A user's session bound to a Codex thread, working in `root`. */
 function bound(s,task,thread,root){const session=s.sessionFor(task);s.bindSession(session.id,thread);if(root)s.setSessionWorkspace(session.id,root);return s.session(session.id);}
+/** A finished task whose retention period is over, working in `workspace`. */
+function expired(s,task,thread,workspace){s.transition(task.id,'COMPLETED',{thread_id:thread,workspace_path:workspace});s.update(task.id,{finished_at:1});}
+/** Every delivery has gone out, so cleanup looks at the tasks. */
+const delivered=s=>s.db.exec("UPDATE delivery_outbox SET status='DELIVERED'");
+const artifact=(s,task,id,file)=>s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run(id,task.id,file,path.basename(file),1,'file');
+const exists=file=>fs.access(file).then(()=>true,()=>false);
 
 test('session ownership survives restart and is isolated by tenant and user',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-db-')),file=path.join(root,'db.sqlite');let s=new Store(file);
@@ -34,44 +39,50 @@ test('a chat replaced or reset keeps its history on the old session and is never
   assert.deepEqual(s.db.pragma('foreign_key_check'),[]);s.close();
 });
 
-test('expiring a completed message removes only the files it delivered and keeps the output folder, the session and later files',async()=>{
+test('expiring a completed message removes only the files it delivered and keeps the workspace, the session and later files',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-retain-')),s=new Store(':memory:');
   const old=s.create(input()).task,session=bound(s,old,'thread',root);
-  const output=taskWorkspace(root);await fs.mkdir(output,{recursive:true});
-  const oldFile=path.join(output,'old.txt'),laterFile=path.join(output,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
-  s.transition(old.id,'COMPLETED',{thread_id:'thread',workspace_path:output});s.update(old.id,{finished_at:1});
-  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,oldFile,'old.txt',3,'file');
-  const row=s.due()[0];s.ack(row.id,row.version);
+  const oldFile=path.join(root,'old.txt'),laterFile=path.join(root,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
+  expired(s,old,'thread',root);artifact(s,old,'a1',oldFile);delivered(s);
   await cleanup(s);
   assert(s.get(old.id).cleaned_at);assert.equal(s.session(session.id).thread_id,'thread');
-  await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');assert((await fs.stat(output)).isDirectory());
+  await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');assert((await fs.stat(root)).isDirectory());
   s.close();await fs.rm(root,{recursive:true});
 });
 
-test('a task recorded under the earlier folder name output is still cleaned up, and only its own files go',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-legacy-')),s=new Store(':memory:');
-  const old=s.create(input()).task;bound(s,old,'thread',root);
-  const output=path.join(root,'output');await fs.mkdir(output,{recursive:true});
-  const oldFile=path.join(output,'old.txt'),laterFile=path.join(output,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
-  s.transition(old.id,'COMPLETED',{thread_id:'thread',workspace_path:output});s.update(old.id,{finished_at:1});
-  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,oldFile,'old.txt',3,'file');
-  const row=s.due()[0];s.ack(row.id,row.version);
+test('cleanup removes inside the user\'s workspace only: a recorded path elsewhere stays, and a task whose folder is not its session\'s workspace is skipped',async()=>{
+  const base=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-owner-')),root=path.join(base,'workspace'),elsewhere=path.join(base,'elsewhere'),s=new Store(':memory:');
+  await fs.mkdir(root);await fs.mkdir(elsewhere);
+  const write=async(file,text='x')=>{await fs.writeFile(file,text);return file;};
+  // The record names a file beside the workspace as well as one inside it: only the one inside goes.
+  const a=s.create(input('a')).task;bound(s,a,'thread-a',root);
+  const mine=await write(path.join(root,'mine.txt')),foreign=await write(path.join(base,'foreign.txt'));
+  expired(s,a,'thread-a',root);artifact(s,a,'a1',mine);artifact(s,a,'a2',foreign);
+  // A task whose folder is some other folder than the workspace of its session: nothing shows that it owns it.
+  const b=s.create(input('b','other')).task;bound(s,b,'thread-b',root);
+  const theirs=await write(path.join(elsewhere,'theirs.txt'));expired(s,b,'thread-b',elsewhere);artifact(s,b,'b1',theirs);
+  // A task with a folder but no session at all.
+  const c=s.create(input('c','third')).task,orphan=await write(path.join(root,'orphan.txt'));expired(s,c,'thread-c',root);artifact(s,c,'c1',orphan);
+  delivered(s);
   await cleanup(s);
-  assert(s.get(old.id).cleaned_at);await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');
-  s.close();await fs.rm(root,{recursive:true});
+  assert(s.get(a.id).cleaned_at);assert(!await exists(mine));assert.equal(await fs.readFile(foreign,'utf8'),'x','a path outside the workspace is never removed');
+  assert.equal(s.get(b.id).cleaned_at,null,'skipped, not cleaned');assert(await exists(theirs));
+  assert.equal(s.get(c.id).cleaned_at,null,'skipped, not cleaned');assert(await exists(orphan));
+  s.close();await fs.rm(base,{recursive:true});
 });
 
-test('files of a Desktop-era session are still found through that session, and only inside its own chat folder',async()=>{
-  // The old layout kept a chat's files in Documents\Codex\<date>\lark-<id>; that session is retired but its record says where.
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-desktop-era-')),s=new Store(':memory:');
-  const old=s.create(input()).task,session=bound(s,old,'old-thread',root);
-  const output=taskWorkspace(root),mine=path.join(output,'mine.txt'),foreign=path.join(root,'..',`foreign-${process.pid}.txt`);
-  await fs.mkdir(output,{recursive:true});await fs.writeFile(mine,'x');await fs.writeFile(foreign,'keep');
-  s.transition(old.id,'COMPLETED',{thread_id:'old-thread',workspace_path:output});s.update(old.id,{finished_at:1});
-  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a1',old.id,mine,'mine.txt',1,'file');
-  s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run('a2',old.id,foreign,'foreign.txt',4,'file');
-  s.db.prepare('UPDATE user_sessions SET retired_at=1 WHERE id=?').run(session.id);const row=s.due()[0];s.ack(row.id,row.version);
+test('expiry also removes the attachments a task received, from input/ of the workspace and nowhere else',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-inputs-')),s=new Store(':memory:'),folder=path.join(root,'input');await fs.mkdir(folder);
+  const attachment={kind:'file',key:'k',name:'a.txt'};
+  const t=s.create(input('one'),[],[attachment]).task;bound(s,t,'thread',root);
+  const received=path.join(folder,'a.txt'),neighbour=path.join(folder,'neighbour.txt');await fs.writeFile(received,'a');await fs.writeFile(neighbour,'n');
+  s.inputReady(t.id,0,received,1);expired(s,t,'thread',root);
+  // Another task's record that points at a file outside input/: the task is skipped and the file stays.
+  const u=s.create(input('two','u2'),[],[attachment]).task;bound(s,u,'thread-u',root);
+  const precious=path.join(root,'precious.txt');await fs.writeFile(precious,'p');s.inputReady(u.id,0,precious,1);expired(s,u,'thread-u',root);
+  delivered(s);
   await cleanup(s);
-  await assert.rejects(fs.stat(mine),{code:'ENOENT'});assert.equal(await fs.readFile(foreign,'utf8'),'keep','a path outside the folder is never removed');
-  await fs.rm(foreign);s.close();await fs.rm(root,{recursive:true});
+  assert(s.get(t.id).cleaned_at);assert(!await exists(received));assert(await exists(neighbour),'only what this task received');assert((await fs.stat(folder)).isDirectory());
+  assert.equal(s.get(u.id).cleaned_at,null);assert(await exists(precious));
+  s.close();await fs.rm(root,{recursive:true});
 });

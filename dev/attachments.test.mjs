@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {Readable} from 'node:stream';
-import {Database} from '../dist/storage/sqlite.js';
 import {Store} from '../dist/storage/database.js';
 import {incomingMessage} from '../dist/feishu/incoming.js';
 import {FeishuClient,MAX_INPUT_BYTES,downloadError} from '../dist/feishu/client.js';
@@ -71,15 +70,12 @@ test('unsupported, malformed, and excessive attachments return errors instead of
   assert.match(incomingMessage(event('post',post),'bot').error,/最多接收 10/);
 });
 
-test('v1 migration preserves existing tasks and stores attachment metadata atomically with message deduplication',async()=>{
+test('attachment metadata is stored atomically with the task, survives a restart, and a repeated message is deduplicated',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-input-db-')),file=path.join(root,'test.sqlite');
-  let store=new Store(file);const old=store.create({...input,source_message_id:'old'}).task;store.close();
-  const db=new Database(file);db.exec('DROP TABLE task_inputs; PRAGMA user_version = 1');db.close();
-  store=new Store(file);assert.equal(store.get(old.id).instruction,input.instruction);
-  const task=store.create(input,[],[image]).task;
+  let store=new Store(file);const task=store.create(input,[],[image]).task;
   assert.equal(store.create(input,[],[{...image,key:'different'}]).created,false);
-  store.close();store=new Store(file);assert.equal(store.inputs(task.id)[0].key,image.key);
-  assert.equal(store.db.pragma('user_version',{simple:true}),6);store.close();await fs.rm(root,{recursive:true});
+  store.close();store=new Store(file);assert.deepEqual(store.inputs(task.id).map(i=>[i.key,i.name,i.path]),[[image.key,image.name,null]],'one attachment, as first recorded');
+  store.close();await fs.rm(root,{recursive:true});
 });
 
 test('unauthorized and unsupported attachment messages never create a task or download files',async()=>{
@@ -113,6 +109,11 @@ test('inputs survive restart, use isolated safe filenames, and reach Codex only 
   const again=store.create({...input,source_message_id:'again'},[],[{kind:'file',key:'file-key-2',name:'需求:报告.docx'}]).task;
   await prepareInputs(store,again,downloader,root);assert.equal(path.basename(store.inputs(again.id)[0].path),'需求_报告 (2).docx');
   await removeInputs([...inputs,...store.inputs(again.id)].map(i=>i.path),chat);assert.deepEqual(await fs.readdir(root),[],'cleanup deletes just the received files');
+  // Only files directly in input/ are a task's: no other folder name and no sub-folder is treated as one.
+  for(const stray of [path.join(chat,'inputs','a.txt'),path.join(root,'sub','b.txt')]){
+    await fs.mkdir(path.dirname(stray),{recursive:true});await fs.writeFile(stray,'keep');
+    await assert.rejects(removeInputs([stray],chat),/不属于/);assert.equal(await fs.readFile(stray,'utf8'),'keep');
+  }
   const outside=path.join(path.dirname(chat),`outside-${process.pid}.txt`);await fs.writeFile(outside,'keep');
   await assert.rejects(removeInputs([outside],chat),/不属于/);assert.equal(await fs.readFile(outside,'utf8'),'keep','a file outside input/ is never deleted');await fs.rm(outside);
   store.close();await fs.rm(chat,{recursive:true});

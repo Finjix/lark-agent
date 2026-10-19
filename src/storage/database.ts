@@ -3,33 +3,32 @@ import {randomUUID} from 'node:crypto';
 import {terminal,BOT_DOWN, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
 import {displayName} from '../sessions/naming.js';
 
-const SESSION_COLUMNS=['id','tenant_key','user_id','thread_id','workspace_path','created_at','display_name','retired_at'];
+/** The version of the schema this program creates. A database of any other version is not touched: there is nothing to upgrade from. */
+const VERSION=1;
 export class Store {
   db: Database; private columns?:Set<string>;
   constructor(file:string){
     this.db = new Database(file);
-    this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = ON'); this.db.pragma('busy_timeout = 5000');
+    this.db.pragma('busy_timeout = 5000');
+    // Judged before anything is written to the file: a database this program cannot use is left exactly as it was.
     const version = this.db.pragma('user_version',{simple:true}) as number;
-    if(version>6) throw Error('数据库版本高于当前程序支持版本');
-    this.db.pragma('foreign_keys = OFF');
+    if(version!==0&&version!==VERSION){this.db.close();throw Error(`数据库 ${file} 的版本（user_version=${version}）与程序（${VERSION}）不一致，不能使用`);}
+    this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = OFF');
     try{this.db.transaction(()=>{
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS tasks (
           id TEXT PRIMARY KEY, tenant_key TEXT NOT NULL, user_id TEXT NOT NULL, chat_id TEXT NOT NULL,
-          source_message_id TEXT NOT NULL, instruction TEXT NOT NULL, desktop_host_id TEXT NOT NULL DEFAULT 'local',
-          thread_id TEXT, turn_id TEXT, workspace_path TEXT, status TEXT NOT NULL,
+          source_message_id TEXT NOT NULL, instruction TEXT NOT NULL, thread_id TEXT, workspace_path TEXT, status TEXT NOT NULL,
           result TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '',
-          last_revision INTEGER NOT NULL DEFAULT -1, submission_key TEXT NOT NULL UNIQUE,
           created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER,
           cancel_requested INTEGER NOT NULL DEFAULT 0, resources TEXT NOT NULL DEFAULT '[]', cleaned_at INTEGER,
+          session_id TEXT REFERENCES user_sessions(id), steps TEXT NOT NULL DEFAULT '[]',
           UNIQUE(tenant_key,source_message_id));
         CREATE INDEX IF NOT EXISTS task_queue ON tasks(status,created_at);
         CREATE INDEX IF NOT EXISTS task_user ON tasks(tenant_key,user_id,created_at);
-        CREATE UNIQUE INDEX IF NOT EXISTS task_turn ON tasks(thread_id,turn_id) WHERE turn_id IS NOT NULL;
         CREATE TABLE IF NOT EXISTS task_messages (
           task_id TEXT PRIMARY KEY REFERENCES tasks(id), message_id TEXT, card_id TEXT,
-          sequence INTEGER NOT NULL DEFAULT 0, last_revision INTEGER NOT NULL DEFAULT -1,
-          finalized INTEGER NOT NULL DEFAULT 0);
+          sequence INTEGER NOT NULL DEFAULT 0, finalized INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS delivery_outbox (
           id TEXT PRIMARY KEY, task_id TEXT, kind TEXT NOT NULL, payload TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0,
@@ -39,41 +38,20 @@ export class Store {
           kind TEXT NOT NULL, payload TEXT NOT NULL,created_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS task_event_lookup ON task_events(task_id,kind,id);
         CREATE TABLE IF NOT EXISTS task_artifacts (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),
-          path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,UNIQUE(task_id,path));
+          path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,kind TEXT NOT NULL DEFAULT 'file',UNIQUE(task_id,path));
         CREATE TABLE IF NOT EXISTS task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,
-          saved_path TEXT,base64 TEXT,PRIMARY KEY(task_id,item_id));
+          saved_path TEXT,PRIMARY KEY(task_id,item_id));
         CREATE TABLE IF NOT EXISTS task_inputs (task_id TEXT NOT NULL REFERENCES tasks(id),ordinal INTEGER NOT NULL,
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
           thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,display_name TEXT,retired_at INTEGER);
+        CREATE UNIQUE INDEX IF NOT EXISTS current_user_session ON user_sessions(tenant_key,user_id) WHERE retired_at IS NULL;
         CREATE TABLE IF NOT EXISTS user_dirs (tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,name TEXT NOT NULL UNIQUE COLLATE NOCASE,created_at INTEGER NOT NULL,PRIMARY KEY(tenant_key,user_id));
       `);
-      if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='session_id'))this.db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES user_sessions(id)');
-      if(!(this.db.prepare('PRAGMA table_info(tasks)').all() as any[]).some(c=>c.name==='steps'))this.db.exec("ALTER TABLE tasks ADD COLUMN steps TEXT NOT NULL DEFAULT '[]'");
-      if(!(this.db.prepare('PRAGMA table_info(task_artifacts)').all() as any[]).some(c=>c.name==='kind'))this.db.exec("ALTER TABLE task_artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'");
-      // Older databases keep sessions in an earlier shape (a UNIQUE user, chat titles for Desktop); rebuild into the current one and carry the common columns over.
-      const have=(this.db.prepare('PRAGMA table_info(user_sessions)').all() as any[]).map(c=>c.name as string);
-      if(have.length!==SESSION_COLUMNS.length||SESSION_COLUMNS.some(c=>!have.includes(c))){
-        const common=SESSION_COLUMNS.filter(c=>have.includes(c)).join(',');
-        this.db.exec(`
-          CREATE TABLE user_sessions_next (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
-            thread_id TEXT UNIQUE,workspace_path TEXT,created_at INTEGER NOT NULL,display_name TEXT,retired_at INTEGER);
-          INSERT INTO user_sessions_next(${common}) SELECT ${common} FROM user_sessions;
-          DROP TABLE user_sessions;
-          ALTER TABLE user_sessions_next RENAME TO user_sessions;
-        `);
-      }
-      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS current_user_session ON user_sessions(tenant_key,user_id) WHERE retired_at IS NULL');
-      // Version 6 replaced the Desktop bridge by the Codex SDK. Interactive approvals no longer exist, and the chats of the old
-      // sessions live in Desktop's own Codex home, which this service no longer reads: those sessions are retired so each user starts a fresh chat.
-      this.db.exec('DROP TABLE IF EXISTS pending_requests');
-      // Per-user API keys existed for a short while and are gone again: Codex runs on the one login of the project. No key stays behind.
-      this.db.exec('DROP TABLE IF EXISTS user_keys');
-      // Key-value storage of the Desktop bridge; nothing has read or written it since.
-      this.db.exec('DROP TABLE IF EXISTS metadata');
-      if(version>0&&version<6)this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE retired_at IS NULL AND thread_id IS NOT NULL').run(Date.now());
-      this.db.exec('PRAGMA user_version = 6');
-    })();}finally{this.db.pragma('foreign_keys = ON');}
+      this.db.exec(`PRAGMA user_version = ${VERSION}`);
+    })();this.db.pragma('foreign_keys = ON');}
+    // The constructor fails as a whole: nothing of the setup is kept and the file is not left open.
+    catch(e){this.db.close();throw e;}
   }
   get(id:string):Task|undefined {return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(id) as Task|undefined;}
   session(id:string):UserSession|undefined{return this.db.prepare('SELECT * FROM user_sessions WHERE id=?').get(id) as UserSession|undefined;}
@@ -148,8 +126,8 @@ export class Store {
       const existing=this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(input.tenant_key,input.source_message_id) as Task|undefined;
       if(existing)return {task:existing,created:false};
       const id=randomUUID();
-      this.db.prepare(`INSERT INTO tasks(id,tenant_key,user_id,chat_id,source_message_id,instruction,status,submission_key,created_at,resources)
-        VALUES(?,?,?,?,?,?,'QUEUED',?,?,?)`).run(id,input.tenant_key,input.user_id,input.chat_id,input.source_message_id,input.instruction,id,Date.now(),JSON.stringify(resources));
+      this.db.prepare(`INSERT INTO tasks(id,tenant_key,user_id,chat_id,source_message_id,instruction,status,created_at,resources)
+        VALUES(?,?,?,?,?,?,'QUEUED',?,?)`).run(id,input.tenant_key,input.user_id,input.chat_id,input.source_message_id,input.instruction,Date.now(),JSON.stringify(resources));
       this.db.prepare('INSERT INTO task_messages(task_id) VALUES(?)').run(id);
       for(const [ordinal,a] of attachments.entries())this.db.prepare('INSERT INTO task_inputs(task_id,ordinal,kind,key,name) VALUES(?,?,?,?,?)').run(id,ordinal,a.kind,a.key,a.name);
       this.event(id,'QUEUED',{}); this.enqueue(`view:${id}`,id,'VIEW',{});

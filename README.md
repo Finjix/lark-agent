@@ -2,11 +2,11 @@
 
 Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 → 用 Codex SDK 在本机执行 → 卡片、最终回复、交付文件回传飞书。
 
-Codex 的登录、对话、生成的图片等一切状态都放在项目自己的 `.codex/` 里。系统自带的 Codex（`~\.codex`、`Documents\Codex`）既不读也不写，不受影响；换一台电脑只要 `npm install`、登录一次即可使用。
+Codex 的登录、对话、生成的图片等一切状态都放在项目自己的 `.codex/` 里。系统自带的 Codex（`~\.codex`）既不读也不写，不受影响；换一台电脑只要 `npm install`、登录一次即可使用。
 
 ## 运行
 
-需要 Node.js ≥ 24。不需要安装 Codex Desktop 或 Codex CLI：`@openai/codex-sdk` 和各平台的 codex 二进制由 `npm ci` 按 lockfile 装进项目，与飞书官方 SDK 一样。数据库用 Node 内置 `node:sqlite`。
+需要 Node.js ≥ 24。不需要另外安装 Codex：`@openai/codex-sdk` 和各平台的 codex 二进制由 `npm ci` 按 lockfile 装进项目，与飞书官方 SDK 一样。数据库用 Node 内置 `node:sqlite`。
 
 1. 飞书后台配置应用，见 [docs/feishu.md](docs/feishu.md)。
 2. `.env.example` 复制为 `.env`，填凭证和访问范围。
@@ -22,7 +22,7 @@ Codex 的登录、对话、生成的图片等一切状态都放在项目自己�
 每条用户输入对应一次 `codex exec`（由 SDK 启动的子进程）；同一个用户的所有输入续接同一个 Codex 对话（thread），所以上下文是连续的。`/new` 让用户丢掉上下文重新开始（见“指令”）。
 
 - **位置**：`.codex/` 保存对话（`sessions/`）、生成的图片（`generated_images/`）和日志，不入 Git。环境变量 `CODEX_HOME` 被忽略，子进程始终使用项目里的这个目录。
-- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`、`browser_use`、`in_app_browser`、`computer_use`、`memories`（这些要么是登录账号的连接器、要么是整台机器共用的浏览器和电脑控制，会让所有飞书用户共享同一份；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型默认 `gpt-6-luna`、推理强度 `low`，要改在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
+- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`（登录账号的 ChatGPT 连接器，会被所有飞书用户共用）和 `memories`（记忆存在共用的 `.codex` 里，会在用户之间串；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型默认 `gpt-6-luna`、推理强度 `low`，要改在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
 - **登录**：登录文件是 `.codex/auth.json`（启动时收紧为仅当前账号可读，存成文件而不是系统钥匙串）。Codex 不可用或登录被拒绝时，用户只会看到“机器人罢工了”，原因写在日志里；管理员重新 `start.cmd codex login` 即可，服务不用重启（未就绪时每 10 秒检查一次）。
 - **权限**：没有任何限制：沙箱 `danger-full-access`、审批 `never`，Codex 可以读写本机任何位置、访问网络，也没有人会被询问。写死在 `src/codex/runner.ts`，没有开关。因为不能交互，做不到的事只会失败，Codex 自己换办法；所以没有 `/approve`、`/deny`、`/answer`：Codex 需要问用户什么，就在回复里问，用户的下一条消息就是回答。
 - **提示词**：不向 Codex 注入任何指令，也没有 MCP 工具（除了放进 `plugins/` 的插件自带的技能和工具）：它看到的就是用户发来的文字（外加附件清单，见下）。
@@ -45,9 +45,10 @@ user/
   李小明/                     每个飞书用户一个目录，显示名取自飞书，重名依次加 2、3（如 李小明2），分配后不再改变
     workspace/                Codex 的工作目录
       input/                  用户发来的附件，保留原文件名，重名加 (2)；有附件才会创建
+    <插件名>/                 插件自己的数据（有插件时由插件创建，见“插件”）
 ```
 
-任务结束时，桥接程序把这个任务运行期间在工作目录里新建或改动过的文件（复制进来的文件按创建时间算；不含 `input/` 和以 `.` 开头的文件夹）发给用户，再加上回复里链接的、位于工作目录内的文件；每个任务最多自动带 10 个未链接的文件，所以 Codex 顺手写下的脚本等临时文件也可能被发出去。要重发旧文件，让 Codex 再复制一份即可。工作目录里的文件超过 7 天没动过就会被自动删除，见“自动清理”。
+任务结束时，服务把这个任务运行期间在工作目录里新建或改动过的文件（复制进来的文件按创建时间算；不含 `input/` 和以 `.` 开头的文件夹）发给用户，再加上回复里链接的、位于工作目录内的文件；每个任务最多自动带 10 个未链接的文件，所以 Codex 顺手写下的脚本等临时文件也可能被发出去。要重发旧文件，让 Codex 再复制一份即可。工作目录里的文件超过 7 天没动过就会被自动删除，见“自动清理”。
 
 ## 行为
 
@@ -64,7 +65,7 @@ user/
 
 ```
 plugins/
-  requirement-auto/        ← 插件文件夹本身（里面直接是 plugin.json），不要多套一层
+  <插件名>/                ← 插件文件夹本身（里面直接是 plugin.json），不要多套一层
     plugin.json
     mcp.json
     skills/…
@@ -76,8 +77,7 @@ plugins/
 - **MCP 服务和用户**：Codex 不会把自己的环境交给插件自带的 MCP 服务，所以服务会为插件把同名服务重新注册一遍并关掉插件自带的那个，每个用户的每一轮都给它：`LARK_AGENT_USER_DIR`（`user/<名>`，不是其中的 `workspace`）、`LARK_AGENT_USER_OPEN_ID`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`。同一份环境也在 Codex 的 shell 里，插件的脚本直接能读到。只有 stdio 服务会被这样处理；用 `node` 启动的服务由运行本服务的 node 执行。
 - **只放你信任的插件**：插件的脚本和 MCP 服务以本服务的账号、不受任何限制地运行，和 Codex 本身一样。
 - **机器人密钥的代价**：有插件时，每个用户的每一轮 Codex 进程都带着 `FEISHU_APP_SECRET`（没有插件时仍然挡在外面）。能和机器人对话的人理论上能让 Codex 读到它。这里没有新增一类风险：Codex 本来就能读 `.env`（见“访问控制”）。想收紧，给插件的设备授权单独建一个飞书应用，把 `.env` 里的 `FEISHU_APP_ID/SECRET` 换成它。
-- **数据**：插件自己的数据放在 `user/<名>/<插件名>/`（例如 requirement-auto 的飞书登录和批次），不在 `workspace/` 里，所以不会被自动清理，也不会被当成交付文件发给用户。用户之间的隔离只是约定：Codex 是 `danger-full-access`，同一个 Windows 账号，被提示词注入的模型能读到别人的目录。
-- **第一个插件**：[requirement-auto](../requirement-auto)（GOFCN 素材需求自动化）。需要的飞书用户权限见 [docs/feishu.md](docs/feishu.md)。
+- **数据**：插件自己的数据放在 `user/<名>/<插件名>/`（例如用户的登录信息和中间文件），不在 `workspace/` 里，所以不会被自动清理，也不会被当成交付文件发给用户。用户之间的隔离只是约定：Codex 是 `danger-full-access`，同一个 Windows 账号，被提示词注入的模型能读到别人的目录。
 
 ## 自动清理
 
@@ -86,14 +86,14 @@ plugins/
 | 范围 | 删除 | 不动 |
 |---|---|---|
 | `data/logs` | 日志文件（`.jsonl`） | 数据库、控制令牌、`start.cmd backup` 生成的备份（备份要自己清理） |
-| `user/<用户名>/workspace` | **里面所有文件**（用户发来的 `input/` 附件、Codex 生成的文件，包括以 `.` 开头的），以及因此变空的文件夹 | 工作目录文件夹本身；`user/<用户名>/` 下的其他内容（如旧版的 `data/`） |
+| `user/<用户名>/workspace` | **里面所有文件**（用户发来的 `input/` 附件、Codex 生成的文件，包括以 `.` 开头的），以及因此变空的文件夹 | 工作目录文件夹本身；`user/<用户名>/` 下的其他内容（如插件的数据 `<插件名>/`） |
 | `.codex` | 对话文件 `sessions/`、`archived_sessions/`，生成的图片 `generated_images/`，`log/`，`shell_snapshots/`，`.tmp/`，Windows 沙箱的 `.sandbox/*.log` | 登录 `auth.json`、`config.toml`、`.sqlite` 数据库（Codex 也在其中记录对话）、`skills/`、`tmp/` 等其余一切 |
 
 - 有任务排队或执行中的用户，这一轮不清理其工作目录；只要有任务在执行，这一轮也不清理 `.codex`。
 - 链接（符号链接、目录联接）只删链接本身，从不进入它指向的位置；本身是链接的工作目录整个跳过。
 - 用户很久没来，再发消息时机器人仍按原对话号续接；Codex 找不到时自动新开对话（见“会话”）。工作目录里的旧文件已经没了，需要的要让 Codex 重新生成。
 - 清掉的文件如果还有没送达的投递，该投递标记为失败，不再重试。
-- 每个任务自己接收和交付的文件（包括旧版放在工作目录之外的），在任务结束、投递完成并过了保留期后也会按任务清理。任务记录（数据库）不清理。
+- 每个任务自己接收的附件和交付过的文件，在任务结束、投递完成并过了保留期后也会按任务清理：只删任务记录里登记过的文件，且必须在该用户的工作目录内（附件只认 `input/` 里的），不满足就跳过并写日志，不会误删。任务记录（数据库）不清理。
 - 有文件被删时日志记一条“已清理超过保留期的数据”（文件数和字节数）。
 
 ## 访问控制
@@ -118,17 +118,10 @@ start.cmd codex login           :: 登录项目自己的 Codex；也可 codex lo
 
 健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`plugins` 为已装的插件和没装上的；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建；Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
 
-## 从 Desktop 版升级
-
-数据库在第一次启动时自动升级，不需要手工迁移：
-
-- Desktop 版留下的对话（thread）在项目的 `.codex` 里不存在，无法接续：这些会话被封存，用户的下一条消息开始一个新的对话；旧对话仍在 Desktop 里。`user/<用户名>/data` 不变，浏览器登录和飞书 CLI 授权不丢。
-- 升级时仍在执行的任务按重启处理（见上）。已有任务记录里的文件仍按原路径在保留期后清理（包括 `Documents\Codex\...\lark-*` 下的）。
-- 旧版留在你系统里的东西，本版本不再读取也不会改动：`~\.codex` 里旧版的备份 `config.toml.lark-agent.bak`、`AGENTS.md.lark-agent.bak`，Desktop“个性化”自定义指令里复制过的那一句，`Documents\Codex` 下不再使用的 `lark-*` 目录，都可以手工清理。`register-mcp.cmd` 已删除。
-- `.env` 里的 `DESKTOP_*`、`CODEX_HOME`、`BROWSER_*`、`FEISHU_CLI_*` 不再有效，可以删除。浏览器工具和飞书 CLI（MCP）已经移除，`user/<用户名>/data/`（浏览器 profile、飞书 CLI 授权）不再使用也不会被删除，可以手工清理。
-
-## 兼容性
+## 版本
 
 `@openai/codex-sdk` 和 `@openai/codex` 固定同一版本（现为 0.163.0），升级时两个一起改。SDK 以 `codex exec --experimental-json` 的事件为接口，事件类型由 SDK 提供；升级后跑 `npm test` 和 `start.cmd doctor`。
+
+数据库（`data/agent.sqlite`）的版本记在 `user_version` 里，现为 1；版本不是 0（新库）或 1 的库会被拒绝，启动时报错并说明是哪个文件。表结构变化时要同时升版本并写明处理办法，目前没有任何升级路径。
 
 单元测试不能替代实机验收：改动后请用飞书私聊和群聊验证卡片、附件回传，以及重启后继续同一个对话。

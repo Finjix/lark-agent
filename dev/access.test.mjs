@@ -20,9 +20,9 @@ test('tenant boundary rejects external users and admins and never admits missing
   assert(authorized(message('new-user','company','selected-group'),{...policy,chats:['selected-group']}));
 });
 
-test('legacy user allowlist remains available and empty access configuration denies everyone',()=>{
-  const legacy={...policy,tenants:[]};assert(authorized(message('listed-user'),legacy));assert(authorized(message('admin'),legacy));
-  assert.equal(authorized(message(),legacy),false);
+test('the user allowlist applies when no tenant is set, and empty access configuration denies everyone',()=>{
+  const listed={...policy,tenants:[]};assert(authorized(message('listed-user'),listed));assert(authorized(message('admin'),listed));
+  assert.equal(authorized(message(),listed),false);
   const empty={tenants:[],users:[],admins:[],chats:[]};assert.equal(accessConfigured(empty),false);assert.equal(authorized(message(),empty),false);
 });
 

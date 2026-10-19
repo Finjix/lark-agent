@@ -29,12 +29,13 @@ export function codexEnv(user?:PluginUser):Record<string,string>{
 }
 /**
  * What Codex is configured with, passed with every run instead of written to a config file, so the project holds the only copy.
- * The features switched off would put one account, browser or machine in front of every Feishu user: connectors of the logged-in ChatGPT
- * account, Codex's own browser and computer control. Nothing else is added: no instructions, no tools. Plugins are the exception, and only
- * the ones dropped into plugins/ (see plugins.ts): with any installed, Codex's plugin feature is on and their MCP servers are registered.
+ * Two features are switched off because everything here is shared by all Feishu users: `apps` (the connectors of the logged-in ChatGPT account, on
+ * by default) and `memories` (off by default, kept off so that what Codex remembers from one user's chats can never reach another's: the home is
+ * shared). Nothing else is added: no instructions, no tools. Plugins are the exception, and only the ones dropped into plugins/ (see plugins.ts):
+ * with any installed, Codex's plugin feature is on and their MCP servers are registered.
  */
 export function codexConfig(plugins:Plugin[]=[]):NonNullable<CodexOptions['config']>{
-  return {cli_auth_credentials_store:'file',features:{apps:false,plugins:plugins.length>0,browser_use:false,in_app_browser:false,computer_use:false,memories:false},...pluginConfig(plugins)};
+  return {cli_auth_credentials_store:'file',features:{apps:false,plugins:plugins.length>0,memories:false},...pluginConfig(plugins)};
 }
 /** No limits: Codex may do anything on this machine and nobody is asked, so what fails is only what cannot be done. */
 export function threadOptions(cwd:string):ThreadOptions{

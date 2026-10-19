@@ -38,7 +38,7 @@ test('what nobody touched for seven days goes from the logs, the workspaces and 
     await write(path.join(p.roots.data,'backup-1.sqlite')),await write(path.join(p.roots.data,'control.token')),await write(path.join(p.roots.data,'logs','notes.txt')),
     ...['auth.json','config.toml','installation_id','state_5.sqlite','thread_history_1.sqlite'].map(name=>path.join(p.roots.codexHome,name)),
     path.join(p.roots.codexHome,'.sandbox','setup.json'),path.join(p.roots.codexHome,'skills','.system','imagegen','SKILL.md'),path.join(p.roots.codexHome,'tmp','arg0','.lock'),
-    path.join(p.roots.user,'旧版','data','browser-profile'),
+    path.join(p.roots.user,'李小明','plugin-one','tokens.json'),
   ];
   for(const file of kept)await write(file);
   try{

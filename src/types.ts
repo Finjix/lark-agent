@@ -3,8 +3,6 @@ export type TaskStatus = 'QUEUED'|'STARTING'|'RUNNING'|'COMPLETED'|'FAILED'|'CAN
 export const terminal = (status: string) => (terminalStates as readonly string[]).includes(status);
 /** The one thing users are told whenever the bot cannot do its job (Codex unavailable or failing, attachments failing); the cause goes to the log. */
 export const BOT_DOWN = '机器人罢工了，请联系 @钟丰骏-实习生';
-// Columns of the Desktop bridge that stay in existing databases and that nothing reads any more: tasks.desktop_host_id, turn_id, last_revision, submission_key
-// (set to the task id), and task_messages.last_revision.
 export interface Task {
   id: string; tenant_key: string; user_id: string; chat_id: string; source_message_id: string;
   instruction: string; thread_id: string|null;

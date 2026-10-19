@@ -156,8 +156,8 @@ test('a link to a file outside the delivery folder is ignored without a notice a
   const delivery=new Delivery(s,f);await delivery.tick();assert.equal(s.db.prepare("SELECT count(*) c FROM delivery_outbox WHERE kind='NOTICE'").get().c,0,'no notice');assert.equal(s.db.prepare('SELECT count(*) c FROM task_artifacts').get().c,0);assert.equal(uploaded,false);
   await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
 });
-test('whatever Codex leaves in the task output folder is delivered even when the reply does not link it',async()=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-scan-')),workspace=path.join(dir,'output','20261016_170000');
+test('whatever Codex leaves in the workspace is delivered even when the reply does not link it',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-scan-')),workspace=path.join(dir,'workspace');
   await fs.mkdir(path.join(workspace,'sub'),{recursive:true});
   await fs.writeFile(path.join(workspace,'report.txt'),'r');await fs.writeFile(path.join(workspace,'sub','data.csv'),'d');await fs.writeFile(path.join(workspace,'chart.png'),'p');
   await fs.writeFile(path.join(workspace,'.scratch'),'x');await fs.writeFile(path.join(dir,'elsewhere.txt'),'never');
@@ -190,7 +190,7 @@ test('reply links: parentheses inside a path are kept, other markdown is not mis
   assert.deepEqual(artifactLinks('see [a](D:/x/a.txt) and (parenthetical) then [b](D:/x/b (1).txt)'),['D:/x/a.txt','D:/x/b (1).txt']);
 });
 test('a delivered file with parentheses in its name is sent, a link to a missing file inside the folder is still reported, links elsewhere are not',async()=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-links-')),workspace=path.join(dir,'outputs'),input_=path.join(dir,'input');await fs.mkdir(workspace);await fs.mkdir(input_);
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-links-')),workspace=path.join(dir,'workspace'),input_=path.join(dir,'input');await fs.mkdir(workspace);await fs.mkdir(input_);
   const named=path.join(workspace,'report (2).pdf'),mine=path.join(input_,'photo (2).png');await fs.writeFile(named,'r');await fs.writeFile(mine,'m');
   const s=memory(),task=s.create(input()).task;
   s.transition(task.id,'COMPLETED',{workspace_path:workspace,result:`[报告](<${named}>) [你的图](<${mine}>) [站内](/docs/intro) [丢失](<${path.join(workspace,'missing.txt')}>)`});
@@ -203,7 +203,7 @@ test('a delivered file with parentheses in its name is sent, a link to a missing
 });
 
 test('a slow upload does not hold back the card updates of other tasks',async()=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-slow-')),workspace=path.join(dir,'outputs');await fs.mkdir(workspace);
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-slow-')),workspace=path.join(dir,'workspace');await fs.mkdir(workspace);
   const big=path.join(workspace,'big.bin');await fs.writeFile(big,'x');
   const s=memory(),a=s.create(input('a','u1')).task,b=s.create(input('b','u2')).task;
   s.transition(a.id,'COMPLETED',{workspace_path:workspace,result:`[大文件](<${big}>)`});s.transition(b.id,'RUNNING',{started_at:Date.now(),progress:'还在做'});
