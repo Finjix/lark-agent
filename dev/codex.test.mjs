@@ -319,20 +319,20 @@ test('commands, file changes, tools, searches and plans become steps, the shell 
   assert(long.steps[0].output.length<3100&&long.steps[0].output.endsWith('END'),'the end of a long output is what is kept');
   assert.equal(plainCommand('git status'),'git status');assert.equal(plainCommand('pwsh -NoProfile -Command "ls"'),'ls');
 });
-test('the card lists the steps as Codex took them: tool calls fold away, long notes fold, the answer stays open, and the whole card fits',()=>{
+test('the card lists the steps as Codex took them: commands and tool calls are not shown, long notes fold, the answer stays open, and the whole card fits',()=>{
   const steps=[{id:'1',type:'message',text:'先看一下。'},{id:'2',type:'command',command:'dir',output:'a.txt',status:'done',exit:0},{id:'3',type:'message',text:'长'.repeat(700)},
     {id:'4',type:'files',changes:[{path:'D:/w/a.txt',kind:'add'}],status:'done'},{id:'5',type:'message',text:'这是最终答案'}];
   const task={status:'COMPLETED',progress:'',result:'这是最终答案',error:'',steps:JSON.stringify(steps),workspace_path:'D:/w',started_at:1,created_at:1};
   const tags=cardElements(task,renderTask(task)).map(e=>e.tag+(e.tag==='collapsible_panel'?':'+[...e.header.title.content].slice(0,5).join(''):''));
-  assert.deepEqual(tags,['markdown','collapsible_panel:✅ dir','collapsible_panel:💬 长长长','collapsible_panel:✅ 修改了','markdown']);
-  const elements=cardElements(task,'');assert.equal(elements.at(-1).content,'这是最终答案');assert(elements[1].elements[0].content.includes('$ dir')&&elements[1].elements[0].content.includes('a.txt'));
-  assert(elements[3].elements[0].content.includes('`a.txt`')&&elements[3].elements[0].content.includes('新增'),'paths are shown relative to the workspace');
+  assert.deepEqual(tags,['markdown','collapsible_panel:💬 长长长','collapsible_panel:✅ 修改了','markdown']);
+  const elements=cardElements(task,'');assert.equal(elements.at(-1).content,'这是最终答案');assert(!JSON.stringify(elements).includes('dir')&&!JSON.stringify(elements).includes('a.txt\n'),'the command and its output are not on the card');
+  assert(elements[2].elements[0].content.includes('`a.txt`')&&elements[2].elements[0].content.includes('新增'),'paths are shown relative to the workspace');
   assert.equal(elements.every(e=>e.expanded!==true),true,'folded by default');
   const failed={...task,status:'FAILED',error:'出错了'};assert.equal(cardElements(failed,'').at(-1).content,'出错了\n\n执行失败');
   // A card with no steps (an older task, or one that never started) is the plain text it always was.
   assert.deepEqual(cardElements({...task,steps:'[]'},'正文'),[{tag:'markdown',element_id:'task_content',content:'正文'}]);assert.equal(cardElements({...task,steps:undefined},'x')[0].element_id,'task_content');assert.equal(cardElements({...task,steps:'not json'},'x')[0].element_id,'task_content');
   // The whole card has to fit in what Feishu accepts: the oldest panels give up their contents first, then the oldest steps go.
-  const many=Array.from({length:80},(_,i)=>({id:'c'+i,type:'command',command:'cmd '+i,output:'x'.repeat(3000),status:'done',exit:0})).concat([{id:'m',type:'message',text:'完成'}]);
+  const many=Array.from({length:80},(_,i)=>({id:'c'+i,type:'message',text:'n'+i+'x'.repeat(3000)})).concat([{id:'m',type:'message',text:'完成'}]);
   const big=cardJson({...task,steps:JSON.stringify(many)},'完成',false);assert(Buffer.byteLength(JSON.stringify(big))<28000);
   const body=big.body.elements;assert.equal(body.at(-1).content,'完成','the answer is never what gets dropped');assert(JSON.stringify(body).includes('内容已省略')||JSON.stringify(body).includes('已省略'));
   const header=cardJson({...task,status:'RUNNING',started_at:Date.now()-3000},'',true);assert.match(header.header.title.content,/^番薯搬砖中\.\.\.\.\.\. \d+s$/,'the working header stays');

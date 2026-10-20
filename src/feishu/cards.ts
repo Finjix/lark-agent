@@ -47,9 +47,10 @@ function stepElement(step:Step,last:boolean,workspace:string|null){
       const text=limitText(withoutImages(step.text),12000);if(!text)return;
       return last||text.length<=LONG_MESSAGE?markdown(text):panel(`💬 ${oneLine(text,40)}`,text);
     }
-    case 'command':return panel(`${icon(step.status)} ${oneLine(step.command,70)}`,code(`$ ${step.command}${step.output?`\n\n${step.output}`:''}${step.status==='failed'&&step.exit!==undefined?`\n\n（退出码 ${step.exit}）`:''}`));
+    // Commands and tool calls are not shown on the card: the user wants the answer, not the plumbing. They stay in the stored steps.
+    case 'command':return;
     case 'files':return panel(`${icon(step.status)} 修改了 ${step.changes.length} 个文件`,step.changes.map(c=>`- ${c.kind==='add'?'新增':c.kind==='delete'?'删除':'修改'} \`${shown(c.path)}\``).join('\n'));
-    case 'tool':return panel(`${icon(step.status)} ${step.server} · ${step.tool}`,`${code(step.args)}${step.result?`\n${code(step.result)}`:''}`);
+    case 'tool':return;
     case 'search':return markdown(`🔍 搜索：${oneLine(step.query,120)}`);
     case 'todo':return markdown(step.items.map(i=>`${i.completed?'☑':'☐'} ${i.text}`).join('\n'));
   }
