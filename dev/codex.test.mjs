@@ -155,6 +155,19 @@ test('what Codex says shows up while the task runs, and the user\'s queue is hel
   release();await running;assert.equal(store.get(task.id).status,'COMPLETED');assert.equal(store.busy('t','u1'),false);store.close();
 });
 
+test('a task ends when Codex reports the result, even if something the turn started keeps the process running; it is then stopped',async()=>{
+  let stopped=false;
+  const {store,service,run}=setup(async function*(job){
+    yield started('th');yield turnStarted;yield say('a','请扫码');yield completed;
+    // Like `codex exec` with a browser left waiting for a QR scan: the result is out, but the process only ends when stopped.
+    await untilAborted(job.signal).catch(e=>{stopped=true;throw e;});
+  });
+  service.exitWaitMs=20;
+  const task=await run();
+  assert.equal(task.status,'COMPLETED');assert.equal(task.result,'请扫码');assert(stopped,'the leftover process is stopped');
+  store.close();
+});
+
 test('a failed turn shows Codex\'s reason even though the process then exits with an error; any other way a run goes wrong is the one bot-down sentence',async()=>{
   let mode;
   const {store,run}=setup(async function*(job,n){

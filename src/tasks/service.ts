@@ -27,6 +27,11 @@ export class TaskService {
   private stopping=false;
   /** How long /new waits for a stopped Codex process to be gone before it ends the task regardless. */
   stopWaitMs=5000;
+  /**
+   * How long a Codex process may keep running after it reported the turn's result. A command of the turn can leave something running that
+   * holds the process open (a browser waiting for a QR scan, say): Codex then only exits once that ends, so after this it is stopped.
+   */
+  exitWaitMs=3000;
   constructor(public store:Store,public codex:CodexRunner,private downloader?:ResourceDownloader){}
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
   authorized(message:IncomingMessage){return authorized(message);}
@@ -117,7 +122,13 @@ export class TaskService {
       try{
         // The user's own folder (not the workspace in it) and Open ID are what plugins serve this turn with.
         const user={dir:userDirectory(this.store,session),openId:session.user_id};
-        for await(const event of this.codex.run({threadId,cwd:folder,input,signal,user})){received=true;this.onEvent(task,session,turn,event);}
+        const done=new AbortController();let timer:NodeJS.Timeout|undefined;
+        try{
+          for await(const event of this.codex.run({threadId,cwd:folder,input,signal:AbortSignal.any([signal,done.signal]),user})){
+            received=true;this.onEvent(task,session,turn,event);
+            if(turn.state!=='running'&&!timer)timer=setTimeout(()=>done.abort(),this.exitWaitMs);
+          }
+        }finally{clearTimeout(timer);}
         break;
       }catch(e){
         // After a failed turn the process exits with an error code, which the SDK throws; the turn's own report is what counts.
