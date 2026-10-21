@@ -159,8 +159,9 @@ test('a task ends when Codex reports the result, even if something the turn star
   let stopped=false;
   const {store,service,run}=setup(async function*(job){
     yield started('th');yield turnStarted;yield say('a','请扫码');yield completed;
-    // Like `codex exec` with a browser left waiting for a QR scan: the result is out, but the process only ends when stopped.
-    await untilAborted(job.signal).catch(e=>{stopped=true;throw e;});
+    // Like `codex exec` with a browser left waiting for a QR scan: the result is out, but the events only end once the browser does, and
+    // stopping the process does not change that (the browser holds its output pipe).
+    job.signal.addEventListener('abort',()=>{stopped=true;},{once:true});await new Promise(()=>{});
   });
   service.exitWaitMs=20;
   const task=await run();

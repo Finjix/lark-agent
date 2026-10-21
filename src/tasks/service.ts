@@ -29,7 +29,8 @@ export class TaskService {
   stopWaitMs=5000;
   /**
    * How long a Codex process may keep running after it reported the turn's result. A command of the turn can leave something running that
-   * holds the process open (a browser waiting for a QR scan, say): Codex then only exits once that ends, so after this it is stopped.
+   * holds the process open (a browser waiting for a QR scan, say): Codex then only exits once that ends, so after this it is stopped and the
+   * task ends without it.
    */
   exitWaitMs=3000;
   constructor(public store:Store,public codex:CodexRunner,private downloader?:ResourceDownloader){}
@@ -122,11 +123,18 @@ export class TaskService {
       try{
         // The user's own folder (not the workspace in it) and Open ID are what plugins serve this turn with.
         const user={dir:userDirectory(this.store,session),openId:session.user_id};
-        const done=new AbortController();let timer:NodeJS.Timeout|undefined;
+        const done=new AbortController();let timer:NodeJS.Timeout|undefined,stopped:Promise<undefined>|undefined;
+        const events=this.codex.run({threadId,cwd:folder,input,signal:AbortSignal.any([signal,done.signal]),user})[Symbol.asyncIterator]();
         try{
-          for await(const event of this.codex.run({threadId,cwd:folder,input,signal:AbortSignal.any([signal,done.signal]),user})){
-            received=true;this.onEvent(task,session,turn,event);
-            if(turn.state!=='running'&&!timer)timer=setTimeout(()=>done.abort(),this.exitWaitMs);
+          for(;;){
+            const next=events.next();
+            // Once stopped, the events are no longer waited for: the stream only ends when Codex's output pipe closes, and on Windows what a
+            // command left running holds that pipe too, killed process or not. What is still on its way is dropped.
+            const event=stopped?await Promise.race([next,stopped]):await next;
+            if(!event){next.catch(()=>{});break;}
+            if(event.done)break;
+            received=true;this.onEvent(task,session,turn,event.value);
+            if(turn.state!=='running'&&!stopped)stopped=new Promise(resolve=>{timer=setTimeout(()=>{done.abort();resolve(undefined);},this.exitWaitMs);});
           }
         }finally{clearTimeout(timer);}
         break;
