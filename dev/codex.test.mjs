@@ -332,14 +332,14 @@ test('commands, file changes, tools, searches and plans become steps, the shell 
   assert(long.steps[0].output.length<3100&&long.steps[0].output.endsWith('END'),'the end of a long output is what is kept');
   assert.equal(plainCommand('git status'),'git status');assert.equal(plainCommand('pwsh -NoProfile -Command "ls"'),'ls');
 });
-test('the card lists the steps as Codex took them: commands and tool calls are not shown, long notes fold, the answer stays open, and the whole card fits',()=>{
+test('the card lists the steps as Codex took them: commands, file changes and tool calls are not shown, long notes fold, the answer stays open, and the whole card fits',()=>{
   const steps=[{id:'1',type:'message',text:'先看一下。'},{id:'2',type:'command',command:'dir',output:'a.txt',status:'done',exit:0},{id:'3',type:'message',text:'长'.repeat(700)},
     {id:'4',type:'files',changes:[{path:'D:/w/a.txt',kind:'add'}],status:'done'},{id:'5',type:'message',text:'这是最终答案'}];
   const task={status:'COMPLETED',progress:'',result:'这是最终答案',error:'',steps:JSON.stringify(steps),workspace_path:'D:/w',started_at:1,created_at:1};
   const tags=cardElements(task,renderTask(task)).map(e=>e.tag+(e.tag==='collapsible_panel'?':'+[...e.header.title.content].slice(0,5).join(''):''));
-  assert.deepEqual(tags,['markdown','collapsible_panel:💬 长长长','collapsible_panel:✅ 修改了','markdown']);
+  assert.deepEqual(tags,['markdown','collapsible_panel:💬 长长长','markdown']);
   const elements=cardElements(task,'');assert.equal(elements.at(-1).content,'这是最终答案');assert(!JSON.stringify(elements).includes('dir')&&!JSON.stringify(elements).includes('a.txt\n'),'the command and its output are not on the card');
-  assert(elements[2].elements[0].content.includes('`a.txt`')&&elements[2].elements[0].content.includes('新增'),'paths are shown relative to the workspace');
+  assert(!JSON.stringify(elements).includes('修改了'),'nor the file changes');
   assert.equal(elements.every(e=>e.expanded!==true),true,'folded by default');
   const failed={...task,status:'FAILED',error:'出错了'};assert.equal(cardElements(failed,'').at(-1).content,'出错了\n\n执行失败');
   // A card with no steps (an older task, or one that never started) is the plain text it always was.

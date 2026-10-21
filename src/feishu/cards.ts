@@ -40,16 +40,16 @@ const markdown=(content:string)=>({tag:'markdown',content});
 /** A folded block that opens on a tap: tool calls and long text sit in these, so the answer is what the eye lands on. */
 const panel=(title:string,body:string)=>({tag:'collapsible_panel',expanded:false,header:{title:{tag:'plain_text',content:title}},elements:[markdown(body||' ')]});
 function parseSteps(task:Task):Step[]{try{const steps=JSON.parse(task.steps??'[]');return Array.isArray(steps)?steps:[];}catch{return [];}}
-function stepElement(step:Step,last:boolean,workspace:string|null){
-  const shown=(path:string)=>workspace&&path.toLowerCase().startsWith(workspace.toLowerCase())?path.slice(workspace.length).replace(/^[\\/]+/,''):path;
+function stepElement(step:Step,last:boolean){
   switch(step.type){
     case 'message':{
       const text=limitText(withoutImages(step.text),12000);if(!text)return;
       return last||text.length<=LONG_MESSAGE?markdown(text):panel(`💬 ${oneLine(text,40)}`,text);
     }
-    // Commands and tool calls are not shown on the card: the user wants the answer, not the plumbing. They stay in the stored steps.
+    // Commands, file changes and tool calls are not shown on the card: the user wants the answer, not the plumbing (what is made for them
+    // arrives as files). They stay in the stored steps.
     case 'command':return;
-    case 'files':return panel(`${icon(step.status)} 修改了 ${step.changes.length} 个文件`,step.changes.map(c=>`- ${c.kind==='add'?'新增':c.kind==='delete'?'删除':'修改'} \`${shown(c.path)}\``).join('\n'));
+    case 'files':return;
     case 'tool':return;
     case 'search':return markdown(`🔍 搜索：${oneLine(step.query,120)}`);
     case 'todo':return markdown(step.items.map(i=>`${i.completed?'☑':'☐'} ${i.text}`).join('\n'));
@@ -65,7 +65,7 @@ function fit(elements:any[]){
 }
 export function cardElements(task:Task,content:string){
   const steps=parseSteps(task),lastMessage=steps.map(s=>s.type).lastIndexOf('message');
-  const elements=steps.flatMap((step,i)=>{const element=stepElement(step,i===lastMessage,task.workspace_path);return element?[element]:[];});
+  const elements=steps.flatMap((step,i)=>{const element=stepElement(step,i===lastMessage);return element?[element]:[];});
   if(!elements.length)return [{tag:'markdown',element_id:'task_content',content:content||' '}];
   const tail=tailParts(task);if(tail.length)elements.push(markdown(tail.join('\n\n')));
   return fit(elements);
