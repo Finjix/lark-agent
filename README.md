@@ -22,7 +22,7 @@ Codex 的登录、对话、生成的图片等一切状态都放在项目自己�
 每条用户输入对应一次 `codex exec`（由 SDK 启动的子进程）；同一个用户的所有输入续接同一个 Codex 对话（thread），所以上下文是连续的。`/new` 让用户丢掉上下文重新开始（见“指令”）。
 
 - **位置**：`.codex/` 保存对话（`sessions/`）、生成的图片（`generated_images/`）和日志，不入 Git。环境变量 `CODEX_HOME` 被忽略，子进程始终使用项目里的这个目录。
-- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`（登录账号的 ChatGPT 连接器，会被所有飞书用户共用）和 `memories`（记忆存在共用的 `.codex` 里，会在用户之间串；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型默认 `gpt-6-luna`、推理强度 `low`，要改在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
+- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`（登录账号的 ChatGPT 连接器，会被所有飞书用户共用）和 `memories`（记忆存在共用的 `.codex` 里，会在用户之间串；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型默认 `gpt-6.1-sol`、推理强度 `medium`，要改在 `.env` 设 `CODEX_MODEL`、`CODEX_REASONING_EFFORT`。
 - **登录**：登录文件是 `.codex/auth.json`（启动时收紧为仅当前账号可读，存成文件而不是系统钥匙串）。Codex 不可用或登录被拒绝时，用户只会看到“机器人罢工了”，原因写在日志里；管理员重新 `start.cmd codex login` 即可，服务不用重启（未就绪时每 10 秒检查一次）。
 - **权限**：没有任何限制：沙箱 `danger-full-access`、审批 `never`，Codex 可以读写本机任何位置、访问网络，也没有人会被询问。写死在 `src/codex/runner.ts`，没有开关。因为不能交互，做不到的事只会失败，Codex 自己换办法；所以没有 `/approve`、`/deny`、`/answer`：Codex 需要问用户什么，就在回复里问，用户的下一条消息就是回答。
 - **提示词**：不向 Codex 注入任何指令，也没有 MCP 工具（除了放进 `plugins/` 的插件自带的技能和工具）：它看到的就是用户发来的文字（外加附件清单，见下）。

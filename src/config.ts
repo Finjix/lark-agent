@@ -16,7 +16,7 @@ export const config = {
   FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
   CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250),
   // Codex runs through its SDK with everything it keeps (login, chats, generated images) in <project>/.codex. The CODEX_HOME of the system is never read.
-  CODEX_API_KEY:text('CODEX_API_KEY'), CODEX_MODEL:text('CODEX_MODEL','gpt-6-luna'), CODEX_REASONING_EFFORT:text('CODEX_REASONING_EFFORT','low'),
+  CODEX_API_KEY:text('CODEX_API_KEY'), CODEX_MODEL:text('CODEX_MODEL','gpt-6.1-sol'), CODEX_REASONING_EFFORT:text('CODEX_REASONING_EFFORT','medium'),
   TASK_TIMEOUT_MS:int('TASK_TIMEOUT_MS',0), HEALTH_PORT:int('HEALTH_PORT',8765,1,65535),
   // Logs, workspace files and Codex's own files untouched for this long are deleted (see maintenance.ts).
   RETENTION_DAYS:int('RETENTION_DAYS',7,1),
