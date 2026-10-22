@@ -2,9 +2,10 @@ import {EventEmitter} from 'node:events';
 import {createRequire} from 'node:module';
 import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
-import {Codex,type CodexOptions,type ModelReasoningEffort,type ThreadEvent,type ThreadOptions,type UserInput} from '@openai/codex-sdk';
+import type {CodexOptions,ModelReasoningEffort,ThreadEvent,ThreadItem,ThreadOptions,UserInput} from '@openai/codex-sdk';
 import {config} from '../config.js';
 import {pluginConfig,PLUGIN_ENV,type Plugin,type PluginUser} from '../plugins.js';
+import {spawnAppServer,type AppServer,type ServerOptions} from './appserver.js';
 
 const run=promisify(execFile);
 // The launcher script of @openai/codex, the package the SDK itself drives: it finds the native binary of this platform.
@@ -56,15 +57,85 @@ export async function codexOutput(args:string[],env:Record<string,string>=codexE
   return (await run(process.execPath,[launcher(),...args],{env,timeout:300000,windowsHide:true,encoding:'utf8',maxBuffer:16*1024*1024})).stdout;
 }
 
+/** The config overrides as command-line flags, flattened the way the Codex SDK passes them to `codex exec` (a dotted key per value, TOML values). */
+export function configArgs(value:NonNullable<CodexOptions['config']>):string[]{
+  const toml=(v:unknown):string=>typeof v==='string'?JSON.stringify(v):typeof v==='number'||typeof v==='boolean'?String(v)
+    :Array.isArray(v)?`[${v.map(toml).join(', ')}]`:`{${Object.entries(v as object).filter(([,x])=>x!==undefined).map(([k,x])=>`${/^[A-Za-z0-9_-]+$/.test(k)?k:JSON.stringify(k)} = ${toml(x)}`).join(', ')}}`;
+  const args:string[]=[];
+  const walk=(node:Record<string,unknown>,prefix:string)=>{
+    if(prefix&&!Object.keys(node).length){args.push('--config',`${prefix}={}`);return;}
+    for(const [key,child] of Object.entries(node)){
+      if(child===undefined)continue;const at=prefix?`${prefix}.${key}`:key;
+      if(child&&typeof child==='object'&&!Array.isArray(child))walk(child as Record<string,unknown>,at);else args.push('--config',`${at}=${toml(child)}`);
+    }
+  };
+  walk(value as Record<string,unknown>,'');return args;
+}
+
+/** What one turn of the app-server says, in the SDK's terms (what `codex exec --experimental-json` printed, and what Turn folds). */
+export function threadItem(item:any):ThreadItem|undefined{
+  const status=(s:unknown)=>s==='inProgress'?'in_progress' as const:s==='completed'?'completed' as const:'failed' as const;
+  switch(item?.type){
+    case 'agentMessage':return {id:item.id,type:'agent_message',text:String(item.text??'')};
+    case 'commandExecution':return {id:item.id,type:'command_execution',command:String(item.command??''),aggregated_output:String(item.aggregatedOutput??''),
+      ...(typeof item.exitCode==='number'?{exit_code:item.exitCode}:{}),status:status(item.status)};
+    case 'fileChange':return {id:item.id,type:'file_change',changes:(item.changes??[]).map((c:any)=>({path:String(c.path),kind:c.kind?.type??c.kind})),
+      status:item.status==='failed'||item.status==='declined'?'failed':'completed'};
+    case 'mcpToolCall':return {id:item.id,type:'mcp_tool_call',server:String(item.server),tool:String(item.tool),arguments:item.arguments,
+      ...(item.result?{result:{content:item.result.content??[],structured_content:item.result.structuredContent}}:{}),
+      ...(item.error?{error:{message:String(item.error.message??'')}}:{}),status:status(item.status)};
+    case 'webSearch':return {id:item.id,type:'web_search',query:String(item.query??'')};
+    // The user's own messages (the first and the steered ones), reasoning, images Codex looked at and the like are no steps of a card.
+    default:return undefined;
+  }
+}
+export function turnEvents(turnId:string){
+  let planShown=false;
+  return function*(method:string,params:any):Generator<ThreadEvent>{
+    switch(method){
+      case 'item/started':case 'item/completed':{const item=threadItem(params?.item);if(item)yield {type:method==='item/started'?'item.started':'item.completed',item};return;}
+      // The to-do list Codex keeps: one item, updated in place.
+      case 'turn/plan/updated':{
+        const item:ThreadItem={id:`plan-${turnId}`,type:'todo_list',items:(params?.plan??[]).map((step:any)=>({text:String(step?.step??''),completed:step?.status==='completed'}))};
+        yield {type:planShown?'item.updated':'item.started',item};planShown=true;return;
+      }
+      // Codex's own notices (a reconnect, say); the turn still ends with its own result.
+      case 'error':yield {type:'error',message:String(params?.error?.message??'')};return;
+      case 'turn/completed':{
+        const turn=params?.turn;
+        // Usage is kept nowhere here.
+        if(turn?.status==='completed')yield {type:'turn.completed',usage:{input_tokens:0,cached_input_tokens:0,cache_write_input_tokens:0,output_tokens:0,reasoning_output_tokens:0}};
+        else if(turn?.status==='failed')yield {type:'turn.failed',error:{message:String(turn.error?.message||'Codex 本轮失败')}};
+        // Interrupted: only ever because the task was stopped, which its abort signal says.
+        return;
+      }
+    }
+  };
+}
+/** The user's input in the app-server's terms. */
+const serverInput=(input:UserInput[])=>input.map(part=>part.type==='text'?{type:'text',text:part.text}:{type:'localImage',path:part.path});
+
 /** `user` is whom the turn is for; plugins need it (the turn's environment carries their folder and Open ID). */
-export interface TurnJob {threadId:string|null;cwd:string;input:UserInput[];signal:AbortSignal;user?:PluginUser}
-type CodexFactory=(options:CodexOptions)=>Pick<Codex,'startThread'|'resumeThread'>;
-/** Runs the user's turns with the Codex SDK; one `codex exec` process per turn, all sharing the home in <project>/.codex. */
+export interface TurnJob {
+  threadId:string|null;cwd:string;input:UserInput[];signal:AbortSignal;user?:PluginUser;
+  /**
+   * Told once the turn has started, with what hands more of the user's input to it (Codex's steering: the model reads it at its next step,
+   * whatever it is doing), and told again with nothing once the turn can no longer take any. A hand-over Codex refuses (the turn has just
+   * ended) rejects.
+   */
+  steerable?:(steer:((input:UserInput[])=>Promise<void>)|undefined)=>void;
+}
+type Connect=(options:ServerOptions)=>AppServer;
+/**
+ * Runs the user's turns through `codex app-server`: one process per turn, with that user's environment, all sharing the home in
+ * <project>/.codex. Its chats are the ones `codex exec` kept there before. A turn of the app-server can take more input while it runs, which is
+ * how a user's message sent meanwhile reaches it.
+ */
 export class CodexRunner extends EventEmitter {
   ready=false; version=''; error='';
   /** The plugins installed from plugins/ (set at start); every turn of a user gets them. */
   plugins:Plugin[]=[];
-  constructor(private factory:CodexFactory=options=>new Codex(options)){super();}
+  constructor(private connect:Connect=spawnAppServer){super();}
   /** Whether Codex can take a task: its binary runs and the project has a login (or an API key in .env). */
   async probe(){
     const before=this.ready;
@@ -80,11 +151,30 @@ export class CodexRunner extends EventEmitter {
   }
   /** One turn of the user's conversation. `threadId` continues an existing chat; the id of a new one arrives in the thread.started event. */
   async *run(job:TurnJob):AsyncGenerator<ThreadEvent>{
-    const codex=this.factory({env:codexEnv(this.plugins.length?job.user:undefined),apiKey:config.CODEX_API_KEY||undefined,config:codexConfig(this.plugins)});
     const options=threadOptions(job.cwd);
-    const thread=job.threadId?codex.resumeThread(job.threadId,options):codex.startThread(options);
-    const {events}=await thread.runStreamed(job.input,{signal:job.signal});
-    yield* events;
+    const args=[...configArgs(codexConfig(this.plugins)),...(options.modelReasoningEffort?['--config',`model_reasoning_effort="${options.modelReasoningEffort}"`]:[])];
+    const env={...codexEnv(this.plugins.length?job.user:undefined),...(config.CODEX_API_KEY?{CODEX_API_KEY:config.CODEX_API_KEY}:{})};
+    const server=this.connect({args,env,signal:job.signal});
+    try{
+      await server.request('initialize',{clientInfo:{name:'lark-agent',version:this.version||'0'}});
+      server.notify('initialized');
+      const settings={cwd:options.workingDirectory,sandbox:options.sandboxMode,approvalPolicy:options.approvalPolicy,...(options.model?{model:options.model}:{})};
+      // A resumed chat is not sent back whole: only its id is needed.
+      const {thread}=job.threadId?await server.request('thread/resume',{threadId:job.threadId,...settings,excludeTurns:true}):await server.request('thread/start',settings);
+      yield {type:'thread.started',thread_id:thread.id};
+      const {turn}=await server.request('turn/start',{threadId:thread.id,input:serverInput(job.input)});
+      yield {type:'turn.started'};
+      job.steerable?.(async input=>{await server.request('turn/steer',{threadId:thread.id,expectedTurnId:turn.id,input:serverInput(input)});});
+      const events=turnEvents(turn.id);
+      for(;;){
+        const next=await server.notifications.next();
+        if(next.done){job.signal.throwIfAborted();throw Error(server.exitReason??'Codex 没有给出本轮的结果就结束了');}
+        const {method,params}=next.value,of=params?.turnId??params?.turn?.id;
+        if(of!==undefined&&of!==turn.id)continue;
+        yield* events(method,params);
+        if(method==='turn/completed')return;
+      }
+    }finally{job.steerable?.(undefined);server.close();}
   }
   close(){this.removeAllListeners();}
 }

@@ -130,7 +130,8 @@ export class Delivery {
       this.store.db.prepare('UPDATE task_artifacts SET message_id=? WHERE id=?').run(sent.message_id,artifact.id);return;
     }
     if(row.kind!=='VIEW')throw Error('未知投递类型');
-    if(terminal(task.status))await this.collectArtifacts(task);
+    // A message handed to the running task delivers nothing of its own: what the turn made goes out with that task.
+    if(terminal(task.status)&&task.status!=='STEERED')await this.collectArtifacts(task);
     await this.updateCard(task);
   }
   private uuid(id:string){return createHash('sha256').update(id).digest('hex').slice(0,32);}

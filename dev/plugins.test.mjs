@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {config} from '../dist/config.js';
 import {discover,fingerprint,mcpServers,syncPlugins,inspectPlugins,pluginConfig,MARKETPLACE,PLUGIN_ENV} from '../dist/plugins.js';
-import {CodexRunner,codexEnv,codexConfig,codexOutput} from '../dist/codex/runner.js';
+import {CodexRunner,codexEnv,codexConfig,codexOutput,configArgs} from '../dist/codex/runner.js';
 
 const SCHEMA='https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 const made=[];
@@ -101,13 +101,17 @@ test('a user\'s turn carries their folder, their Open ID and the bot\'s Feishu a
 
 test('the runner gives a turn the plugins and the user\'s environment, and without plugins behaves as before',async()=>{
   const made=[];
-  const factory=options=>{made.push(options);return {startThread:()=>({runStreamed:async()=>({events:(async function*(){})()})}),resumeThread:()=>{throw Error('unused');}};};
-  const runner=new CodexRunner(factory),job={threadId:null,cwd:'D:/w',input:[],signal:new AbortController().signal,user:{dir:'D:\\u',openId:'ou_1'}};
+  // An app-server whose every turn is over at once.
+  const connect=options=>{made.push(options);return {request:async method=>method==='thread/start'?{thread:{id:'th'}}:method==='turn/start'?{turn:{id:'t'}}:{},notify(){},close(){},exitReason:undefined,
+    notifications:{next:async()=>({done:false,value:{method:'turn/completed',params:{turn:{id:'t',status:'completed'}}}})}};};
+  const runner=new CodexRunner(connect),job={threadId:null,cwd:'D:/w',input:[],signal:new AbortController().signal,user:{dir:'D:\\u',openId:'ou_1'}};
+  const configured=options=>options.args.slice(0,configArgs(codexConfig(runner.plugins)).length);
   for await(const _ of runner.run(job));
-  assert.equal(made[0].env.LARK_AGENT_USER_DIR,undefined);assert.deepEqual(made[0].config,codexConfig());
+  assert.equal(made[0].env.LARK_AGENT_USER_DIR,undefined);assert.deepEqual(configured(made[0]),configArgs(codexConfig()));
   runner.plugins=[plugin('plugin-one',['feishu-auth'])];
   for await(const _ of runner.run(job));
-  assert.equal(made[1].env.LARK_AGENT_USER_DIR,'D:\\u');assert.equal(made[1].env.LARK_AGENT_USER_OPEN_ID,'ou_1');assert.equal(made[1].config.features.plugins,true);
+  assert.equal(made[1].env.LARK_AGENT_USER_DIR,'D:\\u');assert.equal(made[1].env.LARK_AGENT_USER_OPEN_ID,'ou_1');
+  assert.deepEqual(configured(made[1]),configArgs(codexConfig(runner.plugins)));assert(made[1].args.includes('features.plugins=true'));
   for await(const _ of runner.run({...job,user:undefined}));
   assert.equal(made[2].env.LARK_AGENT_USER_DIR,undefined,'a turn that is not a user\'s gets no user');
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
@@ -11,7 +12,8 @@ import {Scheduler} from '../dist/tasks/scheduler.js';
 import {Turn,plainCommand} from '../dist/codex/turn.js';
 import {cardJson,cardElements,renderTask} from '../dist/feishu/cards.js';
 import {codexInput} from '../dist/codex/input.js';
-import {CodexRunner,codexEnv,codexConfig,threadOptions} from '../dist/codex/runner.js';
+import {CodexRunner,codexEnv,codexConfig,threadOptions,configArgs} from '../dist/codex/runner.js';
+import {AppServerError,withPath} from '../dist/codex/appserver.js';
 import {BOT_DOWN} from '../dist/types.js';
 
 // ---- the events of `codex exec --experimental-json`, as the SDK hands them over
@@ -101,17 +103,110 @@ test('Codex is configured on each run: file login, the shared connectors and mem
     const options=threadOptions('D:/w');assert.equal(options.sandboxMode,'danger-full-access');assert.equal(options.model,'some-model');assert.equal(options.modelReasoningEffort,'low');
   }finally{Object.assign(config,{CODEX_MODEL:saved.model,CODEX_REASONING_EFFORT:saved.effort});}
 });
-test('a new chat is started or an existing one resumed with the shared environment',async()=>{
+/**
+ * Stand-ins for `codex app-server` processes, one per turn: each answers what a turn asks (`answers` overrides a method; a function gets the
+ * params and the server), records the requests, and hands out what the test `send`s until it `end`s.
+ */
+function fakeServers(answers={}){
   const made=[];
-  const factory=options=>{const rec={options,started:[],resumed:[]};made.push(rec);const thread=()=>({runStreamed:async(input,turn)=>({events:(async function*(){yield started('th');})(),input,turn})});
-    return {startThread:o=>{rec.started.push(o);return thread();},resumeThread:(id,o)=>{rec.resumed.push([id,o]);return thread();}};};
-  const runner=new CodexRunner(factory),controller=new AbortController(),input=[{type:'text',text:'hi'}];
-  const drain=async job=>{for await(const _ of runner.run(job));};
-  await drain({threadId:null,cwd:'D:/w',input,signal:controller.signal});
-  await drain({threadId:'th-1',cwd:'D:/w',input,signal:controller.signal});
-  assert.equal(made[0].started.length,1);assert.equal(made[0].resumed.length,0);
-  assert.equal(made[1].resumed[0][0],'th-1');assert.equal(made[1].resumed[0][1].workingDirectory,'D:/w');
-  assert.equal(made[0].options.env.CODEX_HOME,config.codexHome);assert.deepEqual(made[0].options.config,codexConfig());
+  const connect=options=>{
+    const queue=[],waiting=[];
+    const server={options,requests:[],notified:[],closed:false,exitReason:undefined,
+      send(method,params){const note={method,params},reader=waiting.shift();if(reader)reader({done:false,value:note});else queue.push(note);},
+      end(){server.ended=true;for(const reader of waiting.splice(0))reader({done:true,value:undefined});},
+      async request(method,params){
+        server.requests.push([method,params]);const answer=answers[method];
+        if(typeof answer==='function')return answer(params,server);if(answer instanceof Error)throw answer;
+        return method==='thread/start'?{thread:{id:'th-new'}}:method==='thread/resume'?{thread:{id:params.threadId}}:method==='turn/start'?{turn:{id:'turn-1',status:'inProgress'}}
+          :method==='turn/steer'?{turnId:params.expectedTurnId}:{};
+      },
+      notify(method){server.notified.push(method);},
+      close(){server.closed=true;},
+      notifications:{next:()=>queue.length?Promise.resolve({done:false,value:queue.shift()}):server.ended?Promise.resolve({done:true,value:undefined}):new Promise(r=>waiting.push(r))},
+    };
+    made.push(server);return server;
+  };
+  return {connect,made};
+}
+/** A turn/start that starts the turn and then reports `notes` (method, params) for it. */
+const reporting=(...notes)=>(params,server)=>{for(const [method,extra] of notes)server.send(method,{threadId:params.threadId,turnId:'turn-1',...extra});return {turn:{id:'turn-1',status:'inProgress'}};};
+const finished=(status='completed',error=null)=>['turn/completed',{turn:{id:'turn-1',status,error}}];
+const runAll=async(runner,job)=>{const events=[];for await(const event of runner.run({cwd:'D:/w',input:[],signal:new AbortController().signal,threadId:null,...job}))events.push(event);return events;};
+
+test('a turn runs in an app-server of its own: a new chat is started or an existing one resumed, with the project\'s home and settings, the input as given',async()=>{
+  const {connect,made}=fakeServers({'turn/start':reporting(finished())}),runner=new CodexRunner(connect);
+  const saved={model:config.CODEX_MODEL,effort:config.CODEX_REASONING_EFFORT};
+  try{
+    Object.assign(config,{CODEX_MODEL:'some-model',CODEX_REASONING_EFFORT:'low'});
+    const first=await runAll(runner,{input:[{type:'text',text:'hi'},{type:'local_image',path:'D:/w/input/a.png'}]});
+    await runAll(runner,{threadId:'th-1',input:[{type:'text',text:'again'}]});
+    assert.deepEqual(first.map(e=>e.type),['thread.started','turn.started','turn.completed']);assert.equal(first[0].thread_id,'th-new');
+    const [a,b]=made;
+    assert.deepEqual(a.requests.map(r=>r[0]),['initialize','thread/start','turn/start']);assert.deepEqual(a.notified,['initialized']);assert.equal(a.requests[0][1].clientInfo.name,'lark-agent');
+    assert.deepEqual(a.requests[1][1],{cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',model:'some-model'},'no sandbox, nobody asked');
+    assert.deepEqual(a.requests[2][1],{threadId:'th-new',input:[{type:'text',text:'hi'},{type:'localImage',path:'D:/w/input/a.png'}]});
+    assert.deepEqual(b.requests[1],['thread/resume',{threadId:'th-1',cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',model:'some-model',excludeTurns:true}],'a resumed chat is not sent back whole');
+    assert.equal(a.options.env.CODEX_HOME,config.codexHome);
+    assert.deepEqual(a.options.args,[...configArgs(codexConfig()),'--config','model_reasoning_effort="low"']);
+    assert(a.closed&&b.closed,'the process of a turn is closed once the turn is over');
+  }finally{Object.assign(config,saved);}
+});
+test('config overrides reach the app-server flattened as the SDK flattened them for codex exec',()=>{
+  assert.deepEqual(configArgs({cli_auth_credentials_store:'file',features:{apps:false,plugins:true},plugins:{'"x@lark-agent"':{mcp_servers:{'"s"':{enabled:false}}}},
+    mcp_servers:{'"s"':{command:'node',args:['a b','c'],env:{'"K"':'v'},cwd:undefined}},n:3,empty:{},table:[{'a b':1}]}),
+  ['--config','cli_auth_credentials_store="file"','--config','features.apps=false','--config','features.plugins=true',
+    '--config','plugins."x@lark-agent".mcp_servers."s".enabled=false','--config','mcp_servers."s".command="node"','--config','mcp_servers."s".args=["a b", "c"]',
+    '--config','mcp_servers."s".env."K"="v"','--config','n=3','--config','empty={}','--config','table=[{"a b" = 1}]']);
+  assert.deepEqual(withPath({Path:'C:\\x',PATH:'C:\\y',other:'1'},['C:\\codex'],'win32'),{Path:'C:\\codex;C:\\x',other:'1'},'one spelling of PATH on Windows, the tools in front');
+});
+test('what the app-server reports becomes the steps a card is made of, as codex exec reported them',async()=>{
+  const {connect}=fakeServers({'turn/start':reporting(
+    ['item/started',{item:{type:'userMessage',id:'u',content:[{type:'text',text:'原话'}]}}],
+    ['item/completed',{item:{type:'agentMessage',id:'a',text:'先看看',phase:'commentary'}}],
+    ['item/started',{item:{type:'commandExecution',id:'c',command:'"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'dir\'',status:'inProgress',aggregatedOutput:null,exitCode:null}}],
+    ['item/commandExecution/outputDelta',{itemId:'c',delta:'a.txt'}],
+    ['item/completed',{item:{type:'commandExecution',id:'c',command:'"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'dir\'',status:'completed',aggregatedOutput:'a.txt\r\n',exitCode:0}}],
+    ['item/completed',{item:{type:'fileChange',id:'f',status:'completed',changes:[{path:'a.txt',kind:{type:'update',move_path:null},diff:'+x'}]}}],
+    ['item/completed',{item:{type:'mcpToolCall',id:'m',server:'docs',tool:'find',arguments:{q:1},status:'failed',error:{message:'没找到'}}}],
+    ['item/completed',{item:{type:'webSearch',id:'w',query:'番薯'}}],
+    ['turn/plan/updated',{plan:[{step:'读文档',status:'completed'},{step:'上传',status:'inProgress'}]}],
+    ['turn/plan/updated',{plan:[{step:'读文档',status:'completed'},{step:'上传',status:'completed'}]}],
+    ['item/completed',{turnId:'another-turn',item:{type:'agentMessage',id:'x',text:'别的轮次'}}],
+    ['error',{error:{message:'Reconnecting... 1/5'},willRetry:true}],
+    ['item/completed',{item:{type:'agentMessage',id:'b',text:'完成',phase:'final_answer'}}],
+    finished())});
+  const turn=new Turn();for(const event of await runAll(new CodexRunner(connect),{}))turn.apply(event);
+  assert.deepEqual([turn.state,turn.answer,turn.progress],['completed','完成','先看看']);
+  assert.deepEqual(turn.steps.map(s=>s.type),['message','command','files','tool','search','todo','message'],'the user\'s own message is no step');
+  const of=Object.fromEntries(turn.steps.map(s=>[s.type,s]));
+  assert.deepEqual([of.command.command,of.command.status,of.command.output,of.command.exit],['dir','done','a.txt\r\n',0]);
+  assert.deepEqual(of.files.changes,[{path:'a.txt',kind:'update'}]);assert.deepEqual([of.tool.status,of.tool.result],['failed','没找到']);
+  assert.deepEqual(of.todo.items,[{text:'读文档',completed:true},{text:'上传',completed:true}],'the plan is one to-do list, updated in place');
+  assert(!JSON.stringify(turn.steps).includes('别的轮次'),'only this turn\'s reports count');
+});
+test('a failed turn says why, a stopped one ends without a result, and a process that ends early or is stopped is an error',async()=>{
+  const failedTurn=await runAll(new CodexRunner(fakeServers({'turn/start':reporting(finished('failed',{message:'You\'ve hit your usage limit'}))}).connect),{});
+  assert.deepEqual(failedTurn.at(-1),{type:'turn.failed',error:{message:'You\'ve hit your usage limit'}});
+  const interrupted=await runAll(new CodexRunner(fakeServers({'turn/start':reporting(finished('interrupted'))}).connect),{});
+  assert.deepEqual(interrupted.map(e=>e.type),['thread.started','turn.started'],'no result of its own: the stop says what happened');
+  const early=fakeServers({'turn/start':(params,server)=>{server.exitReason='Codex app-server 退出了（code 1）：boom';server.end();return {turn:{id:'turn-1'}};}});
+  await assert.rejects(runAll(new CodexRunner(early.connect),{}),/boom/);assert(early.made[0].closed);
+  const controller=new AbortController(),stopped=fakeServers({'turn/start':(params,server)=>{controller.abort();server.end();return {turn:{id:'turn-1'}};}});
+  await assert.rejects(runAll(new CodexRunner(stopped.connect),{signal:controller.signal}),{name:'AbortError'});
+  const missing=fakeServers({'thread/resume':new AppServerError('no rollout found for thread id th-old',-32600)});
+  await assert.rejects(runAll(new CodexRunner(missing.connect),{threadId:'th-old'}),/no rollout found/,'which the service takes for a chat Codex no longer has');
+});
+test('while its turn runs, a turn takes more input: what hands it over is offered once the turn has started and withdrawn when it is over',async()=>{
+  let steer;const offers=[];
+  const {connect,made}=fakeServers({'turn/start':(params,server)=>({turn:{id:'turn-1',status:'inProgress'}}),
+    'turn/steer':(params,server)=>{if(server.ended)throw new AppServerError('no active turn to steer',-32600);server.send('turn/completed',{threadId:params.threadId,turn:{id:'turn-1',status:'completed'}});return {turnId:'turn-1'};}});
+  const running=runAll(new CodexRunner(connect),{steerable:fn=>{offers.push(!!fn);if(fn)steer=fn;}});
+  await until(()=>steer);assert.deepEqual(offers,[true]);
+  await steer([{type:'text',text:'再加一件'},{type:'local_image',path:'D:/w/input/b.png'}]);
+  await running;
+  assert.deepEqual(made[0].requests.at(-1),['turn/steer',{threadId:'th-new',expectedTurnId:'turn-1',input:[{type:'text',text:'再加一件'},{type:'localImage',path:'D:/w/input/b.png'}]}]);
+  assert.deepEqual(offers,[true,false],'withdrawn once the turn is over');
+  made[0].end();await assert.rejects(steer([{type:'text',text:'太晚了'}]),/no active turn/);
 });
 test('Codex is ready when its binary runs and there is a login or an API key; the real binary is found through the package',async()=>{
   const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved={home:config.codexHome,key:config.CODEX_API_KEY};
@@ -351,6 +446,7 @@ test('commands, file changes, tools, searches and plans become steps, the shell 
   const long=new Turn();long.apply({type:'item.completed',item:{id:'l',type:'command_execution',command:'x',aggregated_output:'a'.repeat(10000)+'END',status:'completed',exit_code:0}});
   assert(long.steps[0].output.length<3100&&long.steps[0].output.endsWith('END'),'the end of a long output is what is kept');
   assert.equal(plainCommand('git status'),'git status');assert.equal(plainCommand('pwsh -NoProfile -Command "ls"'),'ls');
+  assert.equal(plainCommand('"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'Start-Sleep -Seconds 15 ; Write-Output slept\''),'Start-Sleep -Seconds 15 ; Write-Output slept','as the app-server quotes it');
 });
 test('the card lists the steps as Codex took them: commands, file changes and tool calls are not shown, long notes fold, the answer stays open, and the whole card fits',()=>{
   const steps=[{id:'1',type:'message',text:'先看一下。'},{id:'2',type:'command',command:'dir',output:'a.txt',status:'done',exit:0},{id:'3',type:'message',text:'长'.repeat(700)},
@@ -388,4 +484,93 @@ test('every turn is handed the user it is for: their own folder (not the workspa
   assert.equal(job.user.dir,path.dirname(session.workspace_path),'user/<name>, the parent of workspace/');
   assert(path.isAbsolute(job.user.dir)&&job.user.dir.startsWith(config.user));
   await run('m2','ou_bob');assert.notEqual(codex.jobs[1].user.dir,job.user.dir,'another user, another folder');assert.equal(codex.jobs[1].user.openId,'ou_bob');
+});
+
+// ---- a message sent while the previous one is still unfinished goes into its turn (steering)
+const sent=(id,text,extra={})=>({tenant:'t',user:'u1',chat:'c',message:id,text,...extra});
+/** Starts the user's first task (m1) and waits until its turn is under way. */
+async function running(kit,text='先做这个'){
+  const task=kit.store.create(input('m1','u1',text)).task;kit.store.transition(task.id,'STARTING',{started_at:Date.now()});
+  const done=kit.service.start(kit.store.get(task.id));await until(()=>kit.store.get(task.id).status==='RUNNING');
+  return {task,done};
+}
+test('a message sent while a turn runs goes into that turn: the task answers both, the message shows on its card and gets no card of its own',async()=>{
+  const handed=[];
+  const kit=setup(async function*(job){
+    yield started('th');yield turnStarted;job.steerable(async input=>{handed.push(input);});
+    yield say('a','先做第一件');await until(()=>handed.length);
+    yield say('b',`都做好了，也${handed[0][0].text}`);yield completed;
+  });
+  const {task,done}=await running(kit);
+  await kit.service.receive(sent('m2','加一张封面'));await done;
+  const joined=kit.store.taskForMessage('t','m2'),after=kit.store.get(task.id),steps=JSON.parse(after.steps);
+  assert.deepEqual([joined.status,after.status,after.result],['STEERED','COMPLETED','都做好了，也加一张封面']);
+  assert.equal(kit.codex.jobs.length,1,'no turn of its own');assert.deepEqual(handed,[[{type:'text',text:'加一张封面'}]],'given to the turn as typed');
+  assert.deepEqual(steps.map(s=>s.type),['message','user','message'],'shown where it came in');
+  assert.deepEqual(steps[1],{id:`steer:${joined.id}`,type:'user',text:'加一张封面',files:[]});
+  assert(cardElements(after,renderTask(after)).some(e=>e.content==='➕ 补充：加一张封面'));
+  assert.equal(renderTask(joined),'','nothing of its own to show');
+  assert.equal(kit.store.db.prepare("SELECT count(*) c FROM task_events WHERE task_id=? AND kind='STEERED'").get(task.id).c,1);
+  kit.store.close();
+});
+test('a message the turn no longer takes (it has just ended) goes back in the queue and runs on its own, in the same chat',async()=>{
+  const kit=setup(async function*(job,n){
+    yield started('th');yield turnStarted;job.steerable(async()=>{throw new AppServerError('no active turn to steer',-32600);});
+    if(n===1){yield say('a','第一件');await until(()=>kit.store.taskForMessage('t','m2')?.status==='QUEUED');}
+    yield say('b',`答：${job.input[0].text}`);yield completed;
+  });
+  const {done}=await running(kit);
+  await kit.service.receive(sent('m2','第二件'));await done;
+  assert.equal(kit.store.taskForMessage('t','m2').status,'QUEUED');
+  const scheduler=new Scheduler(kit.service);scheduler.tick();await until(()=>kit.store.taskForMessage('t','m2').status==='COMPLETED');await scheduler.stop();
+  assert.equal(kit.store.taskForMessage('t','m2').result,'答：第二件');assert.equal(kit.codex.jobs.length,2);assert.equal(kit.codex.jobs[1].threadId,'th');
+  kit.store.close();
+});
+test('a message sent before the previous one has started waits for its turn and goes into it; messages go in the order they came, each once',async()=>{
+  const handed=[];
+  const kit=setup(async function*(job){
+    yield started('th');yield turnStarted;job.steerable(async input=>{handed.push(input[0].text);});
+    await until(()=>handed.length===2);yield say('a',handed.join('+'));yield completed;
+  });
+  const first=kit.store.create(input('m1','u1','一')).task;
+  await kit.service.receive(sent('m2','二'));await kit.service.receive(sent('m3','三'));await kit.service.receive(sent('m2','二'));
+  assert.deepEqual(['m2','m3'].map(m=>kit.store.taskForMessage('t',m).status),['STEERING','STEERING'],'waiting, not queued: the scheduler leaves them alone');
+  assert.equal(kit.store.list().length,3,'a redelivered event is no new message');
+  kit.store.transition(first.id,'STARTING',{started_at:Date.now()});await kit.service.start(kit.store.get(first.id));
+  await until(()=>kit.store.taskForMessage('t','m3').status==='STEERED');
+  assert.deepEqual(handed,['二','三']);assert.equal(kit.store.get(first.id).result,'二+三');assert.equal(kit.codex.jobs.length,1);
+  kit.store.close();
+});
+test('the files of a message sent meanwhile arrive in the workspace the turn works in, and go to the turn with it',async()=>{
+  const downloader={downloadResource:async(_message,attachment,file)=>{await fs.writeFile(file,'data');return {size:4,contentType:attachment.kind==='image'?'image/png':'application/zip'};}};
+  const handed=[];
+  const kit=setup(async function*(job){yield started('th');yield turnStarted;job.steerable(async input=>{handed.push(input);});await until(()=>handed.length);yield say('a','收到');yield completed;},{downloader});
+  const {task,done}=await running(kit);
+  await kit.service.receive(sent('m2','',{attachments:[{kind:'file',key:'z',name:'玩法AI迭代素材.zip'},{kind:'image',key:'i',name:'封面.png'}]}));await done;
+  const joined=kit.store.taskForMessage('t','m2'),files=kit.store.inputs(joined.id).map(i=>i.path),[text,...images]=handed[0];
+  assert.equal(joined.status,'STEERED');assert(files.every(f=>path.dirname(f)===path.join(fsSync.realpathSync(kit.store.get(task.id).workspace_path),'input')),"in the workspace's input/");
+  assert(files.every(f=>text.text.includes(f.replaceAll('\\','/'))),'listed by path, as for a message of its own');assert.deepEqual(images,[{type:'local_image',path:files[1]}]);
+  assert.deepEqual(JSON.parse(kit.store.get(task.id).steps).find(s=>s.type==='user'),{id:`steer:${joined.id}`,type:'user',text:'',files:['玩法AI迭代素材.zip','封面.png']});
+  assert(cardElements(kit.store.get(task.id),' ').some(e=>e.content==='➕ 补充：（附件）\n📎 玩法AI迭代素材.zip、封面.png'));
+  kit.store.close();
+});
+test('/new stops the running task and cancels what was waiting to go into it; a task that ends before its turn starts sends its waiting messages back to the queue',async()=>{
+  const kit=setup(async function*(job){yield started('th');yield turnStarted;await untilAborted(job.signal);});
+  const {task,done}=await running(kit);
+  await kit.service.receive(sent('m2','第二件'));assert.equal(kit.store.taskForMessage('t','m2').status,'STEERING','the turn offers no way in yet');
+  await kit.service.receive(sent('x','/new'));await done;
+  assert.deepEqual([kit.store.get(task.id).status,kit.store.taskForMessage('t','m2').status],['INTERRUPTED','CANCELLED']);assert.equal(kit.store.busy('t','u1'),false);
+  // A Codex that cannot start: the first task fails before any turn, and what waited for it runs on its own instead.
+  const broken=setup(async function*(){throw Error('spawn codex ENOENT');});
+  const first=broken.store.create(input('m1','u1')).task;broken.store.transition(first.id,'STARTING',{started_at:Date.now()});
+  await broken.service.receive(sent('m2','第二件'));await broken.service.start(broken.store.get(first.id));
+  assert.equal(broken.store.get(first.id).status,'FAILED');await until(()=>broken.store.taskForMessage('t','m2').status==='QUEUED');
+  kit.store.close();broken.store.close();
+});
+test('a restart cancels a message that was being handed over, as it does one that was queued',()=>{
+  const store=new Store(':memory:'),task=store.create(input('m1','u1')).task,waiting=store.create(input('m2','u1')).task;
+  store.transition(task.id,'RUNNING');assert(store.claim(waiting.id,'QUEUED','STEERING'));assert(!store.claim(waiting.id,'QUEUED','STEERING'),'claimed once');
+  assert.equal(store.active().length,2);assert(store.busy('t','u1'));
+  store.discardLeftovers();
+  assert.deepEqual([store.get(task.id).status,store.get(waiting.id).status],['FAILED','CANCELLED']);store.close();
 });

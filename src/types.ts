@@ -1,6 +1,12 @@
-export const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED', 'INTERRUPTED'] as const;
-export type TaskStatus = 'QUEUED'|'STARTING'|'RUNNING'|'COMPLETED'|'FAILED'|'CANCELLED'|'INTERRUPTED';
+/**
+ * A message sent while the user's previous one is still unfinished is STEERING while it is handed to that task's turn (steering, see
+ * TaskService.join) and STEERED once the turn has taken it: it is then part of that task, which answers it, and has no card of its own.
+ */
+export const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED', 'INTERRUPTED', 'STEERED'] as const;
+export type TaskStatus = 'QUEUED'|'STEERING'|'STARTING'|'RUNNING'|'COMPLETED'|'FAILED'|'CANCELLED'|'INTERRUPTED'|'STEERED';
 export const terminal = (status: string) => (terminalStates as readonly string[]).includes(status);
+/** The terminal states as an SQL list. */
+export const TERMINAL_SQL = `(${terminalStates.map(s=>`'${s}'`).join(',')})`;
 /** The one thing users are told whenever the bot cannot do its job (Codex unavailable or failing, attachments failing); the cause goes to the log. */
 export const BOT_DOWN = '机器人罢工了，请联系 @钟丰骏-实习生';
 export interface Task {
@@ -12,9 +18,13 @@ export interface Task {
   cancel_requested: number; resources: string; cleaned_at: number|null;
   session_id:string|null;
 }
-/** One thing that happened in a turn, in the order it did: what Codex said, a command it ran, files it changed, a tool, a search, its to-do list. Stored with the task as JSON. */
+/**
+ * One thing that happened in a turn, in the order it did: what Codex said, a command it ran, files it changed, a tool, a search, its to-do
+ * list, and what the user added while it ran (`user`, with the names of the files that came with it). Stored with the task as JSON.
+ */
 export type Step =
   | {id:string;type:'message';text:string}
+  | {id:string;type:'user';text:string;files:string[]}
   | {id:string;type:'command';command:string;output:string;status:'running'|'done'|'failed';exit?:number}
   | {id:string;type:'files';changes:{path:string;kind:string}[];status:'done'|'failed'}
   | {id:string;type:'tool';server:string;tool:string;args:string;result:string;status:'running'|'done'|'failed'}

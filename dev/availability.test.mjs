@@ -125,15 +125,17 @@ test('a message Feishu delivers long after it was sent is stale even if it was s
   store.close();
 });
 
-test('only one input runs at a time: anything sent while the previous one is unfinished is dropped silently, and works again once it ends',async()=>{
+test('nothing a user sends while the previous message is unfinished is dropped: it waits to go into that one\'s turn; other users are not affected; /new still works',async()=>{
   const {store,service}=setup(true);
-  await service.receive(message('first'));assert.equal(store.list().length,1);
+  await service.receive(message('first'));
   await service.receive(message('second'));await service.receive(message('third','u1',{attachments:[{kind:'file',key:'k',name:'a.pdf'}]}));
-  assert.equal(store.list().length,1,'nothing is queued');assert.equal(notices(store).length,0,'and the user hears nothing');
-  await service.receive(message('other-user','u2'));assert.equal(store.list().length,2,'another user is not affected');
-  store.transition(store.list()[0].id,'RUNNING',{started_at:Date.now()});await service.receive(message('while-running'));assert.equal(store.list().length,2,'still dropped while running');
-  store.transition(store.list()[0].id,'COMPLETED');await service.receive(message('after'));assert.equal(store.list().length,3,'accepted again once the result is back');
-  await service.receive({...message('cmd'),text:'/new'});assert(notices(store).length>0,'/new works while a task runs');assert.equal(store.busy('t','u1'),false);
+  const status=id=>store.taskForMessage('t',id).status;
+  assert.deepEqual(['first','second','third'].map(status),['QUEUED','STEERING','STEERING'],'kept, waiting for the first one\'s turn');
+  assert.equal(notices(store).length,0,'and the bot says nothing of its own');
+  await service.receive(message('second'));assert.equal(store.list().length,3,'a redelivered event is no new message');
+  await service.receive(message('other-user','u2'));assert.equal(status('other-user'),'QUEUED','another user has a turn of their own');
+  await service.receive({...message('cmd'),text:'/new'});assert(notices(store).length>0,'/new works while messages wait');
+  assert.deepEqual(['first','second','third'].map(status),['CANCELLED','CANCELLED','CANCELLED']);assert.equal(store.busy('t','u1'),false);
   store.close();
 });
 

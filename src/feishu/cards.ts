@@ -1,5 +1,6 @@
 import {terminal,BOT_DOWN,type Task,type Step} from '../types.js';
-export const labels:Record<string,string>={QUEUED:'排队中',STARTING:'正在启动',RUNNING:'执行中',COMPLETED:'已完成',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'已中断'};
+export const labels:Record<string,string>={QUEUED:'排队中',STEERING:'正在补充给执行中的任务',STARTING:'正在启动',RUNNING:'执行中',COMPLETED:'已完成',FAILED:'执行失败',
+  CANCELLED:'已取消',INTERRUPTED:'已中断',STEERED:'已补充给执行中的任务'};
 export function limitText(text:string,bytes=18000){
   if(Buffer.byteLength(text,'utf8')<=bytes)return text;
   let result='',size=0;for(const c of text){const n=Buffer.byteLength(c);if(size+n>bytes-80)break;result+=c;size+=n;}return result+'\n\n（内容较长，完整结果以附件为准）';
@@ -21,6 +22,8 @@ function tailParts(task:Task){
 }
 /** The whole reply as text: used for the preview in the chat list and to tell an empty card from one with something to show. */
 export function renderTask(task:Task){
+  // A message handed to the task that was running is answered on that task's card (where it shows as a step): it has no card of its own.
+  if(task.status==='STEERING'||task.status==='STEERED')return '';
   const parts:string[]=[];
   if(withoutImages(task.progress))parts.push(limitText(withoutImages(task.progress),7000));
   if(withoutImages(task.result))parts.push(limitText(withoutImages(task.result),12000));
@@ -51,6 +54,8 @@ function stepElement(step:Step,last:boolean){
     case 'command':return;
     case 'files':return;
     case 'tool':return;
+    // What the user added while the task ran, where Codex took it in.
+    case 'user':return markdown(`➕ 补充：${oneLine(withoutImages(step.text)||'（附件）',300)}${step.files.length?`\n📎 ${step.files.map(f=>oneLine(f,60)).join('、')}`:''}`);
     case 'search':return markdown(`🔍 搜索：${oneLine(step.query,120)}`);
     case 'todo':return markdown(step.items.map(i=>`${i.completed?'☑':'☐'} ${i.text}`).join('\n'));
   }

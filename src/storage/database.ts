@@ -1,6 +1,6 @@
 import {Database} from './sqlite.js';
 import {randomUUID} from 'node:crypto';
-import {terminal,BOT_DOWN, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
+import {terminal,BOT_DOWN,TERMINAL_SQL, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
 import {displayName} from '../sessions/naming.js';
 
 /** The version of the schema this program creates. A database of any other version is not touched: there is nothing to upgrade from. */
@@ -115,11 +115,11 @@ export class Store {
   }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
   /** Started but unfinished tasks. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would keep getting slower. */
-  active():Task[]{return this.db.prepare("SELECT * FROM tasks WHERE status NOT IN ('QUEUED','COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at,rowid").all() as unknown as Task[];}
-  /** True while the user has a task that has not finished (queued, starting, running or waiting): their next input is not accepted until it ends. */
-  busy(tenant:string,user:string):boolean {return !!this.db.prepare("SELECT 1 FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') LIMIT 1").get(tenant,user);}
+  active():Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE status<>'QUEUED' AND status NOT IN ${TERMINAL_SQL} ORDER BY created_at,rowid`).all() as unknown as Task[];}
+  /** True while the user has a task that has not finished (queued, being handed to the running one, starting or running). */
+  busy(tenant:string,user:string):boolean {return !!this.db.prepare(`SELECT 1 FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ${TERMINAL_SQL} LIMIT 1`).get(tenant,user);}
   /** The user's tasks that have not ended, queued or running. */
-  unfinished(tenant:string,user:string):Task[]{return this.db.prepare("SELECT * FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at,rowid").all(tenant,user) as unknown as Task[];}
+  unfinished(tenant:string,user:string):Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ${TERMINAL_SQL} ORDER BY created_at,rowid`).all(tenant,user) as unknown as Task[];}
   taskForMessage(tenant:string,messageId:string):Task|undefined{return this.db.prepare('SELECT * FROM tasks WHERE tenant_key=? AND source_message_id=?').get(tenant,messageId) as Task|undefined;}
   create(input:Pick<Task,'tenant_key'|'user_id'|'chat_id'|'source_message_id'|'instruction'>,resources:string[]=[],attachments:IncomingAttachment[]=[]){
     return this.db.transaction(()=>{
@@ -145,6 +145,11 @@ export class Store {
     })();
   }
   inputReady(taskId:string,ordinal:number,path:string,size:number){this.db.prepare('UPDATE task_inputs SET path=?,size=? WHERE task_id=? AND ordinal=?').run(path,size,taskId,ordinal);}
+  /** Moves a task from one state to another only if it is still in the first: false when something else got to it first. No card is updated. */
+  claim(id:string,from:TaskStatus,to:TaskStatus):boolean{
+    const changed=Number(this.db.prepare('UPDATE tasks SET status=? WHERE id=? AND status=?').run(to,id,from).changes)>0;
+    if(changed)this.event(id,to,{from});return changed;
+  }
   update(id:string,patch:Partial<Task>){
     const columns=this.columns??=new Set(this.db.prepare('PRAGMA table_info(tasks)').all().map((r:any)=>r.name as string));
     const entries=Object.entries(patch).filter(([k,v])=>columns.has(k)&&k!=='id'&&v!==undefined);
@@ -174,15 +179,16 @@ export class Store {
   }
   /**
    * Called once when the service starts. Whatever the previous run left behind is dead: Codex ran as a child of that process, so a task that was
-   * running is over (its card is finished once, instead of staying at "running" for ever), and a message that never started is cancelled.
+   * running is over (its card is finished once, instead of staying at "running" for ever), and a message that never started (or was being handed
+   * to a running one) is cancelled.
    * Undelivered notices and replies of finished tasks are dropped, so starting the service never speaks to users about the past.
    * Dropped rows stay as FAILED, so `retry-delivery` can still resend one on purpose.
    */
   discardLeftovers(){
     return this.db.transaction(()=>{
-      const cancelled=this.db.prepare("UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status='QUEUED'").run(Date.now()).changes;
+      const cancelled=this.db.prepare("UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status IN ('QUEUED','STEERING')").run(Date.now()).changes;
       const dropped=this.db.prepare(`UPDATE delivery_outbox SET status='FAILED',error='服务重启，已丢弃重启前未送达的消息'
-        WHERE status IN ('PENDING','RETRYING') AND (kind='NOTICE' OR task_id IN (SELECT id FROM tasks WHERE status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED')))`).run().changes;
+        WHERE status IN ('PENDING','RETRYING') AND (kind='NOTICE' OR task_id IN (SELECT id FROM tasks WHERE status IN ${TERMINAL_SQL}))`).run().changes;
       // After the drop on purpose: the card update of an interrupted task is the one delivery that must still go out.
       const running=this.active();
       for(const task of running)this.transition(task.id,'FAILED',{error:BOT_DOWN});
@@ -190,7 +196,7 @@ export class Store {
     })();
   }
   /** Finished tasks whose files are still kept and whose retention period ended before `before`. */
-  expired(before:number):Task[]{return this.db.prepare("SELECT * FROM tasks WHERE cleaned_at IS NULL AND finished_at IS NOT NULL AND finished_at<? AND status IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY finished_at").all(before) as unknown as Task[];}
+  expired(before:number):Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE cleaned_at IS NULL AND finished_at IS NOT NULL AND finished_at<? AND status IN ${TERMINAL_SQL} ORDER BY finished_at`).all(before) as unknown as Task[];}
   messages(taskId:string):any{return this.db.prepare('SELECT * FROM task_messages WHERE task_id=?').get(taskId);}
   nextSequence(taskId:string){return this.db.prepare('UPDATE task_messages SET sequence=sequence+1 WHERE task_id=? RETURNING sequence').get(taskId) as {sequence:number};}
   stats(){return {tasks:this.db.prepare('SELECT status,count(*) AS count FROM tasks GROUP BY status').all(),deliveries:this.db.prepare('SELECT status,count(*) AS count FROM delivery_outbox GROUP BY status').all()};}

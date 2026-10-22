@@ -8,7 +8,8 @@ const head=(text:string,keep:number)=>text.length>keep?`${text.slice(0,keep)}…
 /** The shell Codex starts on Windows shows up in the command line it reports; what the user cares about is what it was asked to run. */
 export function plainCommand(command:string){
   const wrapped=/^"?[^"]*?(?:powershell|pwsh)(?:\.exe)?"?\s+(?:-\w+\s+)*-Command\s+(.*)$/is.exec(command.trim());
-  return (wrapped?wrapped[1].replace(/^"([\s\S]*)"$/,'$1'):command).trim();
+  // `codex exec` quoted the command with double quotes, the app-server with single ones.
+  return (wrapped?wrapped[1].replace(/^"([\s\S]*)"$|^'([\s\S]*)'$/,'$1$2'):command).trim();
 }
 function toolResult(item:Extract<ThreadItem,{type:'mcp_tool_call'}>){
   if(item.error)return item.error.message;
@@ -56,6 +57,8 @@ export class Turn {
       default:return false;
     }
   }
+  /** What the user sent while the turn ran, once Codex has taken it: shown where it came in. */
+  steered(id:string,text:string,files:string[]){this.byId.set(id,{id,type:'user',text,files});}
   get steps():Step[]{return [...this.byId.values()];}
   private get messages(){return this.steps.flatMap(s=>s.type==='message'?[s.text]:[]);}
   get progress(){const all=this.messages;return (this.state==='completed'?all.slice(0,-1):all).join('\n\n');}
