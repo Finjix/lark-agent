@@ -30,4 +30,6 @@ export interface IncomingMessage {
   attachments?: IncomingAttachment[]; error?: string;
 }
 export interface IncomingAttachment {kind:'image'|'file'; key:string; name:string;}
+/** An attachment the user has to send differently (too large, say): its message is shown to them instead of BOT_DOWN. */
+export class InputRejected extends Error {}
 export interface TaskInput extends IncomingAttachment {ordinal:number; path:string|null; size:number|null;}

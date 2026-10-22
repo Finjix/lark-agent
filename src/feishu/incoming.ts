@@ -1,6 +1,8 @@
 import type {IncomingMessage,IncomingAttachment} from '../types.js';
 
 export const MAX_INPUT_FILES=10;
+/** Feishu does not let a bot download a folder someone sent (none of its resource calls serves one), so the user is asked for a zip. */
+export const FOLDER_HINT='飞书不允许机器人读取文件夹。请把文件夹压缩成 zip 再发送（右键文件夹 → 压缩），单个文件不超过 2 GB。';
 export function incomingMessage(event:any,botId:string):IncomingMessage|undefined{
   const msg=event?.message,sender=event?.sender;
   if(sender?.sender_type!=='user'||!msg?.message_id)return;
@@ -20,6 +22,9 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
     if(msg.message_type==='text')message.text=typeof content.text==='string'?content.text:'';
     else if(msg.message_type==='image')add('image',content.image_key,undefined);
     else if(msg.message_type==='file')add('file',content.file_key,content.file_name);
+    // A video sent on its own; its file is downloaded like any file (the cover image beside it is not needed).
+    else if(msg.message_type==='media')add('file',content.file_key,content.file_name??'video.mp4');
+    else if(msg.message_type==='folder')message.error=FOLDER_HINT;
     // A Feishu voice message is an Opus recording downloaded like a file.
     else if(msg.message_type==='audio')add('file',content.file_key,'语音消息.opus');
     else if(msg.message_type==='post'){
@@ -46,11 +51,11 @@ export function incomingMessage(event:any,botId:string):IncomingMessage|undefine
       message.text=lines.join('\n');
       // Text sent together with attachments carries them beside the content nodes, not inside them.
       for(const file of Array.isArray(post.files)?post.files:Array.isArray(content.files)?content.files:[]){
-        if(file?.is_folder)throw Error('暂不支持发送文件夹，请打包成压缩文件后再发送');
+        if(file?.is_folder)throw Error(FOLDER_HINT);
         add('file',file?.file_key,file?.file_name);
       }
       for(const image of Array.isArray(post.images)?post.images:Array.isArray(content.images)?content.images:[])add('image',image?.image_key,undefined);
-    }else message.error='暂不支持此消息类型，请发送文字、图片、文件、语音或图文消息。';
+    }else message.error='暂不支持此消息类型，请发送文字、图片、视频、文件、语音或图文消息。';
     for(const mention of mentions){
       if(typeof mention.key!=='string')continue;
       if(mention.id?.open_id===botId)message.text=message.text.replaceAll(mention.key,'');

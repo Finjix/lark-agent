@@ -8,7 +8,7 @@ import {codexInput} from '../codex/input.js';
 import {generatedImages} from '../feishu/images.js';
 import {userWorkspace,userDirectory} from '../layout.js';
 import {config} from '../config.js';
-import {terminal,BOT_DOWN,type Task,type IncomingMessage,type UserSession} from '../types.js';
+import {terminal,BOT_DOWN,InputRejected,type Task,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
@@ -111,7 +111,7 @@ export class TaskService {
         await this.finish(current,turn,this.store.submitted(task.id)?'INTERRUPTED':'CANCELLED');
       }else{
         log.warn({taskId:task.id,error:safeError(e)},this.stopping?'服务停止，任务中断':'Codex 执行失败');
-        await this.finish(current,turn,'FAILED',BOT_DOWN);
+        await this.finish(current,turn,'FAILED',e instanceof InputRejected&&!this.stopping?e.message:BOT_DOWN);
       }
     }
     finally{this.runs.delete(task.id);}

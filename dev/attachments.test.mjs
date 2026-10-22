@@ -6,8 +6,8 @@ import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {Readable} from 'node:stream';
 import {Store} from '../dist/storage/database.js';
-import {incomingMessage} from '../dist/feishu/incoming.js';
-import {FeishuClient,MAX_INPUT_BYTES,downloadError} from '../dist/feishu/client.js';
+import {incomingMessage,FOLDER_HINT} from '../dist/feishu/incoming.js';
+import {FeishuClient,MAX_INPUT_BYTES,MAX_IMAGE_BYTES,downloadError} from '../dist/feishu/client.js';
 import {config} from '../dist/config.js';
 import {prepareInputs,removeInputs,inputFilename,sessionInputs} from '../dist/feishu/inputs.js';
 import {codexInput} from '../dist/codex/input.js';
@@ -37,10 +37,19 @@ test('text sent together with a file arrives as a post whose attachments sit in 
   assert.deepEqual(message.attachments,[{kind:'file',key:'file_v3_real',name:'新建 文本文档.txt'}]);
   assert.deepEqual(incomingMessage(event('post',{zh_cn:body}),'bot').attachments,message.attachments,'also inside a locale wrapper');
   const folder=incomingMessage(event('post',{...body,files:[{file_key:'dir',file_name:'资料',is_folder:true}]}),'bot');
-  assert.match(folder.error,/文件夹/);
+  assert.equal(folder.error,FOLDER_HINT,'a folder sent with text is asked for as a zip');
   const mixed=incomingMessage(event('post',{...body,images:[{image_key:'img_1'}]}),'bot');
   assert.deepEqual(mixed.attachments.map(a=>a.kind),['file','image']);
   assert.equal(incomingMessage(event('post',{title:'',content:[[{tag:'text',text:'只有文字'}]]}),'bot').attachments.length,0);
+});
+
+test('a video sent on its own is a file attachment; a folder is asked for as a zip',()=>{
+  // Shapes taken from real messages (2026-10-21).
+  const video=incomingMessage(event('media',{file_key:'file_v3_video',file_name:'P01.mp4',image_key:'img_v3_cover',duration:22650}),'bot');
+  assert.equal(video.error,undefined);assert.deepEqual(video.attachments,[{kind:'file',key:'file_v3_video',name:'P01.mp4'}]);
+  assert.equal(incomingMessage(event('media',{file_key:'k'}),'bot').attachments[0].name,'video.mp4');
+  const folder=incomingMessage(event('folder',{file_key:'file_v3_folder',file_name:'新建文件夹'}),'bot');
+  assert.equal(folder.error,FOLDER_HINT);assert.match(FOLDER_HINT,/zip/);
 });
 
 test('image and file messages retain resources; screenshot-style posts preserve image and caption',()=>{
@@ -63,7 +72,7 @@ test('group attachments require the exact bot mention and retain links and other
 });
 
 test('unsupported, malformed, and excessive attachments return errors instead of silently disappearing',()=>{
-  assert.match(incomingMessage(event('folder',{}),'bot').error,/暂不支持/);
+  assert.match(incomingMessage(event('sticker',{}),'bot').error,/暂不支持/);
   assert.match(incomingMessage(event('image',{}),'bot').error,/附件/);
   assert.match(incomingMessage(event('post',{}, {content:'{bad'}),'bot').error,/无法解析/);
   const post={content:[Array.from({length:11},(_,i)=>({tag:'img',image_key:`image-${i}`}))]};
@@ -125,10 +134,10 @@ test('download API uses the source message resource endpoint and enforces the st
   const result=await client.downloadResource('original-message',image,path.join(root,'image.png'));
   assert.deepEqual(payload,{path:{message_id:'original-message',file_key:image.key},params:{type:'image'}});assert.equal(result.size,3);
   assert.equal(await fs.readFile(path.join(root,'image.png'),'utf8'),'PNG');
-  client.sdk.im.messageResource.get=async()=>({headers:{},getReadableStream:()=>Readable.from((function*(){for(let n=0;n<31;n++)yield Buffer.alloc(1024*1024);})())});
-  await assert.rejects(client.downloadResource('original-message',image,path.join(root,'large.png')),/30 MB/);
-  const stream=Readable.from(['test']);client.sdk.im.messageResource.get=async()=>({headers:{'content-length':MAX_INPUT_BYTES+1},getReadableStream:()=>stream});
-  await assert.rejects(client.downloadResource('original-message',image,path.join(root,'declared-large.png')),/30 MB/);assert(stream.destroyed);
+  client.sdk.im.messageResource.get=async()=>({headers:{},getReadableStream:()=>Readable.from((function*(){for(let n=0;n<=100;n++)yield Buffer.alloc(1024*1024);})())});
+  await assert.rejects(client.downloadResource('original-message',image,path.join(root,'large.png')),/100 MB/);
+  const stream=Readable.from(['test']);client.sdk.im.messageResource.get=async()=>({headers:{'content-length':MAX_IMAGE_BYTES+1},getReadableStream:()=>stream});
+  await assert.rejects(client.downloadResource('original-message',image,path.join(root,'declared-large.png')),/100 MB/);assert(stream.destroyed);
   client.close();await fs.rm(root,{recursive:true});
 });
 
@@ -171,4 +180,47 @@ test('in a group, other people mentioned in plain text keep their names instead 
   const mentions=[{key:'@_user_1',id:{open_id:'bot'},name:'机器人'},{key:'@_user_2',id:{open_id:'ou_x'},name:'小王'}];
   const message=incomingMessage(event('text',{text:'@_user_1 帮我问问 @_user_2 的进度'},{chat_type:'group',mentions}),'bot');
   assert.equal(message.text,' 帮我问问 @小王 的进度');
+});
+
+/** A message resource the way Feishu serves it: Range pieces of at most 32 MB with a Content-Range, an error past the end. */
+function rangedResource(data,calls){
+  return async(args,options)=>{
+    const range=options?.headers?.Range;calls.push(range??'whole');
+    if(!range)return {headers:{'content-length':data.length,'content-type':'video/mp4'},getReadableStream:()=>Readable.from([data])};
+    const [,from,to]=/bytes=(\d+)-(\d+)/.exec(range).map(Number);
+    if(to-from+1>32*1024*1024)throw Object.assign(Error('Range Not Satisfiable'),{response:{data:{code:234046,msg:'Range Not Satisfiable'}}});
+    if(from>=data.length)throw Object.assign(Error('internal server error'),{response:{data:{code:40009,msg:'internal server error'}}});
+    const end=Math.min(to,data.length-1);
+    return {headers:{'content-range':`bytes ${from}-${end}/${data.length}`,'content-type':'video/mp4'},getReadableStream:()=>Readable.from([data.subarray(from,end+1)])};
+  };
+}
+
+test('files and videos over 100 MB come in Range pieces into one file; the limit is checked before anything is fetched',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-ranged-')),client=fakeClient();
+  const video={kind:'file',key:'file_v3_video',name:'P01.mp4'};
+  const data=Buffer.alloc(65*1024*1024);for(let i=0;i<data.length;i+=4096)data[i]=i%251;
+  let calls=[];client.sdk.im.messageResource.get=rangedResource(data,calls);
+  const result=await client.downloadResource('message',video,path.join(root,'P01.mp4'));
+  assert.equal(result.size,data.length);assert.equal(result.contentType,'video/mp4');
+  assert.deepEqual(calls,['bytes=0-31457279','bytes=31457280-62914559','bytes=62914560-94371839']);
+  assert((await fs.readFile(path.join(root,'P01.mp4'))).equals(data),'the pieces join into the file');
+  // An empty file has no first piece to ask for: it comes without a range.
+  calls=[];client.sdk.im.messageResource.get=rangedResource(Buffer.alloc(0),calls);
+  assert.equal((await client.downloadResource('message',video,path.join(root,'empty.mp4'))).size,0);assert.deepEqual(calls,['bytes=0-31457279','whole']);
+  // Too large: refused on the first answer's total, with a reason for the user.
+  const huge=new Readable({read(){}});
+  client.sdk.im.messageResource.get=async()=>({headers:{'content-range':`bytes 0-31457279/${MAX_INPUT_BYTES+1}`},getReadableStream:()=>huge});
+  await assert.rejects(client.downloadResource('message',video,path.join(root,'huge.mp4')),error=>error.constructor.name==='InputRejected'&&/2 GB/.test(error.message));
+  assert(huge.destroyed);
+  client.close();await fs.rm(root,{recursive:true});
+});
+
+test('an attachment that is too large fails the task with its reason, not the generic one',async()=>{
+  const store=new Store(':memory:'),c=codex();
+  const task=store.create(input,[],[{kind:'file',key:'big',name:'素材.zip'}]).task;
+  const client=fakeClient();client.sdk.im.messageResource.get=async()=>({headers:{'content-range':`bytes 0-1/${MAX_INPUT_BYTES+1}`},getReadableStream:()=>Readable.from([Buffer.alloc(2)])});
+  const service=new TaskService(store,c,client);
+  store.transition(task.id,'STARTING');await service.start(store.get(task.id));
+  assert.equal(store.get(task.id).status,'FAILED');assert.match(store.get(task.id).error,/超过 2 GB/);assert.equal(c.jobs.length,0);
+  client.close();store.close();
 });
