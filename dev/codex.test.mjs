@@ -217,10 +217,29 @@ test('/new while a task runs stops its Codex process, keeps what it said, and st
   const after=store.get(task.id);assert.equal(after.status,'INTERRUPTED');assert.equal(after.progress,'做了一点');assert.equal(after.cancel_requested,1);
   assert.match(notices(store).at(-1),/新的对话/);assert.equal(store.busy('t','u1'),false,'the next input is accepted');assert(store.session(old.id).retired_at,'and it starts a new chat');
   // A process that ignores the abort: /new ends the task anyway, once it has waited a moment.
-  const stuck=setup(async function*(){yield started('th');await new Promise(()=>{});});stuck.service.stopWaitMs=30;
-  const t2=stuck.store.create(input()).task;stuck.store.transition(t2.id,'STARTING',{started_at:Date.now()});void stuck.service.start(stuck.store.get(t2.id));await until(()=>stuck.store.get(t2.id).status==='RUNNING');
+  const stuck=setup(async function*(){yield started('th');await new Promise(()=>{});});stuck.service.stopWaitMs=30;stuck.service.exitWaitMs=60;
+  const t2=stuck.store.create(input()).task;stuck.store.transition(t2.id,'STARTING',{started_at:Date.now()});const hanging=stuck.service.start(stuck.store.get(t2.id));await until(()=>stuck.store.get(t2.id).status==='RUNNING');
   await stuck.service.receive(message('/new','c1'));assert.equal(stuck.store.get(t2.id).status,'INTERRUPTED');assert.equal(stuck.store.busy('t','u1'),false);
+  await hanging;assert.equal(stuck.service.interrupt(stuck.store.get(t2.id)),false,'and its run is over too, not left waiting for events that never come');
   store.close();stuck.store.close();
+});
+
+test('a task stopped mid-turn ends even when its events never do (a browser left waiting for a QR scan holds Codex\'s output open): its time limit cannot leave the user blocked',async()=>{
+  let killed=false;
+  const {store,service}=setup(async function*(job){
+    yield started('th');yield say('a','请扫码登录');
+    // Killing Codex does not end the events while something the turn left running holds the pipe.
+    job.signal.addEventListener('abort',()=>{killed=true;},{once:true});await new Promise(()=>{});
+  });
+  service.exitWaitMs=40;
+  const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});
+  const running=service.start(store.get(task.id));await until(()=>store.get(task.id).progress==='请扫码登录');
+  // What the scheduler does when TASK_TIMEOUT_MS is up.
+  store.update(task.id,{cancel_requested:1});assert(service.interrupt(store.get(task.id)));
+  await running;
+  const after=store.get(task.id);assert.equal(after.status,'INTERRUPTED');assert.equal(after.progress,'请扫码登录');assert(killed);
+  assert.equal(store.busy('t','u1'),false,'the next input is accepted');assert.equal(service.interrupt(after),false);
+  store.close();
 });
 test('a task cancelled before Codex was started is cancelled, not interrupted; /new ends a queued one and a leftover nobody runs',async()=>{
   const {store,codex,service}=setup(async function*(){yield started('th');yield completed;});

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {Store} from '../dist/storage/database.js';
 import {cleanup} from '../dist/maintenance.js';
+import {config} from '../dist/config.js';
 
 const input=(message='one',user='user',tenant='tenant')=>({tenant_key:tenant,user_id:user,chat_id:'chat',source_message_id:message,instruction:message});
 /** A user's session bound to a Codex thread, working in `root`. */
@@ -13,6 +14,8 @@ function bound(s,task,thread,root){const session=s.sessionFor(task);s.bindSessio
 function expired(s,task,thread,workspace){s.transition(task.id,'COMPLETED',{thread_id:thread,workspace_path:workspace});s.update(task.id,{finished_at:1});}
 /** Every delivery has gone out, so cleanup looks at the tasks. */
 const delivered=s=>s.db.exec("UPDATE delivery_outbox SET status='DELIVERED'");
+/** A moment after the retention period of files made now: cleanup judges a file by its own last change, and one made just now cannot be backdated. */
+const later=()=>Date.now()+(config.RETENTION_DAYS+1)*86400000;
 const artifact=(s,task,id,file)=>s.db.prepare('INSERT INTO task_artifacts(id,task_id,path,name,size,kind) VALUES(?,?,?,?,?,?)').run(id,task.id,file,path.basename(file),1,'file');
 const exists=file=>fs.access(file).then(()=>true,()=>false);
 
@@ -44,9 +47,25 @@ test('expiring a completed message removes only the files it delivered and keeps
   const old=s.create(input()).task,session=bound(s,old,'thread',root);
   const oldFile=path.join(root,'old.txt'),laterFile=path.join(root,'later.txt');await fs.writeFile(oldFile,'old');await fs.writeFile(laterFile,'keep');
   expired(s,old,'thread',root);artifact(s,old,'a1',oldFile);delivered(s);
-  await cleanup(s);
+  await cleanup(s,later());
   assert(s.get(old.id).cleaned_at);assert.equal(s.session(session.id).thread_id,'thread');
   await assert.rejects(fs.stat(oldFile),{code:'ENOENT'});assert.equal(await fs.readFile(laterFile,'utf8'),'keep');assert((await fs.stat(root)).isDirectory());
+  s.close();await fs.rm(root,{recursive:true});
+});
+
+test('a file an expired task delivered stays while it is still in use: a later task changed it, so it is judged by that change',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-inuse-')),s=new Store(':memory:');
+  const old=s.create(input('old')).task;bound(s,old,'thread',root);
+  const report=path.join(root,'report.xlsx'),attachment={kind:'file',key:'k',name:'brief.xlsx'};await fs.writeFile(report,'v1');
+  expired(s,old,'thread',root);artifact(s,old,'a1',report);
+  const sent=s.create(input('sent'),[],[attachment]).task;bound(s,sent,'thread',root);
+  const brief=path.join(root,'input','brief.xlsx');await fs.mkdir(path.dirname(brief));await fs.writeFile(brief,'b');s.inputReady(sent.id,0,brief,1);expired(s,sent,'thread',root);
+  delivered(s);
+  // The tasks ended long ago, but a later task changed both files a day before this moment.
+  await fs.writeFile(report,'v2');await fs.writeFile(brief,'edited');
+  await cleanup(s,Date.now()+86400000);
+  assert.equal(await fs.readFile(report,'utf8'),'v2','a delivered file still in use is kept');assert.equal(await fs.readFile(brief,'utf8'),'edited','so is an attachment');
+  assert(s.get(old.id).cleaned_at&&s.get(sent.id).cleaned_at,'the tasks are done with: purge takes the files once nobody touches them');
   s.close();await fs.rm(root,{recursive:true});
 });
 
@@ -64,7 +83,7 @@ test('cleanup removes inside the user\'s workspace only: a recorded path elsewhe
   // A task with a folder but no session at all.
   const c=s.create(input('c','third')).task,orphan=await write(path.join(root,'orphan.txt'));expired(s,c,'thread-c',root);artifact(s,c,'c1',orphan);
   delivered(s);
-  await cleanup(s);
+  await cleanup(s,later());
   assert(s.get(a.id).cleaned_at);assert(!await exists(mine));assert.equal(await fs.readFile(foreign,'utf8'),'x','a path outside the workspace is never removed');
   assert.equal(s.get(b.id).cleaned_at,null,'skipped, not cleaned');assert(await exists(theirs));
   assert.equal(s.get(c.id).cleaned_at,null,'skipped, not cleaned');assert(await exists(orphan));
@@ -81,7 +100,7 @@ test('expiry also removes the attachments a task received, from input/ of the wo
   const u=s.create(input('two','u2'),[],[attachment]).task;bound(s,u,'thread-u',root);
   const precious=path.join(root,'precious.txt');await fs.writeFile(precious,'p');s.inputReady(u.id,0,precious,1);expired(s,u,'thread-u',root);
   delivered(s);
-  await cleanup(s);
+  await cleanup(s,later());
   assert(s.get(t.id).cleaned_at);assert(!await exists(received));assert(await exists(neighbour),'only what this task received');assert((await fs.stat(folder)).isDirectory());
   assert.equal(s.get(u.id).cleaned_at,null);assert(await exists(precious));
   s.close();await fs.rm(root,{recursive:true});

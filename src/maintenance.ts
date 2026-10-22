@@ -7,12 +7,19 @@ import {removeInputs} from './feishu/inputs.js';
 import {workspaceIn} from './layout.js';
 
 const DAY=86400000;
+/** A file's age is its most recent creation, change or move (as in sweep): one a later task changed or delivered again is still in use. */
+const untouched=async(file:string,cutoff:number)=>{
+  const stat=await fs.lstat(file).catch(()=>undefined);
+  return !stat||Math.max(stat.birthtimeMs,stat.mtimeMs,stat.ctimeMs)<cutoff;
+};
 /**
- * Removes one task's own files once the retention period is over: what it delivered and the attachments it received. The workspace, the user's chat
- * and other tasks' files stay. A task whose folder is not the workspace of its session is skipped, and says so in the log: nothing is removed on a guess.
+ * Removes one task's own files once the retention period is over: what it delivered and the attachments it received, unless someone has touched
+ * them since (such a file is left to purge, which removes it once it too has been left alone that long). The workspace, the user's chat and other
+ * tasks' files stay. A task whose folder is not the workspace of its session is skipped, and says so in the log: nothing is removed on a guess.
  */
-export async function cleanup(store:Store){
-  for(const task of store.expired(Date.now()-config.RETENTION_DAYS*DAY)){
+export async function cleanup(store:Store,now=Date.now()){
+  const cutoff=now-config.RETENTION_DAYS*DAY;
+  for(const task of store.expired(cutoff)){
     if(store.db.prepare("SELECT 1 FROM delivery_outbox WHERE task_id=? AND status!='DELIVERED' LIMIT 1").get(task.id))continue;
     if((!task.workspace_path||!task.thread_id)&&!store.inputs(task.id).length)continue;
     try{
@@ -27,12 +34,16 @@ export async function cleanup(store:Store){
           // The workspace is shared by all of the user's tasks and stays; only the files this task delivered go.
           for(const {path:file} of store.db.prepare('SELECT path FROM task_artifacts WHERE task_id=?').all(task.id) as {path:string}[]){
             const rel=path.relative(actual,file);
-            if(!rel||rel.startsWith('..')||path.isAbsolute(rel))continue;
+            if(!rel||rel.startsWith('..')||path.isAbsolute(rel)||!await untouched(file,cutoff))continue;
             await fs.rm(file,{force:true});
           }
         }
       }
-      if(session?.workspace_path)await removeInputs(store.inputs(task.id).flatMap(i=>i.path?[i.path]:[]),session.workspace_path);
+      if(session?.workspace_path){
+        const received:string[]=[];
+        for(const input of store.inputs(task.id))if(input.path&&await untouched(input.path,cutoff))received.push(input.path);
+        await removeInputs(received,session.workspace_path);
+      }
       store.update(task.id,{cleaned_at:Date.now()});store.event(task.id,'CLEANED',{});
     }catch(e){log.warn({taskId:task.id,error:safeError(e)},'保留策略清理已跳过');}
   }

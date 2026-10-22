@@ -48,7 +48,8 @@ export async function outputFiles(root:string,window?:{from:number;to:number}){
       if(entry.name.startsWith('.'))continue;
       const full=path.join(directory,entry.name);
       if(entry.isFile()){
-        if(window){const stat=await fs.stat(full),at=Math.max(stat.mtimeMs,stat.birthtimeMs);if(at<window.from-SLACK_MS||at>window.to+SLACK_MS)continue;}
+        // A file that went away since the listing (a temporary file of something still running) or cannot be read is not a deliverable; it must not hold back the reply.
+        if(window){const stat=await fs.stat(full).catch(()=>undefined);if(!stat)continue;const at=Math.max(stat.mtimeMs,stat.birthtimeMs);if(at<window.from-SLACK_MS||at>window.to+SLACK_MS)continue;}
         found.push(full);
       }else if(entry.isDirectory()&&depth<3&&!(depth===0&&entry.name===INPUT_DIR))await walk(full,depth+1);
     }
@@ -104,8 +105,9 @@ export class Delivery {
   }
   private async deliverRow(row:any){
     try{await this.deliver(row);this.store.ack(row.id,row.version);}
-    // A file that is gone (cleaned up after the retention period, or removed by someone) cannot be uploaded however often it is retried.
-    catch(e){const error=safeError(e);const permanent=(e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code))||(e as NodeJS.ErrnoException)?.code==='ENOENT';
+    // A file that is gone (cleaned up after the retention period, or removed by someone) cannot be uploaded however often it is retried. That holds for
+    // an upload only: a card whose update met a missing file is retried, so the final reply is never given up on.
+    catch(e){const error=safeError(e);const permanent=(e instanceof FeishuError&&[99991672,99991663,99991664,230006,230002].includes(e.code))||(row.kind==='FILE'&&(e as NodeJS.ErrnoException)?.code==='ENOENT');
       this.store.retry(row.id,row.version,error,permanent);log.warn({deliveryId:row.id,code:e instanceof FeishuError?e.code:undefined},'消息投递等待重试或配置修复');}
   }
   private async api<T>(fn:()=>Promise<T>,gate=this.gate):Promise<T>{return await gate.add(fn);}

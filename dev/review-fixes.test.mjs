@@ -28,6 +28,31 @@ test('an image that cannot be staged is reported while the final reply is still 
   await delivery.stop();s.close();await fs.rm(dir,{recursive:true,force:true});
 });
 
+test('a file that vanishes while the workspace is being looked through does not hold back the final reply or the other files',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'review-vanish-')),s=new Store(':memory:'),task=s.create(input('vanish')).task;
+  s.transition(task.id,'STARTING',{started_at:Date.now()-5000,workspace_path:dir});
+  await fs.writeFile(path.join(dir,'answer.txt'),'交付');await fs.writeFile(path.join(dir,'tmp-1.lock'),'deleted by a process still running');
+  s.transition(task.id,'COMPLETED',{result:'完成，见 answer.txt'});
+  const stat=fs.stat;fs.stat=async(file,...rest)=>{if(String(file).endsWith('tmp-1.lock'))await fs.rm(file);return stat(file,...rest);};
+  try{
+    const calls=[],fake={raw:async(method,url,data)=>{calls.push({method,url,data});return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async(_m,_c,type)=>{calls.push({type});return {message_id:'m'};},upload:async()=>({file_key:'fk'})};
+    const delivery=new Delivery(s,fake);await delivery.tick();await delivery.tick();
+    assert.equal(s.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`).status,'DELIVERED');
+    assert.deepEqual(s.db.prepare('SELECT name FROM task_artifacts').all().map(r=>r.name),['answer.txt']);
+    assert(calls.some(c=>c.type==='file'),'the deliverable went out');
+    await delivery.stop();
+  }finally{fs.stat=stat;s.close();await fs.rm(dir,{recursive:true,force:true});}
+});
+
+test('a card update that meets a missing file is retried, not given up: only an upload of a file that is gone fails for good',async()=>{
+  const s=new Store(':memory:'),task=s.create(input('gone')).task;s.transition(task.id,'COMPLETED',{result:'完成'});
+  const missing=Object.assign(Error('ENOENT: no such file or directory'),{code:'ENOENT'});
+  const fake={raw:async()=>{throw missing;},reply:async()=>({message_id:'m'})};
+  const delivery=new Delivery(s,fake);await delivery.tick();
+  assert.equal(s.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`).status,'RETRYING');
+  await delivery.stop();s.close();
+});
+
 test('deliveries only wait for the client to start, not for the long connection to be up',async()=>{
   const s=new Store(':memory:'),task=s.create(input('gate')).task;s.transition(task.id,'COMPLETED',{result:'完成'});let raw=0;
   const fake={started:false,connected:false,raw:async(m,url)=>{raw++;return url.endsWith('/cards')?{card_id:'c'}:{};},reply:async()=>({message_id:'m'})};
