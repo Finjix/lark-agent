@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process';
+import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {statSync} from 'node:fs';
 import path from 'node:path';
@@ -26,6 +26,8 @@ export interface ServerOptions {args:string[];env:Record<string,string>;signal:A
 
 const TRIPLES:Record<string,string>={'win32-x64':'x86_64-pc-windows-msvc','win32-arm64':'aarch64-pc-windows-msvc','linux-x64':'x86_64-unknown-linux-musl',
   'linux-arm64':'aarch64-unknown-linux-musl','darwin-x64':'x86_64-apple-darwin','darwin-arm64':'aarch64-apple-darwin'};
+/** How long after Codex exits its output may stay open before the stream is ended regardless. */
+const EXIT_DRAIN_MS=1000;
 const isFile=(file:string)=>{try{return statSync(file).isFile();}catch{return false;}};
 const isDirectory=(folder:string)=>{try{return statSync(folder).isDirectory();}catch{return false;}};
 /**
@@ -53,7 +55,10 @@ export function withPath(env:Record<string,string>,folders:string[],platform=pro
 
 export function spawnAppServer({args,env,signal}:ServerOptions):AppServer{
   const {file,pathDirs}=codexBinary();
-  const child=spawn(file,['app-server',...args],{env:withPath(env,pathDirs),signal,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  return serverOver(spawn(file,['app-server',...args],{env:withPath(env,pathDirs),signal,windowsHide:true,stdio:['pipe','pipe','pipe']}));
+}
+/** The JSON-RPC side of an app-server process already started (in the tests, a stand-in for Codex). */
+export function serverOver(child:ChildProcessWithoutNullStreams):AppServer{
   let nextId=1,stderr='',ended=false,closed=false,exitReason:string|undefined,failure:Error|undefined;
   const pending=new Map<number,{resolve:(value:any)=>void;reject:(error:Error)=>void}>();
   const queue:Notification[]=[],waiting:((result:IteratorResult<Notification>)=>void)[]=[];
@@ -69,7 +74,12 @@ export function spawnAppServer({args,env,signal}:ServerOptions):AppServer{
   child.stdin.on('error',()=>{});
   // A stopped turn (the abort signal) and a process that could not be started end here; requests still waiting fail with the reason.
   child.once('error',error=>{failure=error;end();});
-  child.once('exit',(code,how)=>{if(!closed)exitReason=`Codex app-server 退出了（${how?`signal ${how}`:`code ${code}`}）${stderr.trim()?`：${stderr.trim()}`:''}`;});
+  child.once('exit',(code,how)=>{
+    if(!closed)exitReason=`Codex app-server 退出了（${how?`signal ${how}`:`code ${code}`}）${stderr.trim()?`：${stderr.trim()}`:''}`;
+    // A process a command of the turn left running can hold the output open long after Codex is gone (a browser waiting for a QR scan, say).
+    // What Codex wrote is read within moments of its exit, so the stream ends then anyway, and requests still waiting fail.
+    setTimeout(end,EXIT_DRAIN_MS).unref();
+  });
   const lines=readline.createInterface({input:child.stdout,crlfDelay:Infinity});
   lines.on('line',line=>{
     let message:any;try{message=JSON.parse(line);}catch{return;}
@@ -93,6 +103,7 @@ export function spawnAppServer({args,env,signal}:ServerOptions):AppServer{
     notify:(method,params)=>write({method,...(params===undefined?{}:{params})}),
     notifications:{next:()=>queue.length?Promise.resolve({done:false,value:queue.shift()!}):ended?Promise.resolve({done:true,value:undefined}):new Promise(resolve=>waiting.push(resolve))},
     get exitReason(){return exitReason;},
-    close:()=>{closed=true;try{child.stdin.end();}catch{}if(child.exitCode===null&&child.signalCode===null)child.kill();},
+    // Nothing is read after this: a request still waiting (a steer sent just as the turn ended) fails now, and so does any made later.
+    close:()=>{closed=true;try{child.stdin.end();}catch{}if(child.exitCode===null&&child.signalCode===null)child.kill();end();},
   };
 }

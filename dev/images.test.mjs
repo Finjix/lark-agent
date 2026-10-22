@@ -52,7 +52,7 @@ test('a generated image without a final Markdown link survives restart and is se
 test('image send retry retains the uploaded image key and the deduplication UUID',()=>withHome(async root=>{
   const store=new Store(':memory:'),task=store.create(input).task;
   store.recordImages(task.id,[{id:IMAGE,savedPath:await save(root,'thread')}]);
-  store.transition(task.id,'COMPLETED',{thread_id:'thread',workspace_path:path.join(root,'workspace'),result:'done'});
+  store.transition(task.id,'COMPLETED',{started_at:task.created_at,thread_id:'thread',workspace_path:path.join(root,'workspace'),result:'done'});
   const client=fakeFeishu(),reply=client.reply;let fail=true;const uuids=[];
   client.reply=async(...args)=>{if(args[2]==='image'){uuids.push(args[4]);if(fail){fail=false;throw Error('lost reply response');}}return reply(...args);};
   const delivery=new Delivery(store,client);await delivery.tick();await delivery.tick();
@@ -87,7 +87,7 @@ test('saved images over 10 MB use file delivery and remain within the 30 MB atta
   try{
     const bytes=Buffer.alloc(10*1024*1024+1);png.copy(bytes);const source=await save(root,'thread',`${IMAGE}.png`,bytes);
     const task=store.create(input).task;store.recordImages(task.id,[{id:IMAGE,savedPath:source}]);
-    store.transition(task.id,'COMPLETED',{thread_id:'thread',workspace_path:path.join(root,'workspace'),result:'done'});
+    store.transition(task.id,'COMPLETED',{started_at:task.created_at,thread_id:'thread',workspace_path:path.join(root,'workspace'),result:'done'});
     await delivery.tick();
     // Delivery must keep working from the staged file after the image folder is cleared.
     await fs.rm(source);store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
@@ -108,7 +108,7 @@ test('a reply that links the generated image by its image-folder path does not r
   try{
     const source=await save(root,'thread');
     const task=store.create(input).task;store.recordImages(task.id,[{id:IMAGE,savedPath:source}]);
-    store.transition(task.id,'COMPLETED',{thread_id:'thread',workspace_path:path.join(root,'workspace'),result:`![番薯](${source})`});
+    store.transition(task.id,'COMPLETED',{started_at:task.created_at,thread_id:'thread',workspace_path:path.join(root,'workspace'),result:`![番薯](${source})`});
     await delivery.tick();await delivery.tick();await delivery.tick();
     assert.equal(store.db.prepare("SELECT count(*) n FROM delivery_outbox WHERE kind='NOTICE'").get().n,0,'no "附件未发送" notice');
     assert.equal(client.sent.filter(x=>x.type==='image').length,1,'the image is still sent, once');

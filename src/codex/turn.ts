@@ -18,7 +18,8 @@ function toolResult(item:Extract<ThreadItem,{type:'mcp_tool_call'}>){
 /** The visible shape of one item of the turn, or nothing for items that are not shown (reasoning, Codex's own error notices). */
 function stepOf(item:ThreadItem):Step|undefined{
   switch(item.type){
-    case 'agent_message':return item.text?{id:item.id,type:'message',text:item.text}:undefined;
+    // What Codex says on its way to the answer (the app-server's commentary phase) is marked: it is never part of the answer.
+    case 'agent_message':return item.text?{id:item.id,type:'message',text:item.text,...((item as {phase?:string}).phase==='commentary'?{commentary:true as const}:{})}:undefined;
     case 'command_execution':return {id:item.id,type:'command',command:plainCommand(item.command),output:tail(item.aggregated_output??'',OUTPUT_KEEP),
       status:item.status==='in_progress'?'running':item.status==='failed'||(item.exit_code??0)!==0?'failed':'done',...(item.exit_code!==undefined?{exit:item.exit_code}:{})};
     case 'file_change':return {id:item.id,type:'files',changes:item.changes.map(c=>({path:c.path,kind:c.kind})),status:item.status==='failed'?'failed':'done'};
@@ -60,8 +61,21 @@ export class Turn {
   /** What the user sent while the turn ran, once Codex has taken it: shown where it came in. */
   steered(id:string,text:string,files:string[]){this.byId.set(id,{id,type:'user',text,files});}
   get steps():Step[]{return [...this.byId.values()];}
-  private get messages(){return this.steps.flatMap(s=>s.type==='message'?[s.text]:[]);}
-  get progress(){const all=this.messages;return (this.state==='completed'?all.slice(0,-1):all).join('\n\n');}
-  get answer(){return this.state==='completed'?this.messages.at(-1)??'':'';}
+  /**
+   * The messages that answer, once the turn has completed: the last one; or, when the user added something after Codex's last command or tool,
+   * every message since then that is not commentary, since Codex may have finished the first request and then answered what came in. To-do
+   * updates are no work.
+   */
+  private get answering():Step[]{
+    if(this.state!=='completed')return [];
+    const steps=this.steps.filter(s=>s.type!=='todo'),last=steps.findLastIndex(s=>s.type==='message');
+    if(last<0)return [];
+    const tail=steps.slice(steps.findLastIndex((s,i)=>i<last&&s.type!=='message'&&s.type!=='user')+1,last+1);
+    const answers=tail.filter(s=>s.type==='message'&&!s.commentary);
+    return tail.some(s=>s.type==='user')&&answers.length?answers:[steps[last]!];
+  }
+  private text(steps:Step[]){return steps.flatMap(s=>s.type==='message'?[s.text]:[]).join('\n\n');}
+  get progress(){const answering=new Set(this.answering);return this.text(this.steps.filter(s=>!answering.has(s)));}
+  get answer(){return this.text(this.answering);}
   get error(){return this.state==='failed'?this.failure:'';}
 }

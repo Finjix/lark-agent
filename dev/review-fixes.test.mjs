@@ -14,7 +14,7 @@ const notices=s=>s.due().filter(r=>r.kind==='NOTICE').map(r=>JSON.parse(r.payloa
 
 test('an image that cannot be staged is reported while the final reply is still delivered',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'review-image-')),s=new Store(':memory:'),task=s.create(input('img')).task;
-  s.transition(task.id,'COMPLETED',{workspace_path:dir,thread_id:'thr',result:'这是最终答案'});
+  s.transition(task.id,'COMPLETED',{started_at:task.created_at,workspace_path:dir,thread_id:'thr',result:'这是最终答案'});
   s.recordImages(task.id,[{id:'img1',savedPath:path.join(dir,'elsewhere.png')}]);
   const calls=[],fake={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>({message_id:'m'})};
   const delivery=new Delivery(s,fake);await delivery.tick();

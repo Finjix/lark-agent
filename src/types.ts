@@ -5,8 +5,12 @@
 export const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED', 'INTERRUPTED', 'STEERED'] as const;
 export type TaskStatus = 'QUEUED'|'STEERING'|'STARTING'|'RUNNING'|'COMPLETED'|'FAILED'|'CANCELLED'|'INTERRUPTED'|'STEERED';
 export const terminal = (status: string) => (terminalStates as readonly string[]).includes(status);
-/** The terminal states as an SQL list. */
-export const TERMINAL_SQL = `(${terminalStates.map(s=>`'${s}'`).join(',')})`;
+/** Not started: waiting for a turn of its own, or for the running task's turn to take it. Neither holds the user's turn or a resource. */
+export const waitingStates = ['QUEUED', 'STEERING'] as const;
+export const waiting = (status: string) => (waitingStates as readonly string[]).includes(status);
+const sqlList = (states: readonly string[]) => `(${states.map(s=>`'${s}'`).join(',')})`;
+/** The terminal and the waiting states as SQL lists. */
+export const TERMINAL_SQL = sqlList(terminalStates), WAITING_SQL = sqlList(waitingStates);
 /** The one thing users are told whenever the bot cannot do its job (Codex unavailable or failing, attachments failing); the cause goes to the log. */
 export const BOT_DOWN = '机器人罢工了，请联系 @钟丰骏-实习生';
 export interface Task {
@@ -23,7 +27,7 @@ export interface Task {
  * list, and what the user added while it ran (`user`, with the names of the files that came with it). Stored with the task as JSON.
  */
 export type Step =
-  | {id:string;type:'message';text:string}
+  | {id:string;type:'message';text:string;commentary?:true}
   | {id:string;type:'user';text:string;files:string[]}
   | {id:string;type:'command';command:string;output:string;status:'running'|'done'|'failed';exit?:number}
   | {id:string;type:'files';changes:{path:string;kind:string}[];status:'done'|'failed'}

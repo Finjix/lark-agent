@@ -32,7 +32,7 @@ test('replies still collect and deliver linked files; repeated delivery does not
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-raw-delivery-')),s=new Store(':memory:'),task=s.create(input('file')).task;
   const report=path.join(root,'交付.txt');await fs.writeFile(report,'原文交付校验');
   const answer=`已完成，[下载文件](<${report}>)`;
-  s.transition(task.id,'COMPLETED',{thread_id:'thread',workspace_path:root,result:answer});
+  s.transition(task.id,'COMPLETED',{started_at:task.created_at,thread_id:'thread',workspace_path:root,result:answer});
   const sent=[],uploads=[],api={connected:true,raw:async(_method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async(...args)=>{sent.push(args);return {message_id:'sent'};},upload:async file=>{uploads.push(await fs.readFile(file,'utf8'));return {file_key:'uploaded'};}};
   const delivery=new Delivery(s,api);await delivery.tick();await delivery.tick();await delivery.tick();
   assert.deepEqual(uploads,['原文交付校验']);assert.equal(sent.filter(a=>a[2]==='file').length,1);assert.equal(s.get(task.id).result,answer);

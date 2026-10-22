@@ -1,10 +1,14 @@
 import {Database} from './sqlite.js';
 import {randomUUID} from 'node:crypto';
-import {terminal,BOT_DOWN,TERMINAL_SQL, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
+import {terminal,BOT_DOWN,TERMINAL_SQL,WAITING_SQL, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
 import {displayName} from '../sessions/naming.js';
 
-/** The version of the schema this program creates. A database of any other version is not touched: there is nothing to upgrade from. */
-const VERSION=1;
+/**
+ * The version of the schema this program creates. 2 added the task states STEERING and STEERED to the tables of 1, so a database of version 1
+ * is simply taken over; from then on a program that knows only version 1 refuses it, instead of taking those tasks for running ones. A
+ * database of any other version is not touched.
+ */
+const VERSION=2,TAKEN_OVER=[1];
 export class Store {
   db: Database; private columns?:Set<string>;
   constructor(file:string){
@@ -12,7 +16,7 @@ export class Store {
     this.db.pragma('busy_timeout = 5000');
     // Judged before anything is written to the file: a database this program cannot use is left exactly as it was.
     const version = this.db.pragma('user_version',{simple:true}) as number;
-    if(version!==0&&version!==VERSION){this.db.close();throw Error(`数据库 ${file} 的版本（user_version=${version}）与程序（${VERSION}）不一致，不能使用`);}
+    if(version!==0&&version!==VERSION&&!TAKEN_OVER.includes(version)){this.db.close();throw Error(`数据库 ${file} 的版本（user_version=${version}）与程序（${VERSION}）不一致，不能使用`);}
     this.db.pragma('journal_mode = WAL'); this.db.pragma('foreign_keys = OFF');
     try{this.db.transaction(()=>{
       this.db.exec(`
@@ -114,8 +118,12 @@ export class Store {
     this.db.prepare('UPDATE user_sessions SET thread_id=? WHERE id=?').run(threadId,id);
   }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
-  /** Started but unfinished tasks. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would keep getting slower. */
-  active():Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE status<>'QUEUED' AND status NOT IN ${TERMINAL_SQL} ORDER BY created_at,rowid`).all() as unknown as Task[];}
+  /**
+   * Started but unfinished tasks. A message waiting to go into the running task's turn has not started: counted here, it would keep the
+   * scheduler from starting the very task it waits for. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would
+   * keep getting slower.
+   */
+  active():Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE status NOT IN ${WAITING_SQL} AND status NOT IN ${TERMINAL_SQL} ORDER BY created_at,rowid`).all() as unknown as Task[];}
   /** True while the user has a task that has not finished (queued, being handed to the running one, starting or running). */
   busy(tenant:string,user:string):boolean {return !!this.db.prepare(`SELECT 1 FROM tasks WHERE tenant_key=? AND user_id=? AND status NOT IN ${TERMINAL_SQL} LIMIT 1`).get(tenant,user);}
   /** The user's tasks that have not ended, queued or running. */
@@ -186,7 +194,7 @@ export class Store {
    */
   discardLeftovers(){
     return this.db.transaction(()=>{
-      const cancelled=this.db.prepare("UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status IN ('QUEUED','STEERING')").run(Date.now()).changes;
+      const cancelled=this.db.prepare(`UPDATE tasks SET status='CANCELLED',finished_at=?,error='' WHERE status IN ${WAITING_SQL}`).run(Date.now()).changes;
       const dropped=this.db.prepare(`UPDATE delivery_outbox SET status='FAILED',error='服务重启，已丢弃重启前未送达的消息'
         WHERE status IN ('PENDING','RETRYING') AND (kind='NOTICE' OR task_id IN (SELECT id FROM tasks WHERE status IN ${TERMINAL_SQL}))`).run().changes;
       // After the drop on purpose: the card update of an interrupted task is the one delivery that must still go out.

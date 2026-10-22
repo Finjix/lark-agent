@@ -25,7 +25,7 @@ export class Scheduler {
     for(const task of this.service.store.list('QUEUED')){
       const user=`${task.tenant_key}:${task.user_id}`;
       if(blocked.has(user))continue;
-      if(!canSchedule(task,active)){blocked.add(user);continue;}
+      if(!canSchedule(task,active)||this.service.paused(task)){blocked.add(user);continue;}
       this.service.store.transition(task.id,'STARTING',{started_at:Date.now()});
       active.push(this.service.store.get(task.id)!);
       const start=Promise.resolve().then(()=>this.service.start(this.service.store.get(task.id)!)).catch(e=>log.error({taskId:task.id,error:safeError(e)},'调度异常'));

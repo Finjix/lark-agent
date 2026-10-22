@@ -76,7 +76,8 @@ export function configArgs(value:NonNullable<CodexOptions['config']>):string[]{
 export function threadItem(item:any):ThreadItem|undefined{
   const status=(s:unknown)=>s==='inProgress'?'in_progress' as const:s==='completed'?'completed' as const:'failed' as const;
   switch(item?.type){
-    case 'agentMessage':return {id:item.id,type:'agent_message',text:String(item.text??'')};
+    // The phase tells commentary from an answer, which matters when a turn answers more than one message (see Turn).
+    case 'agentMessage':return {id:item.id,type:'agent_message',text:String(item.text??''),...(item.phase?{phase:String(item.phase)}:{})} as ThreadItem;
     case 'commandExecution':return {id:item.id,type:'command_execution',command:String(item.command??''),aggregated_output:String(item.aggregatedOutput??''),
       ...(typeof item.exitCode==='number'?{exit_code:item.exitCode}:{}),status:status(item.status)};
     case 'fileChange':return {id:item.id,type:'file_change',changes:(item.changes??[]).map((c:any)=>({path:String(c.path),kind:c.kind?.type??c.kind})),

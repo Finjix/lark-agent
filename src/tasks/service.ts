@@ -8,7 +8,7 @@ import {codexInput} from '../codex/input.js';
 import {generatedImages} from '../feishu/images.js';
 import {userWorkspace,userDirectory} from '../layout.js';
 import {config} from '../config.js';
-import {terminal,BOT_DOWN,InputRejected,type Task,type IncomingMessage,type UserSession} from '../types.js';
+import {terminal,waiting,BOT_DOWN,InputRejected,type Task,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
 import {authorized} from '../access.js';
@@ -28,6 +28,8 @@ export class TaskService {
   /** Per unfinished task that messages sent meanwhile are handed to (see join): how they reach its turn. */
   private steering=new Map<string,Steering>();
   private steeringFor(taskId:string){let steering=this.steering.get(taskId);if(!steering)this.steering.set(taskId,steering=new Steering());return steering;}
+  /** Users ("tenant:user") whose /new is under way, with how many. */
+  private resetting=new Map<string,number>();
   private stopping=false;
   /** How long /new waits for a stopped Codex process to be gone before it ends the task regardless. */
   stopWaitMs=5000;
@@ -64,9 +66,15 @@ export class TaskService {
     if(!result.created)return;
     log.info({taskId:result.task.id},'任务已入队');
     // A message sent while the user's previous one is unfinished goes into that one's turn (Codex's steering), instead of waiting for a turn of its own.
+    // Not into a task being stopped (/new, its time limit) or while /new is under way: it is then for what comes next. Nor when it needs a resource
+    // lock that task does not hold: running on its own, it gets the lock from the scheduler.
     const previous=this.store.unfinished(message.tenant,message.user).filter(t=>t.id!==result.task.id&&t.status!=='STEERING').at(-1);
-    if(previous)void this.join(result.task,previous).catch(e=>log.warn({taskId:result.task.id,error:safeError(e)},'消息交给执行中的任务时出错'));
+    const holds=(t:Task)=>{const held=JSON.parse(t.resources) as string[];return resources.every(r=>held.includes(r));};
+    if(previous&&!previous.cancel_requested&&!this.paused(previous)&&holds(previous))
+      void this.join(result.task,previous).catch(e=>log.warn({taskId:result.task.id,error:safeError(e)},'消息交给执行中的任务时出错'));
   }
+  /** True while /new replaces the user's conversation: their messages wait, so that none starts in the conversation being left. */
+  paused(task:Task){return this.resetting.has(`${task.tenant_key}:${task.user_id}`);}
   /**
    * Hands a message sent while the user's previous one is unfinished to that task's turn: Codex takes it in while it works (it reads it at its
    * next step, whatever it is doing) and the task answers both, on its card, where the message shows as a step. Until the turn has started the
@@ -79,11 +87,16 @@ export class TaskService {
     const steering=this.steeringFor(target.id),over=()=>terminal(this.store.get(target.id)?.status??'COMPLETED');
     try{
       await steering.serial(async()=>{
+        if(!await steering.ready(over))throw Error('前一条消息的任务已经结束');
+        const input=await this.joiningInput(this.store.get(task.id)!);
+        // Receiving the attachments can outlast the turn: the way in is asked for again once they are here.
         const steer=await steering.ready(over);
         if(!steer)throw Error('前一条消息的任务已经结束');
-        await steer(await this.joiningInput(this.store.get(task.id)!));
+        await steer(input);
       });
     }catch(e){
+      // Attachments it cannot take (too large, say) are refused at once, as for a message of its own, not after the running task.
+      if(e instanceof InputRejected){log.info({taskId:task.id,error:e.message},'补充的消息的附件被拒收');this.store.transition(task.id,'FAILED',{error:e.message});return;}
       log.info({taskId:task.id,into:target.id,error:safeError(e)},'消息没能交给执行中的任务，改为单独执行');
       // Back in the queue, unless it ended meanwhile (/new cancels it).
       this.store.claim(task.id,'STEERING','QUEUED');return;
@@ -111,17 +124,21 @@ export class TaskService {
   }
   /** /new: forget the conversation. A task still running is stopped first, so this is also how a user gets going again when one hangs. */
   private async newConversation(message:IncomingMessage){
-    const {tenant,user}=message,unfinished=this.store.unfinished(tenant,user),waits=(t:Task)=>t.status==='QUEUED'||t.status==='STEERING';
-    // Waiting messages go first, so that none of them starts in the old conversation while the running task is being stopped.
-    for(const task of unfinished)if(waits(task))this.store.transition(task.id,'CANCELLED',{error:''});
-    for(const task of unfinished){
-      if(waits(task))continue;
-      this.store.update(task.id,{cancel_requested:1});
-      if(this.interrupt(task))for(const until=Date.now()+this.stopWaitMs;this.runs.has(task.id)&&Date.now()<until;)await new Promise(r=>setTimeout(r,50));
-      // Ends it here if the process did not (a no-op for a task that has ended): the user's queue must not stay blocked.
-      this.store.transition(task.id,'INTERRUPTED',{error:''});
-    }
-    this.notice(message,this.store.resetSession(tenant,user)||unfinished.length?'已开始新的对话，之前的内容不再带入。':'还没有对话，直接发送任务即可。');
+    const {tenant,user}=message,key=`${tenant}:${user}`,unfinished=this.store.unfinished(tenant,user);
+    // Until the conversation is replaced nothing of this user starts (see paused): what they send meanwhile is for the new one.
+    this.resetting.set(key,(this.resetting.get(key)??0)+1);
+    try{
+      // Waiting messages go first, so that none of them starts in the old conversation while the running task is being stopped.
+      for(const task of unfinished)if(waiting(task.status))this.store.transition(task.id,'CANCELLED',{error:''});
+      for(const task of unfinished){
+        if(waiting(task.status))continue;
+        this.store.update(task.id,{cancel_requested:1});
+        if(this.interrupt(task))for(const until=Date.now()+this.stopWaitMs;this.runs.has(task.id)&&Date.now()<until;)await new Promise(r=>setTimeout(r,50));
+        // Ends it here if the process did not (a no-op for a task that has ended): the user's queue must not stay blocked.
+        this.store.transition(task.id,'INTERRUPTED',{error:''});
+      }
+      this.notice(message,this.store.resetSession(tenant,user)||unfinished.length?'已开始新的对话，之前的内容不再带入。':'还没有对话，直接发送任务即可。');
+    }finally{const left=this.resetting.get(key)!-1;if(left)this.resetting.set(key,left);else this.resetting.delete(key);}
   }
   /** The user's workspace: Codex's working directory, where what it makes is delivered from, and where the attachments arrive. */
   private async prepare(task:Task){
@@ -191,7 +208,12 @@ export class TaskService {
             received=true;this.onEvent(task,session,turn,event.value);
             if(turn.state!=='running')stop();
           }
-        }finally{clearTimeout(timer);signal.removeEventListener('abort',stop);}
+        }finally{
+          clearTimeout(timer);signal.removeEventListener('abort',stop);
+          // Left early (an event that could not be recorded, say), the turn still ends: returning the iterator runs the runner's cleanup, which
+          // closes Codex. Otherwise its process would go on with the turn, and live on, after the task has failed.
+          void events.return?.(undefined)?.catch(()=>{});
+        }
         break;
       }catch(e){
         // After a failed turn the process exits with an error code, which the SDK throws; the turn's own report is what counts.

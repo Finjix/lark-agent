@@ -67,7 +67,7 @@ test('scheduler launches every independent user without a numeric cap and stop a
   const s=memory(),releases=[],started=[];
   const tasks=Array.from({length:24},(_,i)=>s.create(input(`parallel-${i}`,`user-${i}`)).task);
   const next=s.create(input('same-user-next','user-0')).task;
-  const service={store:s,codex:{ready:true},start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
+  const service={store:s,codex:{ready:true},paused:()=>false,start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
   const scheduler=new Scheduler(service);scheduler.tick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(started.length,24);assert.equal(s.active().length,24);assert.equal(s.get(next.id).status,'QUEUED');
   scheduler.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(started.length,24);
@@ -161,7 +161,7 @@ test('whatever Codex leaves in the workspace is delivered even when the reply do
   await fs.mkdir(path.join(workspace,'sub'),{recursive:true});
   await fs.writeFile(path.join(workspace,'report.txt'),'r');await fs.writeFile(path.join(workspace,'sub','data.csv'),'d');await fs.writeFile(path.join(workspace,'chart.png'),'p');
   await fs.writeFile(path.join(workspace,'.scratch'),'x');await fs.writeFile(path.join(dir,'elsewhere.txt'),'never');
-  const s=memory(),task=s.create(input()).task;s.transition(task.id,'COMPLETED',{workspace_path:workspace,result:`done, see [report](<${path.join(workspace,'report.txt')}>)`});
+  const s=memory(),task=s.create(input()).task;s.transition(task.id,'COMPLETED',{started_at:task.created_at,workspace_path:workspace,result:`done, see [report](<${path.join(workspace,'report.txt')}>)`});
   const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>({file_key:'file'}),uploadImage:async()=>({image_key:'image'})};
   const delivery=new Delivery(s,f);await delivery.tick();
   const rows=s.db.prepare('SELECT name,kind FROM task_artifacts WHERE task_id=? ORDER BY name').all(task.id).map(r=>`${r.name}:${r.kind}`);
@@ -171,6 +171,14 @@ test('whatever Codex leaves in the workspace is delivered even when the reply do
   assert.equal((await outputFiles(many)).length,10,'capped');await fs.rm(many,{recursive:true});
 });
 
+test('a message that never ran delivers no files, even with the workspace of the task it was to go into',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-never-ran-'));await fs.writeFile(path.join(dir,'report.docx'),'made by the running task');
+  const s=memory(),task=s.create(input()).task;s.update(task.id,{workspace_path:dir});s.transition(task.id,'CANCELLED');
+  const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>({file_key:'file'}),uploadImage:async()=>({image_key:'image'})};
+  const delivery=new Delivery(s,f);await delivery.tick();
+  assert.equal(s.db.prepare('SELECT count(*) c FROM task_artifacts').get().c,0,'the running task delivers its own files');
+  await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
+});
 test('a task owns only the files that appeared in its folder while it ran',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-window-'));await fs.writeFile(path.join(dir,'report.txt'),'r');
   const now=Date.now(),names=async window=>(await outputFiles(dir,window)).map(f=>path.basename(f));
@@ -193,7 +201,7 @@ test('a delivered file with parentheses in its name is sent, a link to a missing
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-links-')),workspace=path.join(dir,'workspace'),input_=path.join(dir,'input');await fs.mkdir(workspace);await fs.mkdir(input_);
   const named=path.join(workspace,'report (2).pdf'),mine=path.join(input_,'photo (2).png');await fs.writeFile(named,'r');await fs.writeFile(mine,'m');
   const s=memory(),task=s.create(input()).task;
-  s.transition(task.id,'COMPLETED',{workspace_path:workspace,result:`[报告](<${named}>) [你的图](<${mine}>) [站内](/docs/intro) [丢失](<${path.join(workspace,'missing.txt')}>)`});
+  s.transition(task.id,'COMPLETED',{started_at:task.created_at,workspace_path:workspace,result:`[报告](<${named}>) [你的图](<${mine}>) [站内](/docs/intro) [丢失](<${path.join(workspace,'missing.txt')}>)`});
   const f={connected:true,raw:async(method,url)=>url.endsWith('/cards')?{card_id:'card'}:{},reply:async()=>({message_id:'message'}),upload:async()=>({file_key:'file'}),uploadImage:async()=>({image_key:'image'})};
   const delivery=new Delivery(s,f);await delivery.tick();
   assert.deepEqual(s.db.prepare('SELECT name FROM task_artifacts WHERE task_id=?').all(task.id).map(r=>r.name),['report (2).pdf']);
@@ -206,7 +214,7 @@ test('a slow upload does not hold back the card updates of other tasks',async()=
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-slow-')),workspace=path.join(dir,'workspace');await fs.mkdir(workspace);
   const big=path.join(workspace,'big.bin');await fs.writeFile(big,'x');
   const s=memory(),a=s.create(input('a','u1')).task,b=s.create(input('b','u2')).task;
-  s.transition(a.id,'COMPLETED',{workspace_path:workspace,result:`[大文件](<${big}>)`});s.transition(b.id,'RUNNING',{started_at:Date.now(),progress:'还在做'});
+  s.transition(a.id,'COMPLETED',{started_at:a.created_at,workspace_path:workspace,result:`[大文件](<${big}>)`});s.transition(b.id,'RUNNING',{started_at:Date.now(),progress:'还在做'});
   let release;const gate=new Promise(r=>release=r),puts=[];
   const f={connected:true,raw:async(method,url,data)=>{if(method==='PUT')puts.push(url);return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>({message_id:'m'}),upload:async()=>{await gate;return {file_key:'k'};}};
   const delivery=new Delivery(s,f);await delivery.tick(); // cards out, the upload is queued

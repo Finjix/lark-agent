@@ -5,6 +5,7 @@ import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
 import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
@@ -13,8 +14,8 @@ import {Turn,plainCommand} from '../dist/codex/turn.js';
 import {cardJson,cardElements,renderTask} from '../dist/feishu/cards.js';
 import {codexInput} from '../dist/codex/input.js';
 import {CodexRunner,codexEnv,codexConfig,threadOptions,configArgs} from '../dist/codex/runner.js';
-import {AppServerError,withPath} from '../dist/codex/appserver.js';
-import {BOT_DOWN} from '../dist/types.js';
+import {AppServerError,withPath,serverOver} from '../dist/codex/appserver.js';
+import {BOT_DOWN,InputRejected} from '../dist/types.js';
 
 // ---- the events of `codex exec --experimental-json`, as the SDK hands them over
 const started=id=>({type:'thread.started',thread_id:id}),turnStarted={type:'turn.started'};
@@ -42,6 +43,14 @@ function setup(script,{downloader}={}){
 const notices=store=>store.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE' ORDER BY rowid").all().map(r=>JSON.parse(r.payload).text);
 
 // ---- what a turn looks like on a card
+test('when the user added something after Codex\'s last work and Codex answered it too, the answer is every message since then',()=>{
+  const turn=new Turn(),command={type:'item.completed',item:{id:'c',type:'command_execution',command:'dir',aggregated_output:'',status:'completed',exit_code:0}};
+  turn.apply(say('m1','先看看'));turn.apply(command);turn.steered('steer:m2','再加个封面',[]);turn.apply(say('m2','报告做好了：report.docx'));turn.apply(say('m3','封面也加好了。'));
+  turn.apply({type:'item.updated',item:{id:'p',type:'todo_list',items:[{text:'封面',completed:true}]}});turn.apply(completed);
+  assert.deepEqual([turn.answer,turn.progress],['报告做好了：report.docx\n\n封面也加好了。','先看看'],'the first request\'s answer is not pushed into the progress');
+  const worked=new Turn();worked.steered('steer:m2','再加个封面',[]);worked.apply(command);worked.apply(say('m1','中间说明'));worked.apply({...command,item:{...command.item,id:'c2'}});worked.apply(say('m2','两件都做好了'));worked.apply(completed);
+  assert.deepEqual([worked.answer,worked.progress],['两件都做好了','中间说明'],'taken in while Codex worked: the last message answers, as without it');
+});
 test('while a turn runs every message is progress; when it completes the last one is the answer',()=>{
   const turn=new Turn();
   assert.equal(turn.apply(started('th')),false);assert.equal(turn.threadId,'th');assert.equal(turn.apply(turnStarted),false);
@@ -207,6 +216,21 @@ test('while its turn runs, a turn takes more input: what hands it over is offere
   assert.deepEqual(made[0].requests.at(-1),['turn/steer',{threadId:'th-new',expectedTurnId:'turn-1',input:[{type:'text',text:'再加一件'},{type:'localImage',path:'D:/w/input/b.png'}]}]);
   assert.deepEqual(offers,[true,false],'withdrawn once the turn is over');
   made[0].end();await assert.rejects(steer([{type:'text',text:'太晚了'}]),/no active turn/);
+});
+/** A codex.exe process that never answers: its pipes, and what the test makes it do. */
+function silentProcess(){
+  return Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),exitCode:null,signalCode:null,killed:false,
+    kill(){this.killed=true;return true;}});
+}
+test('the app-server connection fails what still waits once it is closed, and ends soon after Codex exits even while a leftover process holds its output',async()=>{
+  const closing=silentProcess(),silent=serverOver(closing),waiting=silent.request('turn/steer',{});silent.close();
+  await assert.rejects(waiting,/已关闭/,'a steer sent as the turn ended fails at once');await assert.rejects(silent.request('turn/steer',{}),/已关闭/,'and so does one sent later');
+  assert(closing.killed);assert.deepEqual(await silent.notifications.next(),{done:true,value:undefined});
+  // Codex exits, but a process one of its commands started (a browser waiting for a QR scan, say) keeps its output open.
+  const leaving=silentProcess(),gone=serverOver(leaving),pending=gone.request('turn/steer',{}),since=Date.now();
+  leaving.exitCode=3;leaving.emit('exit',3,null);
+  await assert.rejects(pending,/退出了（code 3）/);
+  assert(Date.now()-since<3000,'not held until the leftover process ends');assert.deepEqual(await gone.notifications.next(),{done:true,value:undefined});
 });
 test('Codex is ready when its binary runs and there is a login or an API key; the real binary is found through the package',async()=>{
   const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved={home:config.codexHome,key:config.CODEX_API_KEY};
@@ -498,7 +522,7 @@ test('a message sent while a turn runs goes into that turn: the task answers bot
   const handed=[];
   const kit=setup(async function*(job){
     yield started('th');yield turnStarted;job.steerable(async input=>{handed.push(input);});
-    yield say('a','先做第一件');await until(()=>handed.length);
+    yield {type:'item.completed',item:{id:'a',type:'agent_message',text:'先做第一件',phase:'commentary'}};await until(()=>handed.length);
     yield say('b',`都做好了，也${handed[0][0].text}`);yield completed;
   });
   const {task,done}=await running(kit);
@@ -567,10 +591,58 @@ test('/new stops the running task and cancels what was waiting to go into it; a 
   assert.equal(broken.store.get(first.id).status,'FAILED');await until(()=>broken.store.taskForMessage('t','m2').status==='QUEUED');
   kit.store.close();broken.store.close();
 });
+test('two messages sent one right after the other, before the first has started: the scheduler starts the first, and the second goes into its turn',async()=>{
+  const handed=[];
+  const kit=setup(async function*(job){yield started('th');yield turnStarted;job.steerable(async input=>{handed.push(input[0].text);});await until(()=>handed.length);yield say('a',`都做了：${handed[0]}`);yield completed;});
+  await kit.service.receive(sent('m1','上传素材'));await kit.service.receive(sent('m2','压缩包在这'));
+  assert.deepEqual(['m1','m2'].map(m=>kit.store.taskForMessage('t',m).status),['QUEUED','STEERING']);
+  const scheduler=new Scheduler(kit.service);scheduler.tick();
+  await until(()=>kit.store.taskForMessage('t','m2').status==='STEERED');await until(()=>kit.store.taskForMessage('t','m1').status==='COMPLETED');await scheduler.stop();
+  assert.equal(kit.store.taskForMessage('t','m1').result,'都做了：压缩包在这');assert.equal(kit.codex.jobs.length,1);
+  kit.store.close();
+});
+test('a message that needs a resource lock the running task does not hold is not handed to it: it runs on its own, with the lock',async()=>{
+  const saved=config.resources;config.resources=[{key:'printer',regex:/打印/}];
+  try{
+    const kit=setup(async function*(job){yield started('th');yield turnStarted;job.steerable(async()=>{});await until(()=>kit.store.taskForMessage('t','m2'));yield say('a','好');yield completed;});
+    const {done}=await running(kit);
+    await kit.service.receive(sent('m2','顺便打印合同'));assert.equal(kit.store.taskForMessage('t','m2').status,'QUEUED');
+    await done;kit.store.close();
+  }finally{config.resources=saved;}
+});
+test('a message sent while /new stops the running task is for the new conversation: it does not go into the stopped task, nor start before the conversation is replaced',async()=>{
+  const kit=setup(async function*(job,n){
+    yield started(n===1?'th-old':'th-new');yield turnStarted;job.steerable(async()=>{});
+    // The stopped process takes a moment to go, so that /new is still waiting when the next message comes.
+    if(n===1){await new Promise(r=>job.signal.addEventListener('abort',()=>setTimeout(r,300),{once:true}));throw aborted();}
+    yield say('a','新对话里做好了');yield completed;
+  });
+  const {task}=await running(kit),scheduler=new Scheduler(kit.service);scheduler.start();
+  const resetting=kit.service.receive(sent('x','/new'));
+  await kit.service.receive(sent('m2','新对话的第一件'));assert.equal(kit.store.taskForMessage('t','m2').status,'QUEUED','not handed to the task being stopped');
+  await resetting;await until(()=>kit.store.taskForMessage('t','m2').status==='COMPLETED');await scheduler.stop();
+  assert.equal(kit.store.get(task.id).status,'INTERRUPTED');assert.equal(kit.codex.jobs[1].threadId,null,'started in the new conversation');
+  kit.store.close();
+});
+test('a message sent meanwhile whose attachment cannot be taken is refused at once, as a message of its own would be',async()=>{
+  const downloader={downloadResource:async()=>{throw new InputRejected('附件超过 2 GB 接收上限，请拆分后分别发送');}};
+  const kit=setup(async function*(job){yield started('th');yield turnStarted;job.steerable(async()=>{});await until(()=>kit.store.taskForMessage('t','m2')?.status==='FAILED');yield say('a','好');yield completed;},{downloader});
+  const {done}=await running(kit);
+  await kit.service.receive(sent('m2','',{attachments:[{kind:'file',key:'z',name:'大.zip'}]}));
+  await until(()=>kit.store.taskForMessage('t','m2').status==='FAILED');assert.equal(kit.store.taskForMessage('t','m2').error,'附件超过 2 GB 接收上限，请拆分后分别发送');
+  await done;kit.store.close();
+});
+test('a turn left because one of its events could not be recorded is still closed: Codex does not go on after the task has failed',async()=>{
+  let closed=false;
+  const kit=setup(async function*(){try{yield started('th');yield turnStarted;await new Promise(()=>{});}finally{closed=true;}});
+  kit.service.onEvent=()=>{throw Error('database is locked');};
+  const task=await kit.run();assert.equal(task.status,'FAILED');await until(()=>closed);
+  kit.store.close();
+});
 test('a restart cancels a message that was being handed over, as it does one that was queued',()=>{
   const store=new Store(':memory:'),task=store.create(input('m1','u1')).task,waiting=store.create(input('m2','u1')).task;
   store.transition(task.id,'RUNNING');assert(store.claim(waiting.id,'QUEUED','STEERING'));assert(!store.claim(waiting.id,'QUEUED','STEERING'),'claimed once');
-  assert.equal(store.active().length,2);assert(store.busy('t','u1'));
+  assert.deepEqual(store.active().map(t=>t.id),[task.id],'a message being handed over has not started');assert(store.busy('t','u1'));
   store.discardLeftovers();
   assert.deepEqual([store.get(task.id).status,store.get(waiting.id).status],['FAILED','CANCELLED']);store.close();
 });

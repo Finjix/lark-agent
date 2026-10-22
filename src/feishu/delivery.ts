@@ -130,8 +130,9 @@ export class Delivery {
       this.store.db.prepare('UPDATE task_artifacts SET message_id=? WHERE id=?').run(sent.message_id,artifact.id);return;
     }
     if(row.kind!=='VIEW')throw Error('未知投递类型');
-    // A message handed to the running task delivers nothing of its own: what the turn made goes out with that task.
-    if(terminal(task.status)&&task.status!=='STEERED')await this.collectArtifacts(task);
+    // Only a task that ran delivers files. One that never started (handed to the running task, or cancelled while waiting to be) made nothing:
+    // what the running task made meanwhile in the same workspace goes out with that task.
+    if(terminal(task.status)&&task.started_at)await this.collectArtifacts(task);
     await this.updateCard(task);
   }
   private uuid(id:string){return createHash('sha256').update(id).digest('hex').slice(0,32);}
