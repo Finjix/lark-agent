@@ -154,9 +154,9 @@ test('a turn runs in an app-server of its own: a new chat is started or an exist
 });
 test('Codex is told to work only through the installed plugins and to do no more on the machine than using them takes',()=>{
   const none=agentInstructions(),some=agentInstructions([{name:'lark-docs'},{name:'lark-sheets'}]);
-  assert.match(none,/没有安装任何插件/);assert.doesNotMatch(none,/已安装的插件/);
-  assert.match(some,/已安装的插件：lark-docs、lark-sheets。/);assert.doesNotMatch(some,/没有安装任何插件/);
-  for(const text of [none,some]){assert.match(text,/只用插件的技能和工具/);assert.match(text,/必不可少/);assert.match(text,/环境变量、密钥、凭证/);}
+  assert.match(none,/No plugins are installed/);assert.doesNotMatch(none,/Installed plugins/);
+  assert.match(some,/Installed plugins: lark-docs, lark-sheets\./);assert.doesNotMatch(some,/No plugins are installed/);
+  for(const text of [none,some]){assert.match(text,/only with the plugins' skills and tools/);assert.match(text,/cannot be done without it/);assert.match(text,/environment variables, keys, credentials/);}
 });
 test('config overrides reach the app-server flattened as the SDK flattened them for codex exec',()=>{
   assert.deepEqual(configArgs({cli_auth_credentials_store:'file',features:{apps:false,plugins:true},plugins:{'"x@lark-agent"':{mcp_servers:{'"s"':{enabled:false}}}},
