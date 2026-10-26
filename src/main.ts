@@ -22,7 +22,7 @@ async function main(){
     const response=await fetch(`http://127.0.0.1:${config.HEALTH_PORT}/shutdown`,{method:'POST',headers:{authorization:`Bearer ${token}`}});
     if(!response.ok)throw Error(`停止请求失败：${response.status}`);console.log('已请求安全停止');return;
   }
-  // The Codex CLI of this project, with the project's own Codex home: `start.cmd codex login`, `start.cmd codex login status`, ...
+  // The Codex CLI of this project, with the project's own Codex home: `start.cmd codex plugin ...`, `start.cmd codex --version`, ...
   if(action==='codex'){process.exitCode=await codexCli(process.argv.slice(3));return;}
   const store=new Store(config.database),codex=new CodexRunner();
   if(action==='retry-delivery'){
@@ -40,7 +40,7 @@ async function main(){
     await codex.probe();
     // What `start` would do with each folder in plugins/ (nothing is installed or changed here).
     checks.plugins=await inspectPlugins().catch(e=>[{folder:'',state:'invalid',reason:safeError(e)}]);
-    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,login:config.CODEX_API_KEY?'API key（.env）':'codex login',model:config.CODEX_MODEL||'（Codex 默认）',...(codex.error?{error:codex.error}:{})};
+    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,login:'OpenAI API key（.codex/auth.json）',...(codex.error?{error:codex.error}:{})};
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     store.close();console.log(JSON.stringify(checks,null,2));
     if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured()||checks.plugins.some((p:any)=>p.state==='invalid'))process.exitCode=1;return;

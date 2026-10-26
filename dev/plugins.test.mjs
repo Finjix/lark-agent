@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {config} from '../dist/config.js';
 import {discover,fingerprint,mcpServers,syncPlugins,inspectPlugins,pluginConfig,MARKETPLACE,PLUGIN_ENV} from '../dist/plugins.js';
-import {CodexRunner,codexEnv,codexConfig,codexOutput,configArgs} from '../dist/codex/runner.js';
+import {CodexRunner,codexEnv,codexConfig,codexOutput,configArgs,agentInstructions} from '../dist/codex/runner.js';
 
 const SCHEMA='https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 const made=[];
@@ -73,7 +73,7 @@ const plugin=(name,servers)=>({id:`${name}@${MARKETPLACE}`,name,version:'1.0.0',
 
 test('with plugins, Codex runs with its plugin feature on, each plugin\'s own MCP servers off, and the host\'s copy of them forwarding the user\'s environment',()=>{
   assert.deepEqual(pluginConfig([]),{},'no plugins, no change to what Codex is configured with');
-  assert.equal(codexConfig().features.plugins,false);assert.deepEqual(Object.keys(codexConfig()).sort(),['cli_auth_credentials_store','features']);
+  assert.equal(codexConfig().features.plugins,false);assert.deepEqual(Object.keys(codexConfig()).sort(),['features']);
   const plugins=[plugin('plugin-one',['feishu-auth']),plugin('other',['feishu-auth','my.tools']),plugin('no-servers',[])];
   const given=codexConfig(plugins);
   assert.equal(given.features.plugins,true);for(const f of ['apps','memories'])assert.equal(given.features[f],false,f);
@@ -100,9 +100,9 @@ test('a user\'s turn carries their folder, their Open ID and the bot\'s Feishu a
 });
 
 test('the runner gives a turn the plugins and the user\'s environment, and without plugins behaves as before',async()=>{
-  const made=[];
+  const made=[],started=[];
   // An app-server whose every turn is over at once.
-  const connect=options=>{made.push(options);return {request:async method=>method==='thread/start'?{thread:{id:'th'}}:method==='turn/start'?{turn:{id:'t'}}:{},notify(){},close(){},exitReason:undefined,
+  const connect=options=>{made.push(options);return {request:async(method,params)=>method==='thread/start'?(started.push(params),{thread:{id:'th'}}):method==='turn/start'?{turn:{id:'t'}}:{},notify(){},close(){},exitReason:undefined,
     notifications:{next:async()=>({done:false,value:{method:'turn/completed',params:{turn:{id:'t',status:'completed'}}}})}};};
   const runner=new CodexRunner(connect),job={threadId:null,cwd:'D:/w',input:[],signal:new AbortController().signal,user:{dir:'D:\\u',openId:'ou_1'}};
   const configured=options=>options.args.slice(0,configArgs(codexConfig(runner.plugins)).length);
@@ -112,6 +112,7 @@ test('the runner gives a turn the plugins and the user\'s environment, and witho
   for await(const _ of runner.run(job));
   assert.equal(made[1].env.LARK_AGENT_USER_DIR,'D:\\u');assert.equal(made[1].env.LARK_AGENT_USER_OPEN_ID,'ou_1');
   assert.deepEqual(configured(made[1]),configArgs(codexConfig(runner.plugins)));assert(made[1].args.includes('features.plugins=true'));
+  assert.deepEqual(started.map(s=>s.developerInstructions),[agentInstructions(),agentInstructions(runner.plugins)],'the instructions name the plugins of the turn');
   for await(const _ of runner.run({...job,user:undefined}));
   assert.equal(made[2].env.LARK_AGENT_USER_DIR,undefined,'a turn that is not a user\'s gets no user');
 });

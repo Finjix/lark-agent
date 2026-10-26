@@ -8,8 +8,8 @@ import {log,safeError} from '../log.js';
 import {InputRejected,type IncomingMessage,type IncomingAttachment} from '../types.js';
 import {incomingMessage} from './incoming.js';
 
-/** The largest file or video a user may send (a zip of a material folder, say); it is fetched in pieces. */
-export const MAX_INPUT_BYTES=2*1024*1024*1024;
+/** Files and videos (a zip of a material folder, say) have no size limit; they are fetched in pieces. */
+export const MAX_INPUT_BYTES=Infinity;
 /** Images come whole, and Feishu serves them up to 100 MB. */
 export const MAX_IMAGE_BYTES=100*1024*1024;
 /** Feishu takes at most 32 MB per Range request. */

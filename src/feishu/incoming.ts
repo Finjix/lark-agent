@@ -2,7 +2,7 @@ import type {IncomingMessage,IncomingAttachment} from '../types.js';
 
 export const MAX_INPUT_FILES=10;
 /** Feishu does not let a bot download a folder someone sent (none of its resource calls serves one), so the user is asked for a zip. */
-export const FOLDER_HINT='飞书不允许机器人读取文件夹。请把文件夹压缩成 zip 再发送（右键文件夹 → 压缩），单个文件不超过 2 GB。';
+export const FOLDER_HINT='飞书不允许机器人读取文件夹。请把文件夹压缩成 zip 再发送（右键文件夹 → 压缩）。';
 export function incomingMessage(event:any,botId:string):IncomingMessage|undefined{
   const msg=event?.message,sender=event?.sender;
   if(sender?.sender_type!=='user'||!msg?.message_id)return;

@@ -207,20 +207,17 @@ test('files and videos over 100 MB come in Range pieces into one file; the limit
   // An empty file has no first piece to ask for: it comes without a range.
   calls=[];client.sdk.im.messageResource.get=rangedResource(Buffer.alloc(0),calls);
   assert.equal((await client.downloadResource('message',video,path.join(root,'empty.mp4'))).size,0);assert.deepEqual(calls,['bytes=0-31457279','whole']);
-  // Too large: refused on the first answer's total, with a reason for the user.
-  const huge=new Readable({read(){}});
-  client.sdk.im.messageResource.get=async()=>({headers:{'content-range':`bytes 0-31457279/${MAX_INPUT_BYTES+1}`},getReadableStream:()=>huge});
-  await assert.rejects(client.downloadResource('message',video,path.join(root,'huge.mp4')),error=>error.constructor.name==='InputRejected'&&/2 GB/.test(error.message));
-  assert(huge.destroyed);
+  // Files have no size limit: a huge total is still asked for piece by piece.
+  assert.equal(MAX_INPUT_BYTES,Infinity);
   client.close();await fs.rm(root,{recursive:true});
 });
 
 test('an attachment that is too large fails the task with its reason, not the generic one',async()=>{
   const store=new Store(':memory:'),c=codex();
-  const task=store.create(input,[],[{kind:'file',key:'big',name:'素材.zip'}]).task;
-  const client=fakeClient();client.sdk.im.messageResource.get=async()=>({headers:{'content-range':`bytes 0-1/${MAX_INPUT_BYTES+1}`},getReadableStream:()=>Readable.from([Buffer.alloc(2)])});
+  const task=store.create(input,[],[{kind:'image',key:'big',name:'素材.png'}]).task;
+  const client=fakeClient();client.sdk.im.messageResource.get=async()=>({headers:{'content-length':String(MAX_IMAGE_BYTES+1)},getReadableStream:()=>Readable.from([Buffer.alloc(2)])});
   const service=new TaskService(store,c,client);
   store.transition(task.id,'STARTING');await service.start(store.get(task.id));
-  assert.equal(store.get(task.id).status,'FAILED');assert.match(store.get(task.id).error,/超过 2 GB/);assert.equal(c.jobs.length,0);
+  assert.equal(store.get(task.id).status,'FAILED');assert.match(store.get(task.id).error,/超过 100 MB/);assert.equal(c.jobs.length,0);
   client.close();store.close();
 });

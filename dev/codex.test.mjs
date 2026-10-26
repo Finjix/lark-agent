@@ -13,7 +13,7 @@ import {Scheduler} from '../dist/tasks/scheduler.js';
 import {Turn,plainCommand} from '../dist/codex/turn.js';
 import {cardJson,cardElements,renderTask} from '../dist/feishu/cards.js';
 import {codexInput} from '../dist/codex/input.js';
-import {CodexRunner,codexEnv,codexConfig,threadOptions,configArgs} from '../dist/codex/runner.js';
+import {CodexRunner,codexEnv,codexConfig,threadOptions,configArgs,agentInstructions} from '../dist/codex/runner.js';
 import {AppServerError,withPath,serverOver} from '../dist/codex/appserver.js';
 import {BOT_DOWN,InputRejected} from '../dist/types.js';
 
@@ -98,19 +98,12 @@ test('Codex runs with its home inside the project, whatever the environment says
   }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);}
   assert.notEqual(config.codexHome,path.join(os.homedir(),'.codex'),"never the system's own Codex home");
 });
-test('Codex is configured on each run: file login, the shared connectors and memories switched off, and nothing else added',()=>{
+test('Codex is configured on each run: the shared connectors and memories switched off, and nothing else added',()=>{
   const plain=codexConfig();
-  assert.equal(plain.cli_auth_credentials_store,'file');
   for(const feature of ['apps','plugins','memories'])assert.equal(plain.features[feature],false,feature);
   assert.deepEqual(Object.keys(plain.features).sort(),['apps','memories','plugins'],'no other feature is touched');
-  assert.deepEqual(Object.keys(plain).sort(),['cli_auth_credentials_store','features'],'no instructions, no tools, no MCP servers');
-  const saved={model:config.CODEX_MODEL,effort:config.CODEX_REASONING_EFFORT};
-  try{
-    Object.assign(config,{CODEX_MODEL:'',CODEX_REASONING_EFFORT:''});
-    assert.deepEqual(threadOptions('D:/w'),{workingDirectory:'D:/w',skipGitRepoCheck:true,sandboxMode:'danger-full-access',approvalPolicy:'never'},'no sandbox, nobody asked');
-    Object.assign(config,{CODEX_MODEL:'some-model',CODEX_REASONING_EFFORT:'low'});
-    const options=threadOptions('D:/w');assert.equal(options.sandboxMode,'danger-full-access');assert.equal(options.model,'some-model');assert.equal(options.modelReasoningEffort,'low');
-  }finally{Object.assign(config,{CODEX_MODEL:saved.model,CODEX_REASONING_EFFORT:saved.effort});}
+  assert.deepEqual(Object.keys(plain).sort(),['features'],'no login, model or instructions, no tools, no MCP servers');
+  assert.deepEqual(threadOptions('D:/w'),{workingDirectory:'D:/w',skipGitRepoCheck:true,sandboxMode:'danger-full-access',approvalPolicy:'never'},'no sandbox, nobody asked, the model left to .codex/config.toml');
 });
 /**
  * Stand-ins for `codex app-server` processes, one per turn: each answers what a turn asks (`answers` overrides a method; a function gets the
@@ -144,21 +137,26 @@ const runAll=async(runner,job)=>{const events=[];for await(const event of runner
 
 test('a turn runs in an app-server of its own: a new chat is started or an existing one resumed, with the project\'s home and settings, the input as given',async()=>{
   const {connect,made}=fakeServers({'turn/start':reporting(finished())}),runner=new CodexRunner(connect);
-  const saved={model:config.CODEX_MODEL,effort:config.CODEX_REASONING_EFFORT};
-  try{
-    Object.assign(config,{CODEX_MODEL:'some-model',CODEX_REASONING_EFFORT:'low'});
+  {
     const first=await runAll(runner,{input:[{type:'text',text:'hi'},{type:'local_image',path:'D:/w/input/a.png'}]});
     await runAll(runner,{threadId:'th-1',input:[{type:'text',text:'again'}]});
     assert.deepEqual(first.map(e=>e.type),['thread.started','turn.started','turn.completed']);assert.equal(first[0].thread_id,'th-new');
     const [a,b]=made;
     assert.deepEqual(a.requests.map(r=>r[0]),['initialize','thread/start','turn/start']);assert.deepEqual(a.notified,['initialized']);assert.equal(a.requests[0][1].clientInfo.name,'lark-agent');
-    assert.deepEqual(a.requests[1][1],{cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',model:'some-model'},'no sandbox, nobody asked');
+    assert.deepEqual(a.requests[1][1],{cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',developerInstructions:agentInstructions()},'no sandbox, nobody asked, held to the plugins');
     assert.deepEqual(a.requests[2][1],{threadId:'th-new',input:[{type:'text',text:'hi'},{type:'localImage',path:'D:/w/input/a.png'}]});
-    assert.deepEqual(b.requests[1],['thread/resume',{threadId:'th-1',cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',model:'some-model',excludeTurns:true}],'a resumed chat is not sent back whole');
+    assert.deepEqual(b.requests[1],['thread/resume',{threadId:'th-1',cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',developerInstructions:agentInstructions(),excludeTurns:true}],
+      'a resumed chat is not sent back whole, and is held to the plugins as a new one is');
     assert.equal(a.options.env.CODEX_HOME,config.codexHome);
-    assert.deepEqual(a.options.args,[...configArgs(codexConfig()),'--config','model_reasoning_effort="low"']);
+    assert.deepEqual(a.options.args,configArgs(codexConfig()));
     assert(a.closed&&b.closed,'the process of a turn is closed once the turn is over');
-  }finally{Object.assign(config,saved);}
+  }
+});
+test('Codex is told to work only through the installed plugins and to do no more on the machine than using them takes',()=>{
+  const none=agentInstructions(),some=agentInstructions([{name:'lark-docs'},{name:'lark-sheets'}]);
+  assert.match(none,/没有安装任何插件/);assert.doesNotMatch(none,/已安装的插件/);
+  assert.match(some,/已安装的插件：lark-docs、lark-sheets。/);assert.doesNotMatch(some,/没有安装任何插件/);
+  for(const text of [none,some]){assert.match(text,/只用插件的技能和工具/);assert.match(text,/必不可少/);assert.match(text,/环境变量、密钥、凭证/);}
 });
 test('config overrides reach the app-server flattened as the SDK flattened them for codex exec',()=>{
   assert.deepEqual(configArgs({cli_auth_credentials_store:'file',features:{apps:false,plugins:true},plugins:{'"x@lark-agent"':{mcp_servers:{'"s"':{enabled:false}}}},
@@ -232,16 +230,15 @@ test('the app-server connection fails what still waits once it is closed, and en
   await assert.rejects(pending,/退出了（code 3）/);
   assert(Date.now()-since<3000,'not held until the leftover process ends');assert.deepEqual(await gone.notifications.next(),{done:true,value:undefined});
 });
-test('Codex is ready when its binary runs and there is a login or an API key; the real binary is found through the package',async()=>{
-  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved={home:config.codexHome,key:config.CODEX_API_KEY};
+test('Codex is ready when its binary runs, without any login; the real binary is found through the package',async()=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'lark-codex-home-')),saved={home:config.codexHome};
   try{
-    config.codexHome=home;config.CODEX_API_KEY='';
-    const runner=new CodexRunner(),events=[];runner.on('online',()=>events.push('online'));runner.on('offline',()=>events.push('offline'));
-    assert.equal(await runner.probe(),false);assert.match(runner.error,/尚未登录/);assert.match(runner.error,/codex login/);assert.match(runner.version,/^\d+\.\d+\.\d+/,'the binary itself answered');
+    config.codexHome=home;
+    const runner=new CodexRunner(),events=[];runner.on('online',()=>events.push('online'));
+    assert.equal(await runner.probe(),true);assert.equal(runner.error,'');assert.match(runner.version,/^\d+\.\d+\.\d+/,'the binary itself answered');
     assert.deepEqual(await fs.readdir(home).then(x=>x.filter(n=>n==='auth.json')),[],'probing creates no login');
-    config.CODEX_API_KEY='sk-test';assert.equal(await runner.probe(),true);assert.equal(runner.error,'');
-    config.CODEX_API_KEY='';assert.equal(await runner.probe(),false);assert.deepEqual(events,['online','offline'],'only changes are announced');
-  }finally{Object.assign(config,{codexHome:saved.home,CODEX_API_KEY:saved.key});await fs.rm(home,{recursive:true,force:true});}
+    assert.equal(await runner.probe(),true);assert.deepEqual(events,['online'],'only changes are announced');
+  }finally{Object.assign(config,{codexHome:saved.home});await fs.rm(home,{recursive:true,force:true});}
 });
 
 // ---- a task from message to result
@@ -625,11 +622,11 @@ test('a message sent while /new stops the running task is for the new conversati
   kit.store.close();
 });
 test('a message sent meanwhile whose attachment cannot be taken is refused at once, as a message of its own would be',async()=>{
-  const downloader={downloadResource:async()=>{throw new InputRejected('附件超过 2 GB 接收上限，请拆分后分别发送');}};
+  const downloader={downloadResource:async()=>{throw new InputRejected('附件超过 100 MB 接收上限，请拆分后分别发送');}};
   const kit=setup(async function*(job){yield started('th');yield turnStarted;job.steerable(async()=>{});await until(()=>kit.store.taskForMessage('t','m2')?.status==='FAILED');yield say('a','好');yield completed;},{downloader});
   const {done}=await running(kit);
   await kit.service.receive(sent('m2','',{attachments:[{kind:'file',key:'z',name:'大.zip'}]}));
-  await until(()=>kit.store.taskForMessage('t','m2').status==='FAILED');assert.equal(kit.store.taskForMessage('t','m2').error,'附件超过 2 GB 接收上限，请拆分后分别发送');
+  await until(()=>kit.store.taskForMessage('t','m2').status==='FAILED');assert.equal(kit.store.taskForMessage('t','m2').error,'附件超过 100 MB 接收上限，请拆分后分别发送');
   await done;kit.store.close();
 });
 test('a turn left because one of its events could not be recorded is still closed: Codex does not go on after the task has failed',async()=>{
