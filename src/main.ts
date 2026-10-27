@@ -14,6 +14,12 @@ import {Delivery} from './feishu/delivery.js';
 import {housekeeping} from './maintenance.js';
 import {accessConfigured} from './access.js';
 import {clockOffset} from './feishu/clock.js';
+import {supervise} from './supervisor.js';
+
+/** Not connected for this long, the long connection is built afresh, whatever the SDK's own retries are doing. */
+const FEISHU_STALE_MS=3*60000;
+/** How often the service writes that it is alive, so a silent log can be told apart from a silent service. */
+const HEARTBEAT_MS=30*60000;
 
 async function main(){
   ensureDirectories();const action=process.argv[2]??'start';
@@ -24,6 +30,8 @@ async function main(){
   }
   // The Codex CLI of this project, with the project's own Codex home: `start.cmd codex plugin ...`, `start.cmd codex --version`, ...
   if(action==='codex'){process.exitCode=await codexCli(process.argv.slice(3));return;}
+  // `start` runs the service under a supervisor that restarts it when it stops answering; `serve` is the service itself.
+  if(action==='start'){process.exitCode=await supervise();return;}
   const store=new Store(config.database),codex=new CodexRunner();
   if(action==='retry-delivery'){
     const id=process.argv[3];if(!id)throw Error('请指定任务 ID 或明确传入 all');
@@ -45,7 +53,7 @@ async function main(){
     store.close();console.log(JSON.stringify(checks,null,2));
     if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured()||checks.plugins.some((p:any)=>p.state==='invalid'))process.exitCode=1;return;
   }
-  if(action!=='start')throw Error('支持命令：start、codex、doctor、stop、backup、retry-delivery');
+  if(action!=='serve')throw Error('支持命令：start、serve、codex、doctor、stop、backup、retry-delivery');
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
@@ -54,6 +62,8 @@ async function main(){
   const halt=new AbortController();let sweeping:Promise<void>=Promise.resolve();
   const housekeep=()=>{sweeping=housekeeping(store,halt.signal);};
   let feishuStarted=false,lastFeishuAttempt=0,lastCodexProbe=0,lastCodexError='',lastClockSync=0;
+  // For the supervisor: when the last round of checks finished. A round that never finishes means something in it hangs.
+  let lastPoll=0,feishuState='idle',feishuDownSince=0,lastHeartbeat=Date.now();
   let pluginsSkipped:Skipped[]=[];
   const token=randomBytes(32).toString('hex'),feishu=new FeishuClient();
   const service=new TaskService(store,codex,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
@@ -67,7 +77,7 @@ async function main(){
     }
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
     const ready=codex.ready&&feishu.connected&&accessConfigured();
-    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},codex:{ready:codex.ready,version:codex.version,error:codex.error},plugins:{loaded:codex.plugins.map(p=>({name:p.name,version:p.version})),skipped:pluginsSkipped},feishu:{connected:feishu.connected,state:feishu.state,error:feishu.lastError},...store.stats()}));
+    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},uptimeMs:Math.round(process.uptime()*1000),pollAgeMs:lastPoll?Date.now()-lastPoll:null,codex:{ready:codex.ready,version:codex.version,error:codex.error},plugins:{loaded:codex.plugins.map(p=>({name:p.name,version:p.version})),skipped:pluginsSkipped},feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);halt.abort();server.close();
@@ -76,6 +86,8 @@ async function main(){
     service.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
     feishu.close();codex.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
+    // The last lines still go to the console; one that has stalled must not keep the process from ending.
+    setTimeout(()=>process.exit(),5000).unref();
   };
   try{await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.HEALTH_PORT,'127.0.0.1',resolve);});}
   catch(e){store.close();throw e;}
@@ -104,12 +116,28 @@ async function main(){
         if(codex.ready&&!was){log.info({version:codex.version,home:config.codexHome},'Codex 已就绪');lastCodexError='';}
         else if(!codex.ready&&codex.error!==lastCodexError){lastCodexError=codex.error;log.warn({error:codex.error},'等待 Codex 就绪');}
       }
+      const state=feishuStarted?feishu.state:'idle';
+      if(feishuStarted&&state!==feishuState){
+        if(state==='connected')log.info({downMs:feishuDownSince?Date.now()-feishuDownSince:undefined},'飞书长连接已连通');
+        else log.warn({state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError||undefined},'飞书长连接已断开');
+      }
+      feishuState=state;
+      if(state==='connected')feishuDownSince=0;else if(feishuStarted&&!feishuDownSince)feishuDownSince=Date.now();
       // The SDK gives up after a non-retryable error (for example rejected credentials); build a fresh client instead of staying deaf.
-      if(feishuStarted&&feishu.state==='failed'){log.warn({error:feishu.lastError},'飞书长连接已失效，正在重建');feishu.close();feishuStarted=false;lastFeishuAttempt=0;}
+      // Its own retries can also stall or wait minutes apart: a connection down for long is rebuilt as well.
+      const stale=feishuStarted&&state!=='connected'&&Date.now()-feishuDownSince>FEISHU_STALE_MS;
+      if(feishuStarted&&(state==='failed'||stale)){
+        log.warn({state,downMs:Date.now()-feishuDownSince,error:feishu.lastError},'飞书长连接已失效，正在重建');
+        feishu.close();feishuStarted=false;lastFeishuAttempt=0;feishuDownSince=Date.now();feishuState='idle';
+      }
+      if(Date.now()-lastHeartbeat>=HEARTBEAT_MS){
+        lastHeartbeat=Date.now();
+        log.info({feishu:state,codex:codex.ready,running:service.running,rssMB:Math.round(process.memoryUsage().rss/1048576)},'服务运行中');
+      }
       if(!feishuStarted&&Date.now()-lastFeishuAttempt>15000){lastFeishuAttempt=Date.now();
-        try{await feishu.start(message=>service.receive(message));feishuStarted=true;log.info('飞书长连接已启动');}
+        try{await feishu.start(message=>service.receive(message));feishuStarted=true;feishuDownSince=feishu.connected?0:Date.now();log.info('飞书长连接已启动');}
         catch(e){feishu.close();feishu.lastError=safeError(e);log.warn({error:feishu.lastError},'等待飞书配置或连接');}}
-    }finally{polling=false;}
+    }finally{polling=false;lastPoll=Date.now();}
   };
   poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);
   maintain=setInterval(housekeep,86400000);

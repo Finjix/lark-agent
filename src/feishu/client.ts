@@ -41,18 +41,30 @@ export async function downloadError(error:any){
   if(result.code===99991672&&/im:message/.test(result.message))return new FeishuError('下载用户附件需要应用身份权限 im:message:readonly，请在飞书开发者后台开通并发布新版本；如需审批，须完成审批。',result.code);
   return result;
 }
+/** A connection attempt that has not opened by then is given up and retried; a ping not answered by then ends the connection, which is then rebuilt. */
+export const WS_HANDSHAKE_TIMEOUT_MS=20000,WS_PONG_TIMEOUT_S=30;
+/** The text of a long-connection log call of the SDK (it passes its arguments as one array, tagged "[ws]" or "ws"), links removed; undefined for any other. */
+export function connectionDetail(args:any[]){
+  const parts=(Array.isArray(args[0])?args[0]:args).filter((x:unknown)=>typeof x==='string') as string[];
+  if(!/^\[?ws\]?$/.test(parts[0]??''))return undefined;
+  return {detail:parts.slice(1).join(' ').replace(/\b(?:wss?|https?):\/\/\S+/gi,'[URL]').slice(0,300)};
+}
 export class FeishuClient {
   sdk:lark.Client; ws?:lark.WSClient; started=false; botId='';lastError='';
   private appId:string; private appSecret:string;
   private userNames=new Map<string,{name:string|undefined;expires:number}>();
   private userNameRequests=new Map<string,Promise<string|undefined>>();
-  // The SDK's own logs are discarded (they can carry request details); connection state comes from its status API and callbacks.
+  // The SDK's own logs can carry request details, so only the long connection's are kept, as text without links (its URL holds a ticket); the rest are discarded.
   private logger={
-    error:(..._args:any[])=>{this.lastError='飞书 SDK 连接或请求异常';log.warn('飞书 SDK 报告连接或请求异常（详情已脱敏）');},
-    warn:(..._args:any[])=>{},info:(..._args:any[])=>{},debug:(..._args:any[])=>{},trace:(..._args:any[])=>{},
+    error:(...args:any[])=>{this.lastError='飞书 SDK 连接或请求异常';log.warn(connectionDetail(args)??{},'飞书 SDK 报告连接或请求异常（详情已脱敏）');},
+    warn:(...args:any[])=>{const detail=connectionDetail(args);if(detail)log.warn(detail,'飞书长连接告警');},
+    info:(...args:any[])=>{const detail=connectionDetail(args);if(detail)log.info(detail,'飞书长连接');},
+    debug:(..._args:any[])=>{},trace:(..._args:any[])=>{},
   };
   /** Live state of the long connection: idle, connecting, connected, reconnecting or failed. */
   get state(){return this.ws?.getConnectionStatus().state??'idle';}
+  /** Attempts of the current reconnect loop; 0 while connected. */
+  get reconnectAttempts(){return this.ws?.getConnectionStatus().reconnectAttempts??0;}
   get connected(){return this.state==='connected';}
   constructor(credentials={appId:config.FEISHU_APP_ID,appSecret:config.FEISHU_APP_SECRET}){
     this.appId=credentials.appId;this.appSecret=credentials.appSecret;lark.defaultHttpInstance.defaults.timeout=30000;
@@ -82,7 +94,10 @@ export class FeishuClient {
     if(!this.appId||!this.appSecret)throw Error('请先在项目 .env 中配置飞书 App ID 和 App Secret');
     const info=await this.raw('GET','/open-apis/bot/v3/info');this.botId=info.bot?.open_id??info.open_id??'';
     const recovered=()=>{this.lastError='';};
+    // Without these the SDK waits forever on a handshake that never answers, and keeps a connection that no longer carries anything
+    // (no pong to its pings) for "connected": the bot then stays deaf while reporting itself healthy.
     this.ws=new lark.WSClient({appId:this.appId,appSecret:this.appSecret,domain:lark.Domain.Feishu,logger:this.logger,
+      handshakeTimeoutMs:WS_HANDSHAKE_TIMEOUT_MS,wsConfig:{pingTimeout:WS_PONG_TIMEOUT_S},
       onReady:recovered,onReconnected:recovered,onError:error=>{this.lastError=safeError(error);}});
     await this.ws.start({eventDispatcher:new lark.EventDispatcher({}).register({'im.message.receive_v1':async(event:any)=>{
       const message=incomingMessage(event,this.botId);if(!message)return;

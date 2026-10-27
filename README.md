@@ -110,12 +110,15 @@ plugins/
 
 ```bat
 start.cmd doctor
-start.cmd stop                  :: 通过本机令牌接口安全停止，也可 Ctrl+C
+start.cmd stop                  :: 通过本机令牌接口安全停止，也可 Ctrl+C（守护进程随之退出，不会重启）
+start.cmd serve                 :: 不带守护进程直接运行服务（排查问题用）
 start.cmd backup                :: 备份数据库到 data/
 start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任务
 ```
 
-健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`plugins` 为已装的插件和没装上的；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建；Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
+健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`plugins` 为已装的插件和没装上的；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建：建连 20 秒没完成就重试，发出心跳 30 秒没有回应就断开重连，连续 3 分钟没连上就整个重建；每次断开、连通都写日志。Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
+
+**进程守护**：`start.cmd` 启动的是守护进程，由它启动服务进程（`main.js serve`），每 20 秒访问一次 `/health`。连续 4 次没有应答（进程卡死），或服务内部的定时检查超过 5 分钟没有跑完（`/health` 的 `pollAgeMs`），守护进程就结束服务进程（连同它启动的 Codex）并重新启动；服务意外退出也会重启，启动后很快又退出的，重启间隔从 2 秒起逐次翻倍，最长 1 分钟。重启后，上次没做完的任务按启动时的规则作废。健康检查端口已经有服务应答时，`start.cmd` 不会再启动第二份。服务每 30 分钟写一条“服务运行中”日志，日志里长时间什么都没有，就说明进程停住了。控制台输出由单独的线程写：控制台窗口停住（比如在窗口里选中了文字）不会卡住服务，只会暂时少显示几行，日志文件里每一行都在。
 
 ## 版本
 

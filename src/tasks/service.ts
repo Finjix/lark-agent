@@ -25,6 +25,8 @@ export class TaskService {
   clockOffsetMs=0;
   /** One entry per task from the moment it starts until it is over: what stops its Codex process. */
   private runs=new Map<string,AbortController>();
+  /** Tasks whose Codex turn is under way. */
+  get running(){return this.runs.size;}
   /** Per unfinished task that messages sent meanwhile are handed to (see join): how they reach its turn. */
   private steering=new Map<string,Steering>();
   private steeringFor(taskId:string){let steering=this.steering.get(taskId);if(!steering)this.steering.set(taskId,steering=new Steering());return steering;}
