@@ -15,7 +15,7 @@ import {authorized} from '../access.js';
 import {Steering} from './steering.js';
 
 export const UNAVAILABLE=BOT_DOWN;
-// What Codex says when the login of the project is no longer accepted. That is the bot being unavailable, not something for the user to read.
+// What Codex says when the gateway key of the project is no longer accepted. That is the bot being unavailable, not something for the user to read.
 const AUTH_FAILURE=/\b401\b|unauthorized|not logged in|log ?in again|sign ?in again|token.{0,20}(expired|revoked|invalid)/i;
 // Clock skew allowance for the start check, and how late a message may arrive: live ones take a second or two, Feishu's redeliveries of what was missed while the service was down take much longer.
 const STALE_GRACE_MS=1000,MAX_DELIVERY_LAG_MS=30000;

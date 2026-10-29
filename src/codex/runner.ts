@@ -10,7 +10,6 @@ import {spawnAppServer,type AppServer,type ServerOptions} from './appserver.js';
 const run=promisify(execFile);
 // The launcher script of @openai/codex, the package the SDK itself drives: it finds the native binary of this platform.
 const launcher=()=>createRequire(import.meta.url).resolve('@openai/codex/bin/codex.js');
-// Stored as a file under <project>/.codex, never in the OS keychain, so nothing about the login lives outside the project.
 // Whatever must not reach Codex, and the home it must use whatever the environment says. (What plugins are given for a user's turn is set per turn, never inherited from the service.)
 const WITHHELD=new Set(['CODEX_HOME','CODEX_API_KEY','FEISHU_APP_SECRET','LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID']);
 
@@ -29,7 +28,7 @@ export function codexEnv(user?:PluginUser):Record<string,string>{
 }
 /**
  * What Codex is configured with, passed with every run instead of written to a config file, so the project holds the only copy.
- * Two features are switched off because everything here is shared by all Feishu users: `apps` (the connectors of the logged-in ChatGPT account, on
+ * Two features are switched off because everything here is shared by all Feishu users: `apps` (ChatGPT connectors, on
  * by default) and `memories` (off by default, kept off so that what Codex remembers from one user's chats can never reach another's: the home is
  * shared). Nothing else is added: no tools. Plugins are the exception, and only the ones dropped into plugins/ (see plugins.ts):
  * with any installed, Codex's plugin feature is on and their MCP servers are registered. The instructions are given with each chat (see agentInstructions).
@@ -153,7 +152,7 @@ export class CodexRunner extends EventEmitter {
   /** The plugins installed from plugins/ (set at start); every turn of a user gets them. */
   plugins:Plugin[]=[];
   constructor(private connect:Connect=spawnAppServer){super();}
-  /** Whether Codex can take a task: its binary runs. It reaches the model with the OpenAI API key stored in .codex/auth.json. */
+  /** Whether Codex can take a task: its binary runs. It reaches the model through the AI gateway set in .codex/config.toml. */
   async probe(){
     const before=this.ready;
     try{

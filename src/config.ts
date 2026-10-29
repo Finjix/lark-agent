@@ -34,6 +34,6 @@ export function restrictSecret(file:string){
 }
 export function ensureDirectories(){
   mkdirSync(config.data,{recursive:true}); mkdirSync(path.dirname(config.database),{recursive:true}); mkdirSync(config.codexHome,{recursive:true});
-  // The login of Codex is a file in the project; like .env it is for this account alone. (Codex rewrites it when it refreshes the token, so this is repeated at every start.)
+  // The gateway key of Codex is in its config.toml; like .env it is for this account alone. (Codex rewrites config.toml, so this is repeated at every start.)
   restrictSecret(path.join(config.root,'.env')); restrictSecret(path.join(config.codexHome,'config.toml'));
 }

@@ -86,8 +86,8 @@ async function sweep(root:string,cutoff:number,signal?:AbortSignal,only?:RegExp)
 }
 
 /**
- * What of Codex's home may go once it is old, relative to it. Everything else there stays: its databases (they also hold the chats), the login,
- * the configuration, the installation id, its skills and the temporary files of running processes; of the Windows sandbox's folder, which
+ * What of Codex's home may go once it is old, relative to it. Everything else there stays: its databases (they also hold the chats),
+ * the configuration (with the gateway key), the installation id, its skills and the temporary files of running processes; of the Windows sandbox's folder, which
  * keeps its setup state next to its logs, only the logs.
  */
 const CODEX_EXPENDABLE:{folder:string;only?:RegExp}[]=[

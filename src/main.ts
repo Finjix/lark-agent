@@ -48,7 +48,7 @@ async function main(){
     await codex.probe();
     // What `start` would do with each folder in plugins/ (nothing is installed or changed here).
     checks.plugins=await inspectPlugins().catch(e=>[{folder:'',state:'invalid',reason:safeError(e)}]);
-    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,login:'OpenAI API key（.codex/auth.json）',...(codex.error?{error:codex.error}:{})};
+    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,model:'AI 网关（.codex/config.toml）',...(codex.error?{error:codex.error}:{})};
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     store.close();console.log(JSON.stringify(checks,null,2));
     if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured()||checks.plugins.some((p:any)=>p.state==='invalid'))process.exitCode=1;return;
@@ -110,7 +110,7 @@ async function main(){
         lastClockSync=Date.now();
         void clockOffset().then(offset=>{service.clockOffsetMs=offset;if(Math.abs(offset)>5000)log.warn({offsetMs:Math.round(offset)},'本机时钟与飞书相差较大，已按飞书时间判断消息是否过期，请校准系统时间');}).catch(e=>log.debug({error:safeError(e)},'读取飞书时间失败'));
       }
-      // Not ready: look again every few seconds, so a login done meanwhile is noticed. Ready: look now and then, so a login that expires or is removed is too.
+      // Not ready: look again every few seconds, so a fix made meanwhile is noticed. Ready: look now and then, so a breakage is too.
       if(Date.now()-lastCodexProbe>(codex.ready?60000:10000)){
         lastCodexProbe=Date.now();const was=codex.ready;await codex.probe();
         if(codex.ready&&!was){log.info({version:codex.version,home:config.codexHome},'Codex 已就绪');lastCodexError='';}

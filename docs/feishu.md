@@ -49,5 +49,5 @@
 
 - 收不到任务：查事件订阅、应用是否发布、可用范围、群里是否 @对机器人。
 - 文件发送失败：`im:resource` 未发布。附件下载失败：`im:message:readonly` 未发布。
-- `/ready` 503：检查凭证、白名单、Codex 是否已登录（`start.cmd codex login`），看 `start.cmd doctor`。
+- `/ready` 503：检查凭证、白名单、`.codex/config.toml` 里的 AI 网关配置，看 `start.cmd doctor`。
 - 无回复：同一用户的上一条输入未结束时，新输入不会被接收；发 `/new` 可以结束它并重新开始。任务状态看 `/health` 和 `data/logs`。

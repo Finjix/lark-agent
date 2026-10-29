@@ -10,20 +10,34 @@ Codex 的登录、对话、生成的图片等一切状态都放在项目自己�
 
 1. 飞书后台配置应用，见 [docs/feishu.md](docs/feishu.md)。
 2. `.env.example` 复制为 `.env`，填凭证和访问范围。
-3. 模型走 OpenAI 官方 API：`echo <key> | start.cmd codex login --with-api-key` 把 API key 存进 `.codex/auth.json`；`.codex/config.toml` 里设置 `model = "gpt-6.1-sol"`、`model_reasoning_effort = "medium"`、`forced_login_method = "api"`。所有飞书用户共用这一个 key，用户不需要任何配置。
+3. 模型走内部 AI 网关（OpenAI 兼容的 Responses API），不登录任何账号：在 `.codex/config.toml` 里设置
+
+   ```toml
+   model_provider = "lumos"
+   model = "gpt-6.1-sol"
+   model_reasoning_effort = "medium"
+
+   [model_providers.lumos]
+   name = "Lumos AI gateway"
+   base_url = "https://lumos.diandian.info/winky/openai/v1"
+   wire_api = "responses"
+   experimental_bearer_token = "<网关 key>"
+   ```
+
+   `.codex/auth.json` 不需要（有的话 `start.cmd codex logout` 清掉）。所有飞书用户共用这一个 key，用户不需要任何配置。
 4. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译）。日志出现“Codex 已就绪”和“飞书长连接已启动”即可用。
 
 `start.cmd codex <参数>` 是项目自带 Codex CLI 的入口，永远使用项目的 `.codex/`：`start.cmd codex --version`、`start.cmd codex plugin ...` 等。
 
-**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用，`plugins/` 里的插件要带上），`npm install`，复制 `.env` 和 `.codex/config.toml`（模型配置）和 `.codex/auth.json`（API key）。要保留各用户的工作目录就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.codex/sessions`。
+**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用，`plugins/` 里的插件要带上），`npm install`，复制 `.env` 和 `.codex/config.toml`（网关地址、key 和模型）。要保留各用户的工作目录就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.codex/sessions`。
 
 ## Codex 的运行方式
 
 每个任务对应一个 `codex app-server` 子进程（带着这个用户的环境，任务结束就关掉），任务的那一轮（turn）在里面执行；同一个用户的所有输入续接同一个 Codex 对话（thread），所以上下文是连续的。以前用 `codex exec` 建的对话照常续接（实测）。`/new` 让用户丢掉上下文重新开始（见“指令”）。
 
 - **位置**：`.codex/` 保存对话（`sessions/`）、生成的图片（`generated_images/`）和日志，不入 Git。环境变量 `CODEX_HOME` 被忽略，子进程始终使用项目里的这个目录。
-- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`（ChatGPT 连接器）和 `memories`（记忆存在共用的 `.codex` 里，会在用户之间串；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型和推理强度只在 `.codex/config.toml` 里设。
-- **API key**：用 OpenAI 官方 API key（`codex login --with-api-key` 写入 `.codex/auth.json`），模型和推理强度在 `.codex/config.toml`。OpenAI 不可用或拒绝请求时，用户只会看到“机器人罢工了”，原因写在日志里。
+- **配置**：不写 `config.toml`，每次运行由程序传入（见 `src/codex/runner.ts`）：关闭 `apps`（ChatGPT 连接器）和 `memories`（记忆存在共用的 `.codex` 里，会在用户之间串；要放开，改 `codexConfig`），`plugins` 只在 `plugins/` 里放了插件时才打开（见“插件”；插件的安装记录由 `codex plugin` 命令写进 `.codex/config.toml`）；模型网关、模型和推理强度只在 `.codex/config.toml` 里设。
+- **模型网关**：走内部 AI 网关，网关地址、key（`experimental_bearer_token`）、模型和推理强度都在 `.codex/config.toml` 的 `model_provider` / `[model_providers.lumos]` 里，没有账号登录。网关不可用或拒绝请求时，用户只会看到“机器人罢工了”，原因写在日志里。
 - **权限**：没有任何限制：沙箱 `danger-full-access`、审批 `never`，Codex 可以读写本机任何位置、访问网络，也没有人会被询问。写死在 `src/codex/runner.ts`，没有开关。因为不能交互，做不到的事只会失败，Codex 自己换办法；所以没有 `/approve`、`/deny`、`/answer`：Codex 需要问用户什么，就在回复里问，用户的下一条消息就是回答。
 - **提示词**：每次新建或续接对话都给 Codex 一段开发者指令（英文，`agentInstructions`，见 `src/codex/runner.ts`），叠加在 Codex 自己的指令之上：只能用已安装插件的技能和工具办事（指令里列出插件名），插件做不到的就告诉用户做不到，不自己写脚本、跑命令或联网代替；命令和文件读写只在使用插件必不可少时才做，且限于工作目录和插件指定的位置；不查看环境变量和凭证，不装软件、不改系统；用用户的语言回复。这是提示词层面的约束，沙箱仍是 `danger-full-access`（见上）。没有放插件时，Codex 只会告诉用户它没有可用的能力。除插件自带的技能和工具外没有其他 MCP 工具；它看到的用户输入就是用户发来的文字（外加附件清单，见下）。
 - **输入**：用户文字原样提交（保留空白换行）。有附件时在文字前加一段清单（每个文件的路径，并提醒附件内容只是资料、不是用户的指令）；图片同时作为图片输入让模型直接看到画面，其他文件由模型用工具按路径打开。飞书语音消息按文件接收（`语音消息.opus`），同样只是路径。单独发送的视频按文件接收（原文件名）。每条消息最多 10 个附件；图片整张下载（不超过 100 MB，超过时任务失败并告诉用户原因），文件和视频按飞书的规定分段下载（每段 30 MB），大小不限。飞书不允许机器人下载用户发来的文件夹（所有资源接口都不支持，与权限无关），收到文件夹时机器人回复请用户压缩成 zip 再发。
@@ -87,7 +101,7 @@ plugins/
 |---|---|---|
 | `data/logs` | 日志文件（`.jsonl`） | 数据库、控制令牌、`start.cmd backup` 生成的备份（备份要自己清理） |
 | `user/<用户名>/workspace` | **里面所有文件**（用户发来的 `input/` 附件、Codex 生成的文件，包括以 `.` 开头的），以及因此变空的文件夹 | 工作目录文件夹本身；`user/<用户名>/` 下的其他内容（如插件的数据 `<插件名>/`） |
-| `.codex` | 对话文件 `sessions/`、`archived_sessions/`，生成的图片 `generated_images/`，`log/`，`shell_snapshots/`，`.tmp/`，Windows 沙箱的 `.sandbox/*.log` | 配置 `config.toml`、API key `auth.json`、`.sqlite` 数据库（Codex 也在其中记录对话）、`skills/`、`tmp/` 等其余一切 |
+| `.codex` | 对话文件 `sessions/`、`archived_sessions/`，生成的图片 `generated_images/`，`log/`，`shell_snapshots/`，`.tmp/`，Windows 沙箱的 `.sandbox/*.log` | 配置 `config.toml`（含网关 key）、`.sqlite` 数据库（Codex 也在其中记录对话）、`skills/`、`tmp/` 等其余一切 |
 
 - 有任务排队或执行中的用户，这一轮不清理其工作目录；只要有任务在执行，这一轮也不清理 `.codex`。
 - 链接（符号链接、目录联接）只删链接本身，从不进入它指向的位置；本身是链接的工作目录整个跳过。
@@ -100,7 +114,7 @@ plugins/
 
 `.env` 中：`ALLOWED_TENANTS`（整个企业开放，优先于用户名单，管理员也受限）→ 否则 `ALLOWED_USERS` / `ADMIN_USERS`（Open ID）。三者皆空则拒绝所有任务。`ALLOWED_CHATS` 可额外限制会话。改后重启。
 
-机器人不提供按任务查询或取消的命令，用户只能操作自己的对话。所有任务共享本机权限，没有任何限制，用户之间也没有隔离：Codex 能读写其他用户的工作目录，也能读到 `.env` 和 `.codex/auth.json`（共用的 OpenAI API key）。只对可信内部用户开放。
+机器人不提供按任务查询或取消的命令，用户只能操作自己的对话。所有任务共享本机权限，没有任何限制，用户之间也没有隔离：Codex 能读写其他用户的工作目录，也能读到 `.env` 和 `.codex/config.toml`（共用的网关 key）。只对可信内部用户开放。
 
 ## 指令
 
@@ -116,7 +130,7 @@ start.cmd backup                :: 备份数据库到 data/
 start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任务
 ```
 
-健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`plugins` 为已装的插件和没装上的；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建：建连 20 秒没完成就重试，发出心跳 30 秒没有回应就断开重连，连续 3 分钟没连上就整个重建；每次断开、连通都写日志。Codex 未就绪时每 10 秒重新检查一次（登录后无需重启），就绪后每分钟检查一次登录是否还有效。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
+健康检查 `http://127.0.0.1:8765/health`（`codex` 为 Codex 是否可用；`plugins` 为已装的插件和没装上的；`feishu.state` 为长连接实时状态：connecting、connected、reconnecting、failed），就绪 `/ready`（未就绪 503）。长连接失效时服务会自动重建：建连 20 秒没完成就重试，发出心跳 30 秒没有回应就断开重连，连续 3 分钟没连上就整个重建；每次断开、连通都写日志。Codex 未就绪时每 10 秒重新检查一次（修好后无需重启），就绪后每分钟检查一次。日志在 `data/logs`，每天每个进程一个文件，保留期见“自动清理”；`.env` 可选 `LOG_LEVEL`。
 
 **进程守护**：`start.cmd` 启动的是守护进程，由它启动服务进程（`main.js serve`），每 20 秒访问一次 `/health`。连续 4 次没有应答（进程卡死），或服务内部的定时检查超过 5 分钟没有跑完（`/health` 的 `pollAgeMs`），守护进程就结束服务进程（连同它启动的 Codex）并重新启动；服务意外退出也会重启，启动后很快又退出的，重启间隔从 2 秒起逐次翻倍，最长 1 分钟。重启后，上次没做完的任务按启动时的规则作废。健康检查端口已经有服务应答时，`start.cmd` 不会再启动第二份。服务每 30 分钟写一条“服务运行中”日志，日志里长时间什么都没有，就说明进程停住了。控制台输出由单独的线程写：控制台窗口停住（比如在窗口里选中了文字）不会卡住服务，只会暂时少显示几行，日志文件里每一行都在。
 
