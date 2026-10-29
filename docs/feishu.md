@@ -32,7 +32,7 @@
 
 ## 插件需要的用户身份权限
 
-机器人自己只用上面的应用身份权限。放进 `plugins/` 的插件如果要替用户操作飞书，会让用户用设备授权登录（用户在自己的浏览器里确认，令牌存在 `user/<名>/<插件名>/`），这时应用的“用户身份”权限要包含插件需要的（以插件自己的说明为准），发布新版本后用户首次授权会看到这些权限。另外要在应用里允许用户身份授权（设备授权）。授权时报“应用凭证无效”（`invalid_client`），先查 `.env` 里的应用凭证，再查这一项。插件用的就是机器人的应用（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`），代价见 README“插件”一节。
+机器人自己只用上面的应用身份权限。放进 `plugins/` 的插件要替用户操作飞书时，都经由 feishu 插件：用户用设备授权登录（feishu 插件在这个用户的无头浏览器里打开授权页，用户用飞书手机端扫一次码；令牌存在 `user/<名>/feishu/`），各插件共用这一个登录。这时应用的“用户身份”权限要包含插件需要的（以 feishu 插件 README 的清单为准，现为 `wiki:wiki:readonly sheets:spreadsheet:readonly sheets:spreadsheet:read sheets:spreadsheet:write_only sheets:spreadsheet drive:export:readonly docx:document:readonly docx:document offline_access`），发布新版本后用户首次授权会看到这些权限。另外要在应用里允许用户身份授权（设备授权）。授权时报“应用凭证无效”（`invalid_client`），先查 `.env` 里的应用凭证，再查这一项。插件用的就是机器人的应用（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`），代价见 README“插件”一节。
 
 ## 事件与发布
 

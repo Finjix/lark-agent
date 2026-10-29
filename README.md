@@ -92,6 +92,7 @@ plugins/
 - **只放你信任的插件**：插件的脚本和 MCP 服务以本服务的账号、不受任何限制地运行，和 Codex 本身一样。
 - **机器人密钥的代价**：有插件时，每个用户的每一轮 Codex 进程都带着 `FEISHU_APP_SECRET`（没有插件时仍然挡在外面）。能和机器人对话的人理论上能让 Codex 读到它。这里没有新增一类风险：Codex 本来就能读 `.env`（见“访问控制”）。想收紧，给插件的设备授权单独建一个飞书应用，把 `.env` 里的 `FEISHU_APP_ID/SECRET` 换成它。
 - **数据**：插件自己的数据放在 `user/<名>/<插件名>/`（例如用户的登录信息和中间文件），不在 `workspace/` 里，所以不会被自动清理，也不会被当成交付文件发给用户。用户之间的隔离只是约定：Codex 是 `danger-full-access`，同一个 Windows 账号，被提示词注入的模型能读到别人的目录。
+- **插件调用插件**：一个插件可以用另一个插件的能力，被调用的那个也放进 `plugins/` 就行，服务不管它们之间的依赖（缺了被调用的插件，调用方自己报错）。装好的插件在 `.codex/plugins/cache/lark-agent/<名字>/<版本>/` 里并排，调用方从自己的位置找到对方；对方作为子进程运行，继承这一轮的环境（用户目录、Open ID、应用），所以服务的是同一个用户。现在的例子是飞书：[feishu](https://github.com/Finjix/feishu) 插件管每个用户的飞书登录（`user/<名>/feishu/`，用户扫一次码）、白名单飞书接口和存着飞书网页登录态的无头浏览器，[requirement-auto](https://github.com/Finjix/requirement-auto)（进度表、CLS）和 [gof-ad-audit](https://github.com/Finjix/gof-ad-audit)（素材审核，读飞书脚本）都经由它，不再各自登录。
 
 ## 自动清理
 
