@@ -4,6 +4,7 @@ import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import type {CodexOptions,ThreadEvent,ThreadItem,ThreadOptions,UserInput} from '@openai/codex-sdk';
 import {config} from '../config.js';
+import {log,safeError} from '../log.js';
 import {pluginConfig,PLUGIN_ENV,type Plugin,type PluginUser} from '../plugins.js';
 import {spawnAppServer,type AppServer,type ServerOptions} from './appserver.js';
 
@@ -128,6 +129,18 @@ export function turnEvents(turnId:string){
     }
   };
 }
+/**
+ * The model and provider Codex is configured with now (.codex/config.toml, as Codex itself reads it). A chat keeps the provider it was started
+ * with, and resuming it without saying otherwise sends its turns there: chats from before the switch to the AI gateway would call
+ * api.openai.com without a login and fail with 401 (Codex 0.163.0, checked). Not knowing the configuration is no reason to fail the turn:
+ * the chat is then resumed as it is.
+ */
+export async function currentModel(server:AppServer,cwd:string|undefined):Promise<{model?:string;modelProvider?:string}>{
+  try{
+    const {config:current}=await server.request('config/read',{...(cwd?{cwd}:{})});
+    return {...(typeof current?.model==='string'?{model:current.model}:{}),...(typeof current?.model_provider==='string'?{modelProvider:current.model_provider}:{})};
+  }catch(e){log.warn({error:safeError(e)},'读不到 Codex 当前的模型配置，原对话按原样续接');return {};}
+}
 /** The user's input in the app-server's terms. */
 const serverInput=(input:UserInput[])=>input.map(part=>part.type==='text'?{type:'text',text:part.text}:{type:'localImage',path:part.path});
 
@@ -174,8 +187,10 @@ export class CodexRunner extends EventEmitter {
       await server.request('initialize',{clientInfo:{name:'lark-agent',version:this.version||'0'}});
       server.notify('initialized');
       const settings={cwd:options.workingDirectory,sandbox:options.sandboxMode,approvalPolicy:options.approvalPolicy,developerInstructions:agentInstructions(this.plugins)};
-      // A resumed chat is not sent back whole: only its id is needed.
-      const {thread}=job.threadId?await server.request('thread/resume',{threadId:job.threadId,...settings,excludeTurns:true}):await server.request('thread/start',settings);
+      // A resumed chat is not sent back whole: only its id is needed. It goes on with the model and provider configured now, not the ones
+      // it was started with (see currentModel).
+      const {thread}=job.threadId?await server.request('thread/resume',{threadId:job.threadId,...settings,...await currentModel(server,options.workingDirectory),excludeTurns:true})
+        :await server.request('thread/start',settings);
       yield {type:'thread.started',thread_id:thread.id};
       const {turn}=await server.request('turn/start',{threadId:thread.id,input:serverInput(job.input)});
       yield {type:'turn.started'};

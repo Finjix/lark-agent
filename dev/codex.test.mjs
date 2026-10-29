@@ -145,12 +145,28 @@ test('a turn runs in an app-server of its own: a new chat is started or an exist
     assert.deepEqual(a.requests.map(r=>r[0]),['initialize','thread/start','turn/start']);assert.deepEqual(a.notified,['initialized']);assert.equal(a.requests[0][1].clientInfo.name,'lark-agent');
     assert.deepEqual(a.requests[1][1],{cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',developerInstructions:agentInstructions()},'no sandbox, nobody asked, held to the plugins');
     assert.deepEqual(a.requests[2][1],{threadId:'th-new',input:[{type:'text',text:'hi'},{type:'localImage',path:'D:/w/input/a.png'}]});
-    assert.deepEqual(b.requests[1],['thread/resume',{threadId:'th-1',cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',developerInstructions:agentInstructions(),excludeTurns:true}],
+    assert.deepEqual(b.requests[2],['thread/resume',{threadId:'th-1',cwd:'D:/w',sandbox:'danger-full-access',approvalPolicy:'never',developerInstructions:agentInstructions(),excludeTurns:true}],
       'a resumed chat is not sent back whole, and is held to the plugins as a new one is');
     assert.equal(a.options.env.CODEX_HOME,config.codexHome);
     assert.deepEqual(a.options.args,configArgs(codexConfig()));
     assert(a.closed&&b.closed,'the process of a turn is closed once the turn is over');
   }
+});
+test('a resumed chat goes on with the model and provider configured now, not the ones it was started with',async()=>{
+  // A chat started before the switch to the AI gateway is recorded under "openai"; resumed as it is, its turns went to api.openai.com and failed with 401.
+  const configured=fakeServers({'config/read':()=>({config:{model_provider:'lumos',model:'gpt-6.1-sol',model_reasoning_effort:'medium'}}),'turn/start':reporting(finished())});
+  await runAll(new CodexRunner(configured.connect),{threadId:'th-old'});
+  await runAll(new CodexRunner(configured.connect),{});
+  const [resumed,started]=configured.made;
+  assert.deepEqual(resumed.requests.map(r=>r[0]),['initialize','config/read','thread/resume','turn/start']);
+  assert.deepEqual(resumed.requests[1][1],{cwd:'D:/w'},'the configuration as Codex sees it from the user\'s folder');
+  assert.deepEqual([resumed.requests[2][1].modelProvider,resumed.requests[2][1].model],['lumos','gpt-6.1-sol']);
+  assert.deepEqual(started.requests.map(r=>r[0]),['initialize','thread/start','turn/start'],'a new chat takes the configuration anyway');
+  // Not knowing the configuration does not fail the turn: the chat is resumed as it is.
+  const unknown=fakeServers({'config/read':new AppServerError('unknown method',-32601),'turn/start':reporting(finished())});
+  const events=await runAll(new CodexRunner(unknown.connect),{threadId:'th-old'});
+  assert.equal(events.at(-1).type,'turn.completed');
+  assert.deepEqual(Object.keys(unknown.made[0].requests[2][1]).filter(k=>/model/i.test(k)),[]);
 });
 test('Codex is told to work only through the installed plugins and to do no more on the machine than using them takes',()=>{
   const none=agentInstructions(),some=agentInstructions([{name:'lark-docs'},{name:'lark-sheets'}]);
