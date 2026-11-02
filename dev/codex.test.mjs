@@ -172,7 +172,8 @@ test('Codex is told to work only through the installed plugins and to do no more
   const none=agentInstructions(),some=agentInstructions([{name:'lark-docs'},{name:'lark-sheets'}]);
   assert.match(none,/No plugins are installed/);assert.doesNotMatch(none,/Installed plugins/);
   assert.match(some,/Installed plugins: lark-docs, lark-sheets\./);assert.doesNotMatch(some,/No plugins are installed/);
-  for(const text of [none,some]){assert.match(text,/only with the plugins' skills and tools/);assert.match(text,/cannot be done without it/);assert.match(text,/environment variables, keys, credentials/);}
+  for(const text of [none,some]){assert.match(text,/only with the plugins' skills and tools/);assert.match(text,/cannot be done without it/);assert.match(text,/environment variables, keys, credentials/);
+    assert.match(text,/which plugin or skill you are using/);assert.match(text,/Get-Content -Encoding UTF8/);}
 });
 test('config overrides reach the app-server flattened as the SDK flattened them for codex exec',()=>{
   assert.deepEqual(configArgs({cli_auth_credentials_store:'file',features:{apps:false,plugins:true},plugins:{'"x@lark-agent"':{mcp_servers:{'"s"':{enabled:false}}}},
