@@ -622,11 +622,12 @@ test('a message from another chat is not handed to the running task: it runs on 
     yield say('a',`答：${job.input[0].text}`);yield completed;
   });
   const {task,done}=await running(kit);
-  await kit.service.receive(sent('m2','监听本群更新审片规范',{chat:'group'}));
+  await kit.service.receive(sent('m2','监听本群更新审片规范',{chat:'group',chatType:'group'}));
   assert.equal(kit.store.taskForMessage('t','m2').status,'QUEUED');await done;
   const scheduler=new Scheduler(kit.service);scheduler.tick();await until(()=>kit.store.taskForMessage('t','m2').status==='COMPLETED');await scheduler.stop();
   assert.deepEqual(handed,[],'nothing went into the first turn');
   assert.deepEqual(kit.codex.jobs.map(j=>j.user.chat),[kit.store.get(task.id).chat_id,'group']);
+  assert.deepEqual(kit.codex.jobs.map(j=>j.user.chatType),[undefined,'group'],'the kind its message said; none for a chat this service has had no message from');
   kit.store.close();
 });
 test('a message that needs a resource lock the running task does not hold is not handed to it: it runs on its own, with the lock',async()=>{

@@ -32,6 +32,8 @@ export class TaskService {
   private steeringFor(taskId:string){let steering=this.steering.get(taskId);if(!steering)this.steering.set(taskId,steering=new Steering());return steering;}
   /** Users ("tenant:user") whose /new is under way, with how many. */
   private resetting=new Map<string,number>();
+  /** Whether each chat is private or a group, from its messages (the task does not keep it): what plugins are told with the chat. */
+  private chatTypes=new Map<string,string>();
   private stopping=false;
   /** How long /new waits for a stopped Codex process to be gone before it ends the task regardless. */
   stopWaitMs=5000;
@@ -61,6 +63,7 @@ export class TaskService {
     if(!message.text.trim()&&!message.attachments?.length)return;
     // Nothing is queued while Codex is down: the user is told at once and sends it again, instead of a backlog running later and answering many times.
     if(this.codex.ready===false&&!this.store.taskForMessage(message.tenant,message.message)){this.notice(message,UNAVAILABLE);return;}
+    if(message.chatType)this.chatTypes.set(message.chat,message.chatType);
     const resources=config.resources.filter(r=>r.regex.test(message.text)).map(r=>r.key);
     const result=this.store.create({tenant_key:message.tenant,user_id:message.user,chat_id:message.chat,source_message_id:message.message,
       instruction:message.text},resources,message.attachments);
@@ -193,7 +196,7 @@ export class TaskService {
     for(let renewed=false;;){
       try{
         // The user's own folder (not the workspace in it), Open ID and the chat the message came from are what plugins serve this turn with.
-        const user={dir:userDirectory(this.store,session),openId:session.user_id,chat:task.chat_id};
+        const user={dir:userDirectory(this.store,session),openId:session.user_id,chat:task.chat_id,chatType:this.chatTypes.get(task.chat_id)};
         const done=new AbortController();let timer:NodeJS.Timeout|undefined,giveUp=()=>{};
         const gaveUp=new Promise<undefined>(resolve=>{giveUp=()=>resolve(undefined);});
         // Once the turn has reported its end, or the task was stopped (/new, its time limit, the service stopping), the events are waited for

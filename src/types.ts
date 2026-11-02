@@ -41,6 +41,8 @@ export interface UserSession {
 export interface GeneratedImage {id:string;savedPath:string;}
 export interface IncomingMessage {
   tenant: string; user: string; chat: string; message: string; text: string; createdAt?: number;
+  /** What kind of chat it came from, as the event says: 'p2p' or 'group'. */
+  chatType?: string;
   attachments?: IncomingAttachment[]; error?: string;
 }
 export interface IncomingAttachment {kind:'image'|'file'; key:string; name:string;}

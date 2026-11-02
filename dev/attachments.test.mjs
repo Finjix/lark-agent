@@ -69,6 +69,8 @@ test('group attachments require the exact bot mention and retain links and other
   assert.equal(incomingMessage(event('post',content,{chat_type:'group',mentions:[{id:{open_id:'other-bot'},key:'@_user_1'}]}),'bot'),undefined);
   const message=incomingMessage(event('post',content,{chat_type:'group',mentions:[{id:{open_id:'bot'},key:'@_user_1'}]}),'bot');
   assert.equal(message.text,' 阅读 来源 (https://example.com)同事');assert.equal(message.attachments.length,1);
+  assert.equal(message.chatType,'group','plugins are told the kind of chat');
+  assert.equal(incomingMessage(event('post',content),'bot').chatType,'p2p');
 });
 
 test('unsupported, malformed, and excessive attachments return errors instead of silently disappearing',()=>{
