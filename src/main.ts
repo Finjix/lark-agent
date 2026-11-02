@@ -6,7 +6,8 @@ import {config,ensureDirectories,restrictSecret} from './config.js';
 import {log,safeError} from './log.js';
 import {Store} from './storage/database.js';
 import {CodexRunner,codexCli,codexOutput} from './codex/runner.js';
-import {syncPlugins,inspectPlugins,type Skipped} from './plugins.js';
+import {syncPlugins,inspectPlugins,discover,type Skipped} from './plugins.js';
+import {Jobs,declaredJobs} from './jobs.js';
 import {FeishuClient} from './feishu/client.js';
 import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
@@ -48,6 +49,12 @@ async function main(){
     await codex.probe();
     // What `start` would do with each folder in plugins/ (nothing is installed or changed here).
     checks.plugins=await inspectPlugins().catch(e=>[{folder:'',state:'invalid',reason:safeError(e)}]);
+    // The periodic jobs the plugins in plugins/ declare (lark-agent.json), as `start` would run them.
+    checks.jobs=[];
+    for(const p of (await discover().catch(()=>({found:[]}))).found){
+      const {jobs,invalid}=await declaredJobs({name:p.name,path:path.join(config.plugins,p.folder)});
+      checks.jobs.push(...jobs.map(j=>({plugin:j.plugin,name:j.name,everyMinutes:j.everyMinutes})),...invalid.map(reason=>({plugin:p.name,invalid:reason})));
+    }
     checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,model:'AI 网关（.codex/config.toml）',...(codex.error?{error:codex.error}:{})};
     if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
     store.close();console.log(JSON.stringify(checks,null,2));
@@ -66,7 +73,7 @@ async function main(){
   let lastPoll=0,feishuState='idle',feishuDownSince=0,lastHeartbeat=Date.now();
   let pluginsSkipped:Skipped[]=[];
   const token=randomBytes(32).toString('hex'),feishu=new FeishuClient();
-  const service=new TaskService(store,codex,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu);
+  const service=new TaskService(store,codex,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu),jobs=new Jobs();
   const server=http.createServer((request,response)=>{
     response.setHeader('Content-Type','application/json; charset=utf-8');response.setHeader('Cache-Control','no-store');
     if(request.headers.origin){response.writeHead(403).end('{}');return;}
@@ -77,13 +84,13 @@ async function main(){
     }
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
     const ready=codex.ready&&feishu.connected&&accessConfigured();
-    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},uptimeMs:Math.round(process.uptime()*1000),pollAgeMs:lastPoll?Date.now()-lastPoll:null,codex:{ready:codex.ready,version:codex.version,error:codex.error},plugins:{loaded:codex.plugins.map(p=>({name:p.name,version:p.version})),skipped:pluginsSkipped},feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
+    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},uptimeMs:Math.round(process.uptime()*1000),pollAgeMs:lastPoll?Date.now()-lastPoll:null,codex:{ready:codex.ready,version:codex.version,error:codex.error},plugins:{loaded:codex.plugins.map(p=>({name:p.name,version:p.version})),skipped:pluginsSkipped,jobs:jobs.status()},feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);halt.abort();server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
     // Codex runs as a child of this service and ends with it: the tasks are finished as failed, and one last delivery pass finishes their cards.
-    service.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
+    service.stop();await jobs.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
     feishu.close();codex.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
     // The last lines still go to the console; one that has stalled must not keep the process from ending.
@@ -101,6 +108,10 @@ async function main(){
   // What was dropped into plugins/ is installed before any task can run, so every turn has it. A plugin that fails is reported and left out; the bot runs without it.
   const loaded=await syncPlugins(codexOutput);codex.plugins=loaded.plugins;pluginsSkipped=loaded.skipped;
   if(loaded.plugins.length)log.info({plugins:loaded.plugins.map(p=>`${p.name}@${p.version}`)},'插件已就绪');
+  // The plugins' periodic jobs run from their installed copies, first a couple of minutes from now.
+  const declared=await Promise.all(loaded.plugins.map(p=>declaredJobs(p)));
+  declared.forEach((d,i)=>{for(const reason of d.invalid)log.warn({plugin:loaded.plugins[i].name,reason},'插件定时任务无效，已跳过');});
+  jobs.start(declared.flatMap(d=>d.jobs));
   scheduler.start();delivery.start();
   let polling=false;
   const reconnect=async()=>{

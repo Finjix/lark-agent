@@ -13,13 +13,16 @@ import {log,safeError} from './log.js';
  */
 export const MARKETPLACE='lark-agent';
 /**
- * What a plugin's MCP servers receive from the host with every user's turn: the user's folder, the user's Open ID and the bot's Feishu app.
- * Codex does not hand its own environment to the MCP servers of a plugin, so the host registers them again with these (names only: the
- * values never appear on a command line).
+ * What a plugin's MCP servers receive from the host with every user's turn: the user's folder, the user's Open ID, the chat the message came
+ * from, the folder plugins share and the bot's Feishu app. Codex does not hand its own environment to the MCP servers of a plugin, so the host
+ * registers them again with these (names only: the values never appear on a command line).
  */
-export const PLUGIN_ENV=['LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','FEISHU_APP_ID','FEISHU_APP_SECRET'] as const;
-/** Whose turn it is, as far as plugins are concerned: `dir` is user/<name> (not its workspace), `openId` the Feishu Open ID. */
-export interface PluginUser {dir:string;openId:string}
+export const PLUGIN_ENV=['LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','LARK_AGENT_CHAT_ID','LARK_AGENT_SHARED_DIR','FEISHU_APP_ID','FEISHU_APP_SECRET'] as const;
+/**
+ * Whose turn it is, as far as plugins are concerned: `dir` is user/<name> (not its workspace), `openId` the Feishu Open ID, `chat` the chat
+ * (private or group) the turn's message came from. Every message of a turn comes from that chat: one sent from another chat is not steered in.
+ */
+export interface PluginUser {dir:string;openId:string;chat?:string}
 
 export interface McpServer {command:string;args:string[];cwd?:string;env:Record<string,string>}
 /** An installed plugin. `path` is its copy inside the Codex home, `mcp` the stdio servers its mcp.json declares. */

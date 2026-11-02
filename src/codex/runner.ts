@@ -12,17 +12,18 @@ const run=promisify(execFile);
 // The launcher script of @openai/codex, the package the SDK itself drives: it finds the native binary of this platform.
 const launcher=()=>createRequire(import.meta.url).resolve('@openai/codex/bin/codex.js');
 // Whatever must not reach Codex, and the home it must use whatever the environment says. (What plugins are given for a user's turn is set per turn, never inherited from the service.)
-const WITHHELD=new Set(['CODEX_HOME','CODEX_API_KEY','FEISHU_APP_SECRET','LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID']);
+const WITHHELD=new Set(['CODEX_HOME','CODEX_API_KEY','FEISHU_APP_SECRET','LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','LARK_AGENT_CHAT_ID','LARK_AGENT_SHARED_DIR']);
 
 /**
  * The environment of every Codex process: ours, minus the service's secrets, with Codex's home inside the project. For a turn of a user while
- * plugins are installed (`user`) it also carries what the plugins are given (PLUGIN_ENV): the user's folder and Open ID, and the bot's
- * Feishu app including its secret. That is the one case the secret reaches Codex; see README.
+ * plugins are installed (`user`) it also carries what the plugins are given (PLUGIN_ENV): the user's folder and Open ID, the chat of the turn,
+ * the folder plugins share, and the bot's Feishu app including its secret. That is the one case the secret reaches Codex; see README.
  */
 export function codexEnv(user?:PluginUser):Record<string,string>{
   const env:Record<string,string>={};
   for(const [key,value] of Object.entries(process.env))if(value!==undefined&&!WITHHELD.has(key.toUpperCase()))env[key]=value;
-  const given:Record<string,string>=user?{LARK_AGENT_USER_DIR:user.dir,LARK_AGENT_USER_OPEN_ID:user.openId,FEISHU_APP_ID:config.FEISHU_APP_ID,FEISHU_APP_SECRET:config.FEISHU_APP_SECRET}:{};
+  const given:Record<string,string>=user?{LARK_AGENT_USER_DIR:user.dir,LARK_AGENT_USER_OPEN_ID:user.openId,LARK_AGENT_CHAT_ID:user.chat??'',
+    LARK_AGENT_SHARED_DIR:config.shared,FEISHU_APP_ID:config.FEISHU_APP_ID,FEISHU_APP_SECRET:config.FEISHU_APP_SECRET}:{};
   // A value that is not set is left out rather than passed empty.
   for(const name of PLUGIN_ENV)if(!given[name])delete given[name];
   return {...env,...given,CODEX_HOME:config.codexHome};

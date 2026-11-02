@@ -514,10 +514,10 @@ test('a running task keeps its steps on the task, and they are what the card is 
   release();await running;const done=store.get(task.id);assert.deepEqual(JSON.parse(done.steps).map(x=>[x.type,x.status??'']),[['command','done'],['message','']]);assert.equal(done.result,'好了');store.close();
 });
 
-test('every turn is handed the user it is for: their own folder (not the workspace in it) and their Open ID',async()=>{
+test('every turn is handed the user it is for: their own folder (not the workspace in it), their Open ID and the chat',async()=>{
   const {codex,store,run}=setup(async function*(){yield started('th');yield turnStarted;yield say('a','好');yield completed;});
   const task=await run('m1','ou_alice'),job=codex.jobs[0],session=store.session(task.session_id);
-  assert.equal(job.user.openId,'ou_alice');
+  assert.equal(job.user.openId,'ou_alice');assert.equal(job.user.chat,task.chat_id);
   assert.equal(job.user.dir,path.dirname(session.workspace_path),'user/<name>, the parent of workspace/');
   assert(path.isAbsolute(job.user.dir)&&job.user.dir.startsWith(config.user));
   await run('m2','ou_bob');assert.notEqual(codex.jobs[1].user.dir,job.user.dir,'another user, another folder');assert.equal(codex.jobs[1].user.openId,'ou_bob');
@@ -612,6 +612,21 @@ test('two messages sent one right after the other, before the first has started:
   const scheduler=new Scheduler(kit.service);scheduler.tick();
   await until(()=>kit.store.taskForMessage('t','m2').status==='STEERED');await until(()=>kit.store.taskForMessage('t','m1').status==='COMPLETED');await scheduler.stop();
   assert.equal(kit.store.taskForMessage('t','m1').result,'都做了：压缩包在这');assert.equal(kit.codex.jobs.length,1);
+  kit.store.close();
+});
+test('a message from another chat is not handed to the running task: it runs on its own after it, in its own chat',async()=>{
+  const handed=[];
+  const kit=setup(async function*(job,n){
+    yield started('th');yield turnStarted;job.steerable(async input=>{handed.push(input);});
+    if(n===1)await until(()=>kit.store.taskForMessage('t','m2'));
+    yield say('a',`答：${job.input[0].text}`);yield completed;
+  });
+  const {task,done}=await running(kit);
+  await kit.service.receive(sent('m2','监听本群更新审片规范',{chat:'group'}));
+  assert.equal(kit.store.taskForMessage('t','m2').status,'QUEUED');await done;
+  const scheduler=new Scheduler(kit.service);scheduler.tick();await until(()=>kit.store.taskForMessage('t','m2').status==='COMPLETED');await scheduler.stop();
+  assert.deepEqual(handed,[],'nothing went into the first turn');
+  assert.deepEqual(kit.codex.jobs.map(j=>j.user.chat),[kit.store.get(task.id).chat_id,'group']);
   kit.store.close();
 });
 test('a message that needs a resource lock the running task does not hold is not handed to it: it runs on its own, with the lock',async()=>{

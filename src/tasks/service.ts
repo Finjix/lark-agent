@@ -69,10 +69,11 @@ export class TaskService {
     log.info({taskId:result.task.id},'任务已入队');
     // A message sent while the user's previous one is unfinished goes into that one's turn (Codex's steering), instead of waiting for a turn of its own.
     // Not into a task being stopped (/new, its time limit) or while /new is under way: it is then for what comes next. Nor when it needs a resource
-    // lock that task does not hold: running on its own, it gets the lock from the scheduler.
+    // lock that task does not hold: running on its own, it gets the lock from the scheduler. Nor into a task of another chat (the user writes in
+    // a group while their private chat's task runs): its answer would go to that chat, and the turn's plugins would take it for that chat's.
     const previous=this.store.unfinished(message.tenant,message.user).filter(t=>t.id!==result.task.id&&t.status!=='STEERING').at(-1);
     const holds=(t:Task)=>{const held=JSON.parse(t.resources) as string[];return resources.every(r=>held.includes(r));};
-    if(previous&&!previous.cancel_requested&&!this.paused(previous)&&holds(previous))
+    if(previous&&previous.chat_id===message.chat&&!previous.cancel_requested&&!this.paused(previous)&&holds(previous))
       void this.join(result.task,previous).catch(e=>log.warn({taskId:result.task.id,error:safeError(e)},'消息交给执行中的任务时出错'));
   }
   /** True while /new replaces the user's conversation: their messages wait, so that none starts in the conversation being left. */
@@ -191,8 +192,8 @@ export class TaskService {
     let threadId=session.thread_id,received=false;
     for(let renewed=false;;){
       try{
-        // The user's own folder (not the workspace in it) and Open ID are what plugins serve this turn with.
-        const user={dir:userDirectory(this.store,session),openId:session.user_id};
+        // The user's own folder (not the workspace in it), Open ID and the chat the message came from are what plugins serve this turn with.
+        const user={dir:userDirectory(this.store,session),openId:session.user_id,chat:task.chat_id};
         const done=new AbortController();let timer:NodeJS.Timeout|undefined,giveUp=()=>{};
         const gaveUp=new Promise<undefined>(resolve=>{giveUp=()=>resolve(undefined);});
         // Once the turn has reported its end, or the task was stopped (/new, its time limit, the service stopping), the events are waited for

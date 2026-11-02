@@ -24,6 +24,8 @@ export const config = {
   data:path.join(root,'data'), user:path.join(root,'user'), codexHome:path.join(root,'.codex'),
   // Plugins are dropped here as folders (see plugins.ts).
   plugins:path.join(root,'plugins'),
+  // What plugins keep for every user alike (audit-auto's review-group rules, say), in a folder of each plugin's own; never cleaned up, never sent.
+  shared:path.join(root,'shared'),
   users:list(text('ALLOWED_USERS')), admins:list(text('ADMIN_USERS')), chats:list(text('ALLOWED_CHATS')), tenants:list(text('ALLOWED_TENANTS')),
   resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
 };
@@ -33,7 +35,7 @@ export function restrictSecret(file:string){
   execFileSync('icacls.exe',[file,'/inheritance:r','/grant:r',`${account}:(F)`,'*S-1-5-18:(F)'],{windowsHide:true,timeout:5000,stdio:'pipe'});
 }
 export function ensureDirectories(){
-  mkdirSync(config.data,{recursive:true}); mkdirSync(path.dirname(config.database),{recursive:true}); mkdirSync(config.codexHome,{recursive:true});
+  mkdirSync(config.data,{recursive:true}); mkdirSync(path.dirname(config.database),{recursive:true}); mkdirSync(config.codexHome,{recursive:true}); mkdirSync(config.shared,{recursive:true});
   // The gateway key of Codex is in its config.toml; like .env it is for this account alone. (Codex rewrites config.toml, so this is repeated at every start.)
   restrictSecret(path.join(config.root,'.env')); restrictSecret(path.join(config.codexHome,'config.toml'));
 }

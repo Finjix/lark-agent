@@ -81,19 +81,21 @@ test('with plugins, Codex runs with its plugin feature on, each plugin\'s own MC
   assert.deepEqual(given.plugins,{'"plugin-one@lark-agent"':{mcp_servers:{'feishu-auth':{enabled:false}}},'"other@lark-agent"':{mcp_servers:{'"my.tools"':{enabled:false}}}});
   assert.deepEqual(Object.keys(given.mcp_servers).sort(),['"my.tools"','feishu-auth'],'one server of a name: the first plugin keeps it');
   assert.deepEqual(given.mcp_servers['feishu-auth'].env_vars,[...PLUGIN_ENV],'names only, never values');
-  assert.deepEqual(PLUGIN_ENV,['LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','FEISHU_APP_ID','FEISHU_APP_SECRET']);
+  assert.deepEqual(PLUGIN_ENV,['LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','LARK_AGENT_CHAT_ID','LARK_AGENT_SHARED_DIR','FEISHU_APP_ID','FEISHU_APP_SECRET']);
   assert(!JSON.stringify(given).includes('secret'));
 });
 
-test('a user\'s turn carries their folder, their Open ID and the bot\'s Feishu app; nothing else ever does',()=>{
+test('a user\'s turn carries their folder, their Open ID, the chat, the shared folder and the bot\'s Feishu app; nothing else ever does',()=>{
   const saved={...process.env},app={id:config.FEISHU_APP_ID,secret:config.FEISHU_APP_SECRET};
   try{
     process.env.LARK_AGENT_USER_DIR='D:\\someone-else';process.env.LARK_AGENT_USER_OPEN_ID='ou_someone_else';process.env.FEISHU_APP_SECRET='from-the-service-env';
+    process.env.LARK_AGENT_CHAT_ID='oc_elsewhere';process.env.LARK_AGENT_SHARED_DIR='D:\\elsewhere';
     Object.assign(config,{FEISHU_APP_ID:'cli_bot',FEISHU_APP_SECRET:'bot-secret'});
     const plain=codexEnv();
     for(const name of PLUGIN_ENV.filter(n=>n!=='FEISHU_APP_ID'))assert.equal(plain[name],undefined,`${name} is not inherited from the service`);
-    const env=codexEnv({dir:'D:\\project\\user\\李小明',openId:'ou_1'});
-    assert.deepEqual(PLUGIN_ENV.map(n=>env[n]),['D:\\project\\user\\李小明','ou_1','cli_bot','bot-secret']);
+    const env=codexEnv({dir:'D:\\project\\user\\李小明',openId:'ou_1',chat:'oc_group'});
+    assert.deepEqual(PLUGIN_ENV.map(n=>env[n]),['D:\\project\\user\\李小明','ou_1','oc_group',config.shared,'cli_bot','bot-secret']);
+    assert.equal('LARK_AGENT_CHAT_ID' in codexEnv({dir:'D:\\u',openId:'ou_1'}),false,'a turn without a known chat gets none');
     assert.equal(env.CODEX_HOME,config.codexHome);
     config.FEISHU_APP_SECRET='';assert.equal('FEISHU_APP_SECRET' in codexEnv({dir:'D:\\u',openId:'ou_1'}),false,'what is not set is not passed empty');
   }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);config.FEISHU_APP_ID=app.id;config.FEISHU_APP_SECRET=app.secret;}
