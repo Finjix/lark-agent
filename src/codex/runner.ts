@@ -40,8 +40,9 @@ export function codexConfig(plugins:Plugin[]=[]):NonNullable<CodexOptions['confi
 }
 /**
  * What Codex is told on top of its own instructions, with every chat started or resumed (so chats from before are held to it too): it works only
- * through what the installed plugins offer, does on this machine only what using them takes, keeps which skill it uses to itself and reads files as
- * UTF-8 (PowerShell 5.1 would read them as GBK). Codex itself still could do anything (see threadOptions); this is what keeps it to the plugins.
+ * through what the installed plugins offer, does on this machine only what using them takes, keeps which skill it uses to itself, runs no skill
+ * on files sent without a request, and reads files as UTF-8 (PowerShell 5.1 would read them as GBK). Codex itself still could do anything (see
+ * threadOptions); this is what keeps it to the plugins.
  */
 export function agentInstructions(plugins:Plugin[]=[]):string{
   const offered=plugins.length?`Installed plugins: ${plugins.map(p=>p.name).join(', ')}. The skills and MCP tools they provide are your only capabilities.`
@@ -57,6 +58,7 @@ export function agentInstructions(plugins:Plugin[]=[]):string{
     '6. Reply in the language the user writes in.',
     '7. Do not tell the user which plugin or skill you are using or how you are going to go about it: say only what the skill has you say.',
     '8. Commands run in Windows PowerShell 5.1, which reads files in the system code page: read text files (a SKILL.md, anything a plugin gives you) with `Get-Content -Encoding UTF8 -LiteralPath <file>`, otherwise their Chinese comes out garbled.',
+    '9. Run a skill only for something the user asked for. Files the user sends without saying what to do with them (a video, an image, a document on its own) are not a request to run a skill on them, unless the conversation already makes that clear (you asked for them, or they belong to what the user asked for).',
   ].join('\n');
 }
 /** No limits: Codex may do anything on this machine and nobody is asked, so what fails is only what cannot be done. */

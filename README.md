@@ -96,11 +96,11 @@ plugins/
 - **定时任务**：插件要定期做、又不属于哪个用户的一轮的事（audit-auto 每小时读一遍在监听的审核群），在插件文件夹里放 `lark-agent.json`，和 `plugin.json` 并排：
 
   ```json
-  {"jobs":[{"name":"rules-sync","everyMinutes":60,"timeoutMinutes":30,"command":"node","args":["${PLUGIN_ROOT}/scripts/rules.mjs","sync"]}]}
+  {"jobs":[{"name":"rules-sync","everyMinutes":60,"timeoutMinutes":30,"command":"node","args":["${PLUGIN_ROOT}/server/dist/audit.mjs","rules","sync"]}]}
   ```
 
   服务启动、装好插件后约 2 分钟跑第一次，之后每 `everyMinutes`（至少 5）分钟一次；在插件装好的副本里运行（`${PLUGIN_ROOT}`，`node` 是运行本服务的 node）。上一次还没跑完就跳过这一次，超过 `timeoutMinutes`（默认 30）就结束它；服务停止时正在跑的一并结束。环境是 Codex 没有用户时的那份（服务自己的环境去掉密钥，`CODEX_HOME`），加 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`LARK_AGENT_SHARED_DIR`；没有用户目录、Open ID 和会话。输出的末尾写日志（`插件定时任务完成` / `插件定时任务失败`），不发给任何人。`/health` 的 `plugins.jobs` 是每个任务的状态（是否在跑、跑了几次、上次的退出码和错误），`start.cmd doctor` 列出 `plugins/` 里声明的任务和写错的地方。
-- **插件调用插件**：一个插件可以用另一个插件的能力，被调用的那个也放进 `plugins/` 就行，服务不管它们之间的依赖（缺了被调用的插件，调用方自己报错）。装好的插件在 `.codex/plugins/cache/lark-agent/<名字>/<版本>/` 里并排，调用方从自己的位置找到对方；对方作为子进程运行，继承这一轮的环境（用户目录、Open ID、应用），所以服务的是同一个用户。现在的例子是飞书：[feishu](https://github.com/Finjix/feishu-plugin) 插件管每个用户的飞书登录（`user/<名>/feishu/`，用户扫一次码）、白名单飞书接口和存着飞书网页登录态的无头浏览器，[requirement-auto](https://github.com/Finjix/requirement-auto)（进度表、CLS）和 [audit-auto](https://github.com/Finjix/audit-auto)（素材审核，读飞书脚本）都经由它，不再各自登录。
+- **插件调用插件**：一个插件可以用另一个插件的能力，被调用的那个也放进 `plugins/` 就行，服务不管它们之间的依赖（缺了被调用的插件，调用方自己报错）。装好的插件在 `.codex/plugins/cache/lark-agent/<名字>/<版本>/` 里并排，调用方从自己的位置找到对方；对方作为子进程运行，继承这一轮的环境（用户目录、Open ID、应用），所以服务的是同一个用户。现在的例子是飞书：[feishu](https://github.com/Finjix/feishu-plugin) 插件管每个用户的飞书登录（`user/<名>/feishu/`，用户扫一次码）、白名单飞书接口和存着飞书网页登录态的无头浏览器，[requirement-auto](https://github.com/Finjix/requirement-auto)（进度表、CLS）经由它，不再各自登录；[audit-auto](https://github.com/Finjix/audit-auto)（AI 审片）不需要用户的飞书登录，读审核群用机器人自己的应用身份。
 
 ## 自动清理
 
