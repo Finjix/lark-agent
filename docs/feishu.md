@@ -30,6 +30,8 @@
 
 机器人只处理订阅收到的消息，不扫描聊天历史或通讯录。应用可用范围需包含目标成员；缺少姓名时任务照常执行，用户目录改用 Open ID 命名。
 
+插件用机器人的应用身份做事时，另需的应用身份权限以各插件的 README 为准：现为 audit-auto 读审核群用的 `im:message.group_msg`（获取群组中所有消息）。开通它以后，群里没有 @机器人 的消息也会推送给服务，服务照旧只处理 @它 的。
+
 ## 插件需要的用户身份权限
 
 机器人自己只用上面的应用身份权限。放进 `plugins/` 的插件要替用户操作飞书时，都经由 feishu 插件：用户用设备授权登录（feishu 插件在这个用户的无头浏览器里打开授权页，用户用飞书手机端扫一次码；令牌存在 `user/<名>/feishu/`），各插件共用这一个登录。这时应用的“用户身份”权限要包含插件需要的（以 feishu 插件 README 的清单为准，现为 `wiki:wiki:readonly sheets:spreadsheet:readonly sheets:spreadsheet:read sheets:spreadsheet:write_only sheets:spreadsheet drive:export:readonly docx:document:readonly docx:document offline_access`），发布新版本后用户首次授权会看到这些权限。另外要在应用里允许用户身份授权（设备授权）。授权时报“应用凭证无效”（`invalid_client`），先查 `.env` 里的应用凭证，再查这一项。插件用的就是机器人的应用（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`），代价见 README“插件”一节。
@@ -50,4 +52,4 @@
 - 收不到任务：查事件订阅、应用是否发布、可用范围、群里是否 @对机器人。
 - 文件发送失败：`im:resource` 未发布。附件下载失败：`im:message:readonly` 未发布。
 - `/ready` 503：检查凭证、白名单、`.codex/config.toml` 里的 AI 网关配置，看 `start.cmd doctor`。
-- 无回复：同一用户的上一条输入未结束时，新输入不会被接收；发 `/new` 可以结束它并重新开始。任务状态看 `/health` 和 `data/logs`。
+- 新消息没有自己的卡片：同一用户的上一条还在执行时，新消息并入那一轮（原卡片上显示“➕ 补充”），由它一起回答。一直没有回复时发 `/new` 结束它并重新开始。任务状态看 `/health` 和 `data/logs`。

@@ -6,10 +6,10 @@ import {log,safeError} from './log.js';
 import {codexEnv} from './codex/runner.js';
 
 /**
- * Periodic jobs that plugins declare for work that is nobody's turn (audit-auto reads its review groups every hour, say). A plugin lists them
+ * Periodic jobs that plugins declare for work that is nobody's turn (audit-auto reads its review groups once a day, say). A plugin lists them
  * in lark-agent.json, next to its plugin.json:
  *
- *   {"jobs":[{"name":"rules-sync","everyMinutes":60,"timeoutMinutes":30,"command":"node","args":["${PLUGIN_ROOT}/scripts/rules.mjs","sync"]}]}
+ *   {"jobs":[{"name":"rules-sync","everyMinutes":1440,"timeoutMinutes":30,"command":"node","args":["${PLUGIN_ROOT}/server/dist/audit.mjs","rules","sync"]}]}
  *
  * A job is a command run in the plugin's installed copy (${PLUGIN_ROOT}; `node` is the node that runs this service), the first time a little
  * after the service starts and then every `everyMinutes`; a run still going when the next is due is not started twice, and one that outlasts

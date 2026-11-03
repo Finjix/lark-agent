@@ -90,6 +90,14 @@ test('cleanup removes inside the user\'s workspace only: a recorded path elsewhe
   s.close();await fs.rm(base,{recursive:true});
 });
 
+test('a finished task that has nothing of its own to remove is done with at once, not looked at again every day',async()=>{
+  const s=new Store(':memory:'),t=s.create(input('steered')).task;
+  s.transition(t.id,'STEERED');s.update(t.id,{finished_at:1});delivered(s);
+  await cleanup(s,later());
+  assert(s.get(t.id).cleaned_at);assert.deepEqual(s.expired(later()),[]);
+  s.close();
+});
+
 test('expiry also removes the attachments a task received, from input/ of the workspace and nowhere else',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-session-inputs-')),s=new Store(':memory:'),folder=path.join(root,'input');await fs.mkdir(folder);
   const attachment={kind:'file',key:'k',name:'a.txt'};

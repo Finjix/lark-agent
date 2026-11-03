@@ -36,11 +36,8 @@ export function messageSummary(content:string){return [...content.replace(/\s+/g
 // ---- the card body: Codex's steps in order, much as Codex itself lists them
 const LONG_MESSAGE=600,CARD_BYTES=26000;
 const oneLine=(text:string,max:number)=>{const line=text.replace(/\s+/g,' ').trim();return line.length>max?`${line.slice(0,max)}…`:line;};
-const icon=(status:string)=>status==='running'?'⏳':status==='failed'?'❌':'✅';
-// Backticks inside a code block would end it early.
-const code=(text:string)=>'```\n'+text.replaceAll('```','ʼʼʼ')+'\n```';
 const markdown=(content:string)=>({tag:'markdown',content});
-/** A folded block that opens on a tap: tool calls and long text sit in these, so the answer is what the eye lands on. */
+/** A folded block that opens on a tap: long notes sit in these, so the answer is what the eye lands on. */
 const panel=(title:string,body:string)=>({tag:'collapsible_panel',expanded:false,header:{title:{tag:'plain_text',content:title}},elements:[markdown(body||' ')]});
 function parseSteps(task:Task):Step[]{try{const steps=JSON.parse(task.steps??'[]');return Array.isArray(steps)?steps:[];}catch{return [];}}
 function stepElement(step:Step,last:boolean){

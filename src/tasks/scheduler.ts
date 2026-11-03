@@ -22,10 +22,11 @@ export class Scheduler {
   private schedule(){
     const blocked=new Set<string>();
     const active=this.service.store.active();
-    for(const task of this.service.store.list('QUEUED')){
+    for(const task of this.service.store.waiting()){
       const user=`${task.tenant_key}:${task.user_id}`;
       if(blocked.has(user))continue;
-      if(!canSchedule(task,active)||this.service.paused(task)){blocked.add(user);continue;}
+      // A message still being handed to a task came before the user's later ones: if the task ends without taking it, it runs first.
+      if(task.status==='STEERING'||!canSchedule(task,active)||this.service.paused(task)){blocked.add(user);continue;}
       this.service.store.transition(task.id,'STARTING',{started_at:Date.now()});
       active.push(this.service.store.get(task.id)!);
       const start=Promise.resolve().then(()=>this.service.start(this.service.store.get(task.id)!)).catch(e=>log.error({taskId:task.id,error:safeError(e)},'调度异常'));

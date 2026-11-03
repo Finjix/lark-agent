@@ -564,6 +564,24 @@ test('a message the turn no longer takes (it has just ended) goes back in the qu
   assert.equal(kit.store.taskForMessage('t','m2').result,'答：第二件');assert.equal(kit.codex.jobs.length,2);assert.equal(kit.codex.jobs[1].threadId,'th');
   kit.store.close();
 });
+test('a message still being handed over when the turn ends runs before what the user sent after it',async()=>{
+  let finish,release;const finished=new Promise(r=>{finish=r;}),arrived=new Promise(r=>{release=r;});
+  const downloader={downloadResource:async(_message,_attachment,file)=>{await arrived;await fs.writeFile(file,'data');return {size:4,contentType:'application/zip'};}};
+  const kit=setup(async function*(job,n){
+    yield started('th');yield turnStarted;
+    if(n===1){job.steerable(async()=>{throw new AppServerError('no active turn to steer',-32600);});await finished;}
+    yield say('a',`答：${job.input[0].text}`);yield completed;
+  },{downloader});
+  const {done}=await running(kit);
+  // Its attachment is still arriving when the turn ends, and the user sends another message meanwhile.
+  await kit.service.receive(sent('m2','第二件',{attachments:[{kind:'file',key:'z',name:'素材.zip'}]}));
+  finish();await done;await kit.service.receive(sent('m3','第三件'));
+  const scheduler=new Scheduler(kit.service);scheduler.tick();
+  assert.deepEqual(['m2','m3'].map(m=>kit.store.taskForMessage('t',m).status),['STEERING','QUEUED'],'the later one waits behind it');
+  release();await until(()=>{scheduler.tick();return kit.store.taskForMessage('t','m3').status==='COMPLETED';});await scheduler.stop();
+  assert.equal(kit.codex.jobs.length,3);assert.match(kit.codex.jobs[1].input[0].text,/第二件$/);assert.equal(kit.codex.jobs[2].input[0].text,'第三件');
+  kit.store.close();
+});
 test('a message sent before the previous one has started waits for its turn and goes into it; messages go in the order they came, each once',async()=>{
   const handed=[];
   const kit=setup(async function*(job){

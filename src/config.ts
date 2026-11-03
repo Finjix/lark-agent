@@ -10,8 +10,9 @@ const int=(key:string,fallback:number,min=0,max=Number.MAX_SAFE_INTEGER)=>{
   const value=Number(raw);if(!Number.isInteger(value)||value<min||value>max)throw Error(`${key} 必须是 ${min} 到 ${max} 之间的整数`);return value;
 };
 const list=(value:string)=>value.split(',').map(x=>x.trim()).filter(Boolean);
-const locks:Record<string,string>=JSON.parse(text('RESOURCE_LOCKS','{}'));
-if(!locks||typeof locks!=='object'||Object.values(locks).some(x=>typeof x!=='string'))throw Error('RESOURCE_LOCKS 必须是资源名到正则字符串的 JSON 对象');
+// Left empty, like the other settings, it means none.
+const locks:Record<string,string>|undefined=(()=>{try{return JSON.parse(text('RESOURCE_LOCKS').trim()||'{}');}catch{return undefined;}})();
+if(!locks||typeof locks!=='object'||Array.isArray(locks)||Object.values(locks).some(x=>typeof x!=='string'))throw Error('RESOURCE_LOCKS 必须是资源名到正则字符串的 JSON 对象');
 export const config = {
   FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
   CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250),

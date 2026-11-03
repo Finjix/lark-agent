@@ -118,6 +118,8 @@ export class Store {
     this.db.prepare('UPDATE user_sessions SET thread_id=? WHERE id=?').run(threadId,id);
   }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
+  /** Messages that have not started (queued, or being handed to the running task), in the order they came. */
+  waiting():Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE status IN ${WAITING_SQL} ORDER BY created_at,rowid`).all() as unknown as Task[];}
   /**
    * Started but unfinished tasks. A message waiting to go into the running task's turn has not started: counted here, it would keep the
    * scheduler from starting the very task it waits for. Filtered in SQL: finished tasks are never deleted, so scanning them on every tick would

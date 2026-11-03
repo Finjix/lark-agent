@@ -21,7 +21,8 @@ export async function cleanup(store:Store,now=Date.now()){
   const cutoff=now-config.RETENTION_DAYS*DAY;
   for(const task of store.expired(cutoff)){
     if(store.db.prepare("SELECT 1 FROM delivery_outbox WHERE task_id=? AND status!='DELIVERED' LIMIT 1").get(task.id))continue;
-    if((!task.workspace_path||!task.thread_id)&&!store.inputs(task.id).length)continue;
+    // Nothing of its own to remove (it never ran in a workspace and received nothing): done with, so it is not looked at again every day.
+    if((!task.workspace_path||!task.thread_id)&&!store.inputs(task.id).length){store.update(task.id,{cleaned_at:Date.now()});continue;}
     try{
       const session=task.session_id?store.session(task.session_id):undefined;
       if(task.workspace_path&&task.thread_id){
