@@ -5,8 +5,8 @@ import type {UserSession} from './types.js';
 import {displayName} from './sessions/naming.js';
 
 /**
- * user/<user name>/workspace/   Codex's working directory for this user (a duplicate user name becomes name2, name3 ...):
- *                               attachments arrive in input/, and the files Codex creates or changes while a task runs are delivered
+ * user/<user name>/workspace/   the agent's working directory for this user (a duplicate user name becomes name2, name3 ...):
+ *                               attachments arrive in input/, and the files the agent creates or changes while a task runs are delivered
  */
 const illegal=/[<>:"/\\|?*\x00-\x1f]/g;
 const clean=(value:string)=>displayName(value).replace(illegal,'_').replace(/[. ]+$/,'');

@@ -39,7 +39,7 @@ test('user directory names cannot escape user/ and fall back to the open id when
   store.close();
 });
 
-test('the workspace is the folder Codex works in, directly under the user directory, and attachments arrive in its input/',()=>{
+test('the workspace is the folder the agent works in, directly under the user directory, and attachments arrive in its input/',()=>{
   const directory=path.join(config.user,'李小明'),workspace=workspaceIn(directory);
   assert.equal(workspace,path.join(directory,'workspace'));assert.equal(sessionInputs(workspace),path.join(workspace,'input'));
   assert.equal(fs.existsSync(sessionInputs(workspace)),false,'nothing is created on disk by asking for the path');

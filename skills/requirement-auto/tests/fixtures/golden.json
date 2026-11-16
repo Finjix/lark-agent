@@ -1,0 +1,2796 @@
+{
+  "canonical": [
+    {
+      "canonical": "{\"a\":[1,2,{\"y\":true,\"z\":null}],\"b\":1}",
+      "sha256": "d6ae48f46655f67e859afc5c997311f8d21e10c126c66dddd2b6a5bc49dfe25e",
+      "value": {
+        "a": [
+          1,
+          2,
+          {
+            "y": true,
+            "z": null
+          }
+        ],
+        "b": 1
+      }
+    },
+    {
+      "canonical": "{\"e\":\"é\",\"q\":\"\\\"\\\\\\n\",\"中\":\"文\"}",
+      "sha256": "9b309e9cd60a4b396228559cddb18d00c6d1066b124e9b33c45bc430400a5277",
+      "value": {
+        "e": "é",
+        "q": "\"\\\n",
+        "中": "文"
+      }
+    },
+    {
+      "canonical": "{\"price\":100}",
+      "sha256": "fbcfc7a6ca136b21ff0a7101016fc91230798ffc2e6f5fc856df2fc29adca67a",
+      "value": {
+        "price": 100
+      }
+    },
+    {
+      "canonical": "{\"price\":100.5}",
+      "sha256": "ee61d2f6d96b44547cc29b630f18bef2e18dc1622d91e9a531b5c2696939f34c",
+      "value": {
+        "price": 100.5
+      }
+    },
+    {
+      "canonical": "[]",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "value": []
+    },
+    {
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "value": {}
+    },
+    {
+      "canonical": "{\"nested\":{\"k\":[\"a\",{\"b\":\"\"}]}}",
+      "sha256": "6fad541e87fbf8f8ae14c87ffd789354c9afbd17a0f5e368b120f2b4b652feb3",
+      "value": {
+        "nested": {
+          "k": [
+            "a",
+            {
+              "b": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "canonical": "\"plain\"",
+      "sha256": "945603a8f587786b463c3f94fce115c0fae88fac2728cc96ddf5981cf7f61741",
+      "value": "plain"
+    },
+    {
+      "canonical": "7",
+      "sha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+      "value": 7
+    },
+    {
+      "canonical": "null",
+      "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "value": null
+    },
+    {
+      "canonical": "{\"bmp\":\"￮\",\"emoji\":\"😀\"}",
+      "sha256": "879c6c920f92c68edaabd707868e7b48307ee2c3634b8f4da75d8bb6ec2c4b41",
+      "value": {
+        "bmp": "￮",
+        "emoji": "😀"
+      }
+    }
+  ],
+  "cls": {
+    "attempt": {
+      "group": "01",
+      "status": "recorded",
+      "step": "cls_api_attempt"
+    },
+    "draft-bad-call": {
+      "reason": "接口调用记录包含失败或未许可动作",
+      "status": "blocked"
+    },
+    "draft-missing-receipt": {
+      "reason": "[Errno 2] No such file or directory: 'C:\\\\Users\\\\Administrator.SK-20260921WVAX\\\\AppData\\\\Local\\\\Temp\\\\tmp3_0p5dbs\\\\dd14d3970256b70979c7588e\\\\receipt-none.json'",
+      "status": "blocked"
+    },
+    "draft-no-attempt": {
+      "reason": "必须先记录本次接口尝试；不可重复请求",
+      "status": "blocked"
+    },
+    "draft-not-draft": {
+      "reason": "CLS 需求未证明为草稿",
+      "status": "blocked"
+    },
+    "draft-ok": {
+      "group": "01",
+      "status": "recorded",
+      "step": "draft_saved"
+    },
+    "draft-scripts-in-draft": {
+      "reason": "新建草稿存在计划外脚本",
+      "status": "blocked"
+    },
+    "draft-wrong-name": {
+      "reason": "CLS 回读字段不符：name",
+      "status": "blocked"
+    },
+    "draft-wrong-number": {
+      "reason": "需求编号不是实际接口返回值",
+      "status": "blocked"
+    },
+    "draft-wrong-operation": {
+      "reason": "接口请求摘要不匹配",
+      "status": "blocked"
+    },
+    "draft-wrong-price": {
+      "reason": "CLS 回读字段不符：price",
+      "status": "blocked"
+    },
+    "draft-wrong-url": {
+      "reason": "草稿入口与接口 ID 不匹配",
+      "status": "blocked"
+    },
+    "message_after_number": {
+      "message": "老师好 刚刚发了新的工单\n需求编号：GOFCN20260100009（玩法*2）\n供应商：供应商丙\n需求编号：GOFCN20260100001（画面*1）\n供应商：供应商甲\n创意人：张三/李四\n辛苦安排一下~",
+      "missing_numbers": [],
+      "skipped_groups": [],
+      "status": "message_ready"
+    },
+    "operation_exists": {
+      "reason": "操作文件须新建于本批目录内",
+      "status": "blocked"
+    },
+    "operation_import_before_draft": {
+      "reason": "未保存草稿或本组已导入，不能重复",
+      "status": "blocked"
+    },
+    "operation_save": {
+      "native_defaults": {
+        "currency": "cny",
+        "price": 0
+      },
+      "status": "operation_ready"
+    },
+    "operation_save_body": {
+      "account_id": 7,
+      "action": "save_draft",
+      "expected": {
+        "creator_id": 13,
+        "link": "https://centurygames.feishu.cn/docx/ABC123def",
+        "names": [
+          "GOFCN1011_玩法_卖点_视频_新爆点",
+          "GOFCN1012_玩法_卖点_视频_新爆点"
+        ],
+        "quantity": 2,
+        "tag_names": [
+          "玩法卖点（单选必选）/展示向/展示向",
+          "玩法卖点（单选，必选）/展示向/展示向"
+        ]
+      },
+      "group": "01",
+      "native_defaults": {
+        "currency": "cny",
+        "price": 0
+      },
+      "payload": {
+        "asset_data": "",
+        "company": "",
+        "currency": "cny",
+        "departments": [],
+        "direct_id": 21,
+        "draft_attaches": [],
+        "draft_end_date": "",
+        "expect_end_date": "",
+        "film_attaches": [],
+        "film_end_date": "",
+        "game_id": 3,
+        "marketing_user_id": "",
+        "name": "GOFCN1011-GOFCN1012",
+        "price": 0,
+        "price_reason": "",
+        "status": -2,
+        "storyboard_attaches": [],
+        "storyboard_end_date": "",
+        "third_user_id": 11,
+        "type": 5
+      },
+      "schema": 1
+    },
+    "preview": {
+      "groups": [
+        {
+          "creator_id": 13,
+          "group": "01",
+          "native_defaults": {
+            "currency": "cny",
+            "price": 0
+          },
+          "payload": {
+            "asset_data": "",
+            "company": "",
+            "currency": "cny",
+            "departments": [],
+            "direct_id": 21,
+            "draft_attaches": [],
+            "draft_end_date": "",
+            "expect_end_date": "",
+            "film_attaches": [],
+            "film_end_date": "",
+            "game_id": 3,
+            "marketing_user_id": "",
+            "name": "GOFCN<首号>-GOFCN<末号>",
+            "price": 0,
+            "price_reason": "",
+            "status": -2,
+            "storyboard_attaches": [],
+            "storyboard_end_date": "",
+            "third_user_id": 11,
+            "type": 5
+          }
+        },
+        {
+          "creator_id": 14,
+          "group": "02",
+          "native_defaults": {},
+          "payload": {
+            "asset_data": "",
+            "company": "",
+            "currency": "usd",
+            "departments": [],
+            "direct_id": 21,
+            "draft_attaches": [],
+            "draft_end_date": "",
+            "expect_end_date": "",
+            "film_attaches": [],
+            "film_end_date": "",
+            "game_id": 3,
+            "marketing_user_id": "",
+            "name": "GOFCN<首号>-GOFCN<末号>",
+            "price": 100.5,
+            "price_reason": "",
+            "status": -2,
+            "storyboard_attaches": [],
+            "storyboard_end_date": "",
+            "third_user_id": 12,
+            "type": 5
+          }
+        }
+      ],
+      "status": "cls_plan"
+    },
+    "preview-bad-quote": {
+      "reason": "报价必须是已确认的金额",
+      "status": "blocked"
+    },
+    "preview-dup-direction": {
+      "reason": "创意方向 不存在或匹配不唯一，需在计划前澄清",
+      "status": "blocked"
+    },
+    "preview-no-create": {
+      "reason": "没有建单权限",
+      "status": "blocked"
+    },
+    "preview-no-game-permission": {
+      "reason": "当前账号未证明有 GOFCN 权限",
+      "status": "blocked"
+    },
+    "preview-secret": {
+      "reason": "记录中禁止包含认证凭据",
+      "status": "blocked"
+    },
+    "preview-unknown-supplier": {
+      "reason": "供应商 不存在或匹配不唯一，需在计划前澄清",
+      "status": "blocked"
+    },
+    "steps_group_01": [
+      "cls_started",
+      "cls_api_attempt",
+      "draft_saved"
+    ]
+  },
+  "flow": [
+    {
+      "group": "01",
+      "name": "cls before append",
+      "result": {
+        "reason": "进度表必须先验证",
+        "status": "blocked"
+      },
+      "step": "cls_started"
+    },
+    {
+      "group": null,
+      "name": "secret in evidence",
+      "result": {
+        "reason": "记录中禁止包含认证凭据",
+        "status": "blocked"
+      },
+      "step": "append_started"
+    },
+    {
+      "group": null,
+      "name": "append_started",
+      "result": {
+        "group": null,
+        "status": "recorded",
+        "step": "append_started"
+      },
+      "step": "append_started"
+    },
+    {
+      "group": null,
+      "name": "append_started twice",
+      "result": {
+        "reason": "已有写入尝试，禁止重复记录/自动重贴",
+        "status": "blocked"
+      },
+      "step": "append_started"
+    },
+    {
+      "group": null,
+      "name": "verified with partial",
+      "result": {
+        "reason": "追加未完整通过校验",
+        "status": "blocked"
+      },
+      "step": "append_verified"
+    },
+    {
+      "group": null,
+      "name": "verified without snapshot",
+      "result": {
+        "reason": "追加未完整通过校验",
+        "status": "blocked"
+      },
+      "step": "append_verified"
+    },
+    {
+      "group": null,
+      "name": "verified",
+      "result": {
+        "group": null,
+        "status": "recorded",
+        "step": "append_verified"
+      },
+      "step": "append_verified"
+    },
+    {
+      "name": "after append_verified",
+      "status": {
+        "append_verified": true,
+        "blocked": false,
+        "groups": {
+          "01": [],
+          "02": []
+        }
+      }
+    },
+    {
+      "group": null,
+      "name": "append_verified twice",
+      "result": {
+        "reason": "追加验证顺序不正确",
+        "status": "blocked"
+      },
+      "step": "append_verified"
+    },
+    {
+      "group": "09",
+      "name": "bad group",
+      "result": {
+        "reason": "分组编号不存在",
+        "status": "blocked"
+      },
+      "step": "cls_started"
+    },
+    {
+      "group": "01",
+      "name": "cls_started",
+      "result": {
+        "group": "01",
+        "status": "recorded",
+        "step": "cls_started"
+      },
+      "step": "cls_started"
+    },
+    {
+      "group": "01",
+      "name": "cls_started twice",
+      "result": {
+        "reason": "已有 CLS 尝试，先查草稿，不能重复新建",
+        "status": "blocked"
+      },
+      "step": "cls_started"
+    },
+    {
+      "group": "01",
+      "name": "draft before attempt",
+      "result": {
+        "reason": "需已存在的截图绝对路径",
+        "status": "blocked"
+      },
+      "step": "draft_saved"
+    },
+    {
+      "group": "01",
+      "name": "draft bad url",
+      "result": {
+        "reason": "草稿 URL 必须是实际 CLS 页面",
+        "status": "blocked"
+      },
+      "step": "draft_saved"
+    },
+    {
+      "group": "01",
+      "name": "handoff no reason",
+      "result": {
+        "reason": "需明确人工接手事项",
+        "status": "blocked"
+      },
+      "step": "handoff"
+    },
+    {
+      "group": "01",
+      "name": "bad requirement number",
+      "result": {
+        "reason": "尚无可补充编号的工单",
+        "status": "blocked"
+      },
+      "step": "requirement_number"
+    },
+    {
+      "group": null,
+      "name": "blocked no reason",
+      "result": {
+        "reason": "需阻塞原因",
+        "status": "blocked"
+      },
+      "step": "blocked"
+    },
+    {
+      "group": "01",
+      "name": "unknown step",
+      "result": {
+        "reason": "事件步骤不受支持",
+        "status": "blocked"
+      },
+      "step": "frobnicate"
+    },
+    {
+      "group": "02",
+      "name": "cls_started group 2",
+      "result": {
+        "group": "02",
+        "status": "recorded",
+        "step": "cls_started"
+      },
+      "step": "cls_started"
+    },
+    {
+      "group": "02",
+      "name": "handoff group 2",
+      "result": {
+        "group": "02",
+        "status": "recorded",
+        "step": "handoff"
+      },
+      "step": "handoff"
+    },
+    {
+      "group": "02",
+      "name": "handoff group 2 twice",
+      "result": {
+        "reason": "本组已移交，不自动继续",
+        "status": "blocked"
+      },
+      "step": "handoff"
+    },
+    {
+      "group": "02",
+      "name": "number group 2",
+      "result": {
+        "group": "02",
+        "status": "recorded",
+        "step": "requirement_number"
+      },
+      "step": "requirement_number"
+    },
+    {
+      "group": null,
+      "name": "blocked",
+      "result": {
+        "group": null,
+        "status": "recorded",
+        "step": "blocked"
+      },
+      "step": "blocked"
+    },
+    {
+      "name": "after blocked",
+      "status": {
+        "append_verified": true,
+        "blocked": true,
+        "groups": {
+          "01": [
+            "cls_started"
+          ],
+          "02": [
+            "cls_started",
+            "handoff",
+            "requirement_number"
+          ]
+        }
+      }
+    },
+    {
+      "group": "01",
+      "name": "record while blocked",
+      "result": {
+        "reason": "已阻塞批次不能继续自动化；保留现场等待用户处理",
+        "status": "blocked"
+      },
+      "step": "handoff"
+    },
+    {
+      "group": null,
+      "name": "resumed without confirm",
+      "result": {
+        "reason": "恢复需用户明确决定及原因",
+        "status": "blocked"
+      },
+      "step": "resumed"
+    },
+    {
+      "group": null,
+      "name": "resumed",
+      "result": {
+        "group": null,
+        "status": "recorded",
+        "step": "resumed"
+      },
+      "step": "resumed"
+    },
+    {
+      "name": "after resumed",
+      "status": {
+        "append_verified": true,
+        "blocked": false,
+        "groups": {
+          "01": [
+            "cls_started"
+          ],
+          "02": [
+            "cls_started",
+            "handoff",
+            "requirement_number"
+          ]
+        }
+      }
+    },
+    {
+      "name": "cls-check fill",
+      "observation": {
+        "can_create": true,
+        "logged_in": true,
+        "save_result": "ok",
+        "unpublished": true
+      },
+      "result": {
+        "action": "fill",
+        "group": "01",
+        "status": "allowed"
+      }
+    },
+    {
+      "name": "cls-check publish",
+      "observation": {},
+      "result": {
+        "reason": "发布/删除/更新脚本及未知动作均不允许",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "cls-check save_draft",
+      "observation": {
+        "can_create": true,
+        "logged_in": true,
+        "required_complete": true,
+        "save_result": "ok",
+        "unpublished": true
+      },
+      "result": {
+        "action": "save_draft",
+        "group": "01",
+        "status": "allowed"
+      }
+    },
+    {
+      "name": "cls-check save_draft",
+      "observation": {
+        "can_create": true,
+        "logged_in": true,
+        "save_result": "ok",
+        "unpublished": true
+      },
+      "result": {
+        "reason": "CLS 必填未齐全",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "cls-check save_draft",
+      "observation": {
+        "can_create": true,
+        "logged_in": false,
+        "required_complete": true,
+        "unpublished": true
+      },
+      "result": {
+        "reason": "CLS 未登录",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "cls-check save_draft",
+      "observation": {
+        "can_create": true,
+        "logged_in": true,
+        "required_complete": true,
+        "save_result": "unknown",
+        "unpublished": true
+      },
+      "result": {
+        "reason": "草稿保存失败/结果未知，先核对现状",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "cls-check import_scripts",
+      "observation": {
+        "can_create": true,
+        "logged_in": true,
+        "save_result": "ok",
+        "unpublished": true
+      },
+      "result": {
+        "reason": "未保存草稿或本组已导入，不能重复",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "cls-check bad group",
+      "result": {
+        "reason": "组不存在",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "message",
+      "result": {
+        "message": "老师好 刚刚发了新的工单\n需求编号：GOFCN20260100001（画面*1）\n供应商：供应商甲\n创意人：李四\n辛苦安排一下~",
+        "missing_numbers": [],
+        "skipped_groups": [
+          "01"
+        ],
+        "status": "message_ready"
+      }
+    },
+    {
+      "name": "report saved",
+      "result": {
+        "status": "report_saved"
+      }
+    },
+    {
+      "name": "report outside",
+      "result": {
+        "reason": "报告必须位于本批目录",
+        "status": "blocked"
+      }
+    },
+    {
+      "name": "report body",
+      "result": {
+        "message": "老师好 刚刚发了新的工单\n需求编号：GOFCN20260100001（画面*1）\n供应商：供应商甲\n创意人：李四\n辛苦安排一下~",
+        "range": "A6:I8",
+        "status": "report_ready",
+        "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+        "worksheet": "GOFCN创意进度 26年3月"
+      }
+    },
+    {
+      "name": "report groups",
+      "result": [
+        {
+          "group": "01",
+          "quantity": 2,
+          "steps": [
+            "cls_started"
+          ]
+        },
+        {
+          "group": "02",
+          "quantity": 1,
+          "steps": [
+            "cls_started",
+            "handoff",
+            "requirement_number"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tampered artifact",
+      "result": {
+        "reason": "批次文件发生变化：append.tsv",
+        "status": "blocked"
+      }
+    }
+  ],
+  "plan": {
+    "base.xlsx|basic|": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": null,
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面",
+            "系统"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商甲",
+            "供应商乙",
+            "供应商丙"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年3月"
+    },
+    "base.xlsx|basic|GOFCN创意进度 26年2月": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": "GOFCN创意进度 26年2月",
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [
+            "玩法",
+            "画面"
+          ],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [
+            "卖点",
+            "体验"
+          ],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [
+            "视频",
+            "图文"
+          ],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙",
+            "供应商甲"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商丙",
+            "供应商甲"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [
+            "张三",
+            "李四"
+          ],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年2月"
+    },
+    "base.xlsx|basic|GOFCN创意进度 26年3月": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": "GOFCN创意进度 26年3月",
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面",
+            "系统"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商甲",
+            "供应商乙",
+            "供应商丙"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年3月"
+    },
+    "base.xlsx|formula-text|": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": null,
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面",
+            "系统"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商甲",
+            "供应商乙",
+            "供应商丙"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "=1+1",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "=1+1",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年3月"
+    },
+    "base.xlsx|worksheet-explicit|": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": null,
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面",
+            "系统"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商甲",
+            "供应商乙",
+            "供应商丙"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ],
+        "worksheet": "GOFCN创意进度 26年3月"
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年3月"
+    },
+    "plan-missing-id-formula.xlsx|basic|": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": null,
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面",
+            "系统"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商甲",
+            "供应商乙",
+            "供应商丙"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年3月"
+    },
+    "plan-non-list-dv.xlsx|basic|": {
+      "columns": {
+        "client": 7,
+        "creative_batch": 11,
+        "creative_expression": 10,
+        "creative_form": 6,
+        "creator": 9,
+        "keyword": 2,
+        "name": 3,
+        "number": 1,
+        "primary_tag": 4,
+        "secondary_tag": 5,
+        "supplier": 8
+      },
+      "current_sheet": null,
+      "dropdowns": [
+        {
+          "field": "primary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "玩法",
+            "画面",
+            "系统"
+          ],
+          "range": "D6:D8"
+        },
+        {
+          "field": "secondary_tag",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "卖点",
+            "体验"
+          ],
+          "range": "E6:E8"
+        },
+        {
+          "field": "creative_form",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "视频",
+            "图文"
+          ],
+          "range": "F6:F8"
+        },
+        {
+          "field": "supplier",
+          "missing": [
+            "供应商丙"
+          ],
+          "mode": "single",
+          "options": [
+            "供应商甲",
+            "供应商乙",
+            "供应商丙"
+          ],
+          "range": "H6:H8"
+        },
+        {
+          "field": "creator",
+          "missing": [],
+          "mode": "single",
+          "options": [
+            "张三",
+            "李四"
+          ],
+          "range": "I6:I8"
+        }
+      ],
+      "first_number": 1011,
+      "groups": [
+        {
+          "csv": "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+          "id": "01",
+          "names": [
+            "GOFCN1011_玩法_卖点_视频_新爆点",
+            "GOFCN1012_玩法_卖点_视频_新爆点"
+          ],
+          "request": {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          "rows": [
+            6,
+            7
+          ]
+        },
+        {
+          "csv": "创意脚本_02_画面_体验_图文_供应商甲.csv",
+          "id": "02",
+          "names": [
+            "GOFCN1013_画面_体验_图文_另一个"
+          ],
+          "request": {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          },
+          "rows": [
+            8
+          ]
+        }
+      ],
+      "history_warnings": [
+        "历史编号与名称不一致：GOFCN创意进度 26年2月!4，两者均保留并参与避让",
+        "历史编号重复：1001，GOFCN创意进度 26年2月!2 / GOFCN创意进度 26年2月!5；不修改"
+      ],
+      "last_number": 1013,
+      "quantity": 3,
+      "range": "A6:I8",
+      "request": {
+        "groups": [
+          {
+            "brief": "测试需求一",
+            "client": "",
+            "cls": {
+              "direction": "方向一",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "视频",
+            "creative_reference": "",
+            "creator": "张三",
+            "head_reference": "",
+            "keyword": "新爆点",
+            "material_name": "玩法_卖点_视频_新爆点",
+            "primary_tag": "玩法",
+            "quantity": 2,
+            "reviewer": "张三",
+            "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+            "secondary_tag": "卖点",
+            "supplier": "供应商丙",
+            "topic": "玩法_卖点"
+          },
+          {
+            "brief": "测试需求二",
+            "client": "",
+            "cls": {
+              "currency": "USD",
+              "direction": "方向一",
+              "quotation": "100.50",
+              "task_type": "creative_a"
+            },
+            "creative_batch": "",
+            "creative_expression": "",
+            "creative_form": "图文",
+            "creative_reference": "",
+            "creator": "李四",
+            "head_reference": "",
+            "keyword": "另一个",
+            "material_name": "画面_体验_图文_另一个",
+            "primary_tag": "画面",
+            "quantity": 1,
+            "reviewer": "李四",
+            "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+            "secondary_tag": "体验",
+            "supplier": "供应商甲",
+            "topic": "画面_体验"
+          }
+        ]
+      },
+      "rows": [
+        {
+          "group": "01",
+          "name": "GOFCN1011_玩法_卖点_视频_新爆点",
+          "number": 1011,
+          "row": 6,
+          "values": {
+            "A6": 1011,
+            "B6": "新爆点",
+            "C6": "=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)",
+            "D6": "玩法",
+            "E6": "卖点",
+            "F6": "视频",
+            "G6": null,
+            "H6": "供应商丙",
+            "I6": "张三"
+          }
+        },
+        {
+          "group": "01",
+          "name": "GOFCN1012_玩法_卖点_视频_新爆点",
+          "number": 1012,
+          "row": 7,
+          "values": {
+            "A7": 1012,
+            "B7": "新爆点",
+            "C7": "=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)",
+            "D7": "玩法",
+            "E7": "卖点",
+            "F7": "视频",
+            "G7": null,
+            "H7": "供应商丙",
+            "I7": "张三"
+          }
+        },
+        {
+          "group": "02",
+          "name": "GOFCN1013_画面_体验_图文_另一个",
+          "number": 1013,
+          "row": 8,
+          "values": {
+            "A8": 1013,
+            "B8": "另一个",
+            "C8": "=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)",
+            "D8": "画面",
+            "E8": "体验",
+            "F8": "图文",
+            "G8": null,
+            "H8": "供应商甲",
+            "I8": "李四"
+          }
+        }
+      ],
+      "schema": 1,
+      "target": "https://centurygames.feishu.cn/wiki/GH7cwIxzZi3gVdk2s3tc1dDbnQc",
+      "worksheet": "GOFCN创意进度 26年3月"
+    }
+  },
+  "plan_errors": {
+    "base.xlsx|bad-url|": "脚本链接必须是当前确认的飞书文档；没有文档时写「无」",
+    "base.xlsx|basic|不存在": "指定/当前工作表不存在或列结构不匹配，请澄清",
+    "base.xlsx|client-filled|": "进度表阶段 client 应留空",
+    "base.xlsx|comma-label|": "下拉标签含逗号/引号，需人工核对规则",
+    "base.xlsx|float-quantity|": "quantity 必须是正整数",
+    "base.xlsx|formula-keyword|": "keyword 不能作为公式粘贴",
+    "base.xlsx|missing-field|": "第 1 组缺少需求字段：提炼词、素材名称、创意形式、供应商、审核人、脚本内容链接",
+    "base.xlsx|name-mismatch|": "素材名称与创意形式/提炼词不一致，请澄清",
+    "base.xlsx|no-tags|": "无法从素材名称确定一二级标签，需先根据名称推理",
+    "base.xlsx|reviewer-mismatch|": "审核人与进度表创意者字段不一致",
+    "base.xlsx|tab-in-supplier|": "supplier 不能包含表格分隔符或换行",
+    "base.xlsx|unknown-cls|": "CLS 字段未知",
+    "base.xlsx|unknown-group-field|": "第 1 组有未知字段",
+    "base.xlsx|unknown-top|": "请求有未知字段/目标覆盖",
+    "base.xlsx|worksheet-missing|": "指定/当前工作表不存在或列结构不匹配，请澄清",
+    "base.xlsx|zero-quantity|": "quantity 必须是正整数",
+    "plan-bad-id.xlsx|basic|": "GOFCN创意进度 26年3月!3 有非法素材编号",
+    "plan-merged.xlsx|basic|": "追加范围与合并单元格相交",
+    "plan-no-formula.xlsx|basic|": "没有可继承的命名公式",
+    "plan-protected.xlsx|basic|": "导出工作表受保护，请核对实际编辑权限",
+    "plan-tie-sheets.xlsx|basic|": "最新工作表有并列，请指定"
+  },
+  "preflight": {
+    "applied-complete.xlsx": {
+      "reason": "快照变化或目标被占用，需更新计划并确认",
+      "status": "blocked"
+    },
+    "base.xlsx": {
+      "range": "A6:I8",
+      "status": "ready_to_append"
+    },
+    "occupied-row.xlsx": {
+      "reason": "快照变化或目标被占用，需更新计划并确认",
+      "status": "blocked"
+    }
+  },
+  "prepare": {
+    "csv": [
+      "创意脚本_01_玩法_卖点_视频_供应商丙.csv",
+      "创意脚本_02_画面_体验_图文_供应商甲.csv"
+    ],
+    "files": {
+      "append.tsv": "1011\t新爆点\t=CONCATENATE(\"GOFCN\",A6,\"_\",D6,\"_\",E6,\"_\",F6,\"_\",B6)\t玩法\t卖点\t视频\t\t供应商丙\t张三\r\n1012\t新爆点\t=CONCATENATE(\"GOFCN\",A7,\"_\",D7,\"_\",E7,\"_\",F7,\"_\",B7)\t玩法\t卖点\t视频\t\t供应商丙\t张三\r\n1013\t另一个\t=CONCATENATE(\"GOFCN\",A8,\"_\",D8,\"_\",E8,\"_\",F8,\"_\",B8)\t画面\t体验\t图文\t\t供应商甲\t李四\r\n",
+      "创意脚本_01_玩法_卖点_视频_供应商丙.csv": "﻿脚本名称,脚本内容,创意标签\r\nGOFCN1011_玩法_卖点_视频_新爆点,https://centurygames.feishu.cn/docx/ABC123def,玩法卖点（单选，必选）/展示向/展示向\r\nGOFCN1012_玩法_卖点_视频_新爆点,同上,玩法卖点（单选，必选）/展示向/展示向\r\n",
+      "创意脚本_02_画面_体验_图文_供应商甲.csv": "﻿脚本名称,脚本内容,创意标签\r\nGOFCN1013_画面_体验_图文_另一个,https://centurygames.feishu.cn/wiki/XYZ789,玩法卖点（单选，必选）/展示向/展示向\r\n"
+    },
+    "range": "A6:I8",
+    "second_prepare": "[WinError 183] 当文件已存在时，无法创建该文件。: 'C:\\\\Users\\\\Administrator.SK-20260921WVAX\\\\AppData\\\\Local\\\\Temp\\\\tmpau4yi63b\\\\dd14d3970256b70979c7588e'",
+    "stale_plan": "当前快照与获批计划不同，需更新计划并重新确认"
+  },
+  "seal": {
+    "authz": "记录中禁止包含认证凭据",
+    "bearer": "记录中禁止包含认证凭据",
+    "key": "记录中禁止包含认证凭据",
+    "nested": "记录中禁止包含认证凭据",
+    "ok": "ok",
+    "session-id-token": "记录中禁止包含认证凭据"
+  },
+  "verify": {
+    "applied-bad-value.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "追加值不符：D6"
+      ],
+      "matched_cells": 23,
+      "status": "conflict"
+    },
+    "applied-blank-names.xlsx": {
+      "expected_cells": 24,
+      "issues": [],
+      "matched_cells": 3,
+      "status": "partial"
+    },
+    "applied-complete.xlsx": {
+      "expected_cells": 24,
+      "issues": [],
+      "matched_cells": 24,
+      "status": "complete"
+    },
+    "applied-extra-sheet.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "工作表列表/顺序发生变化",
+        "历史布局/合并/隐藏/保护/筛选发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-filter-changed.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "历史布局/合并/隐藏/保护/筛选发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-hidden-row.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "历史布局/合并/隐藏/保护/筛选发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-merge-changed.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "历史布局/合并/隐藏/保护/筛选发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-no-dropdown.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "追加范围外的下拉验证发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-occupied-optional.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "计划外修改：GOFCN创意进度 26年3月!J6"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-outside-comment.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "计划外修改：GOFCN创意进度 26年3月!B3"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-outside-sheet.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "计划外修改：GOFCN创意进度 26年2月!B2"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-outside-style.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "计划外修改：GOFCN创意进度 26年3月!B4"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-outside-value.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "计划外修改：GOFCN创意进度 26年3月!B3"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-partial.xlsx": {
+      "expected_cells": 24,
+      "issues": [],
+      "matched_cells": 8,
+      "status": "partial"
+    },
+    "applied-protected.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "历史布局/合并/隐藏/保护/筛选发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-renamed-sheet.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "工作表列表/顺序发生变化",
+        "计划外修改：GOFCN创意进度 26年1月!C5",
+        "计划外修改：GOFCN创意进度 26年1月!J1",
+        "计划外修改：GOFCN创意进度 26年1月!D3",
+        "计划外修改：GOFCN创意进度 26年1月!I1",
+        "计划外修改：GOFCN创意进度 26年1月!F1",
+        "计划外修改：GOFCN创意进度 26年1月!H3",
+        "计划外修改：GOFCN创意进度 26年1月!B1",
+        "计划外修改：GOFCN创意进度 26年1月!A1",
+        "计划外修改：GOFCN创意进度 26年1月!E5",
+        "计划外修改：GOFCN创意进度 26年1月!C3",
+        "计划外修改：GOFCN创意进度 26年1月!A2",
+        "计划外修改：GOFCN创意进度 26年1月!E4",
+        "计划外修改：GOFCN创意进度 26年1月!H2",
+        "计划外修改：GOFCN创意进度 26年1月!D1",
+        "计划外修改：GOFCN创意进度 26年1月!B4",
+        "计划外修改：GOFCN创意进度 26年1月!E1",
+        "计划外修改：GOFCN创意进度 26年1月!D4",
+        "计划外修改：GOFCN创意进度 26年1月!A5",
+        "计划外修改：GOFCN创意进度 26年1月!C2"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-rule-changed.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "追加范围外的下拉验证发生变化"
+      ],
+      "matched_cells": 24,
+      "status": "conflict"
+    },
+    "applied-wrong-number.xlsx": {
+      "expected_cells": 24,
+      "issues": [
+        "追加值不符：A6"
+      ],
+      "matched_cells": 23,
+      "status": "conflict"
+    },
+    "base.xlsx": {
+      "expected_cells": 24,
+      "issues": [],
+      "matched_cells": 0,
+      "status": "not_applied"
+    }
+  }
+}

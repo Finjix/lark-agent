@@ -8,7 +8,6 @@ export interface ResourceDownloader {
   downloadResource(messageId:string,attachment:IncomingAttachment,destination:string):Promise<{size:number;contentType:string}>;
   getUserName?(userId:string):Promise<string|undefined>;
 }
-export {sessionInputs} from '../layout.js';
 /** Attachments keep the name they were sent with, cleaned so they cannot leave the folder. */
 export function inputFilename(name:string){
   return path.win32.basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/,'').slice(0,140)||'attachment';

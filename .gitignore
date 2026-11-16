@@ -6,7 +6,7 @@ data/
 !.env.example
 *.log
 user/
-.codex/
-plugins/*
-!plugins/README.md
 shared/
+.pi/
+.venv/
+__pycache__/

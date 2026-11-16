@@ -7,7 +7,7 @@ export function limitText(text:string,bytes=18000){
 }
 export const working=(task:Task)=>task.status==='STARTING'||task.status==='RUNNING';
 export function elapsedSeconds(task:Task,now=Date.now()){return Math.max(0,Math.floor((now-(task.started_at??task.created_at))/1000));}
-/** Feishu rejects the whole card if a markdown image is anything but one of its own image keys (Codex writes data: URIs, local paths and web addresses); generated images are sent as separate messages. */
+/** Feishu rejects the whole card if a markdown image is anything but one of its own image keys (the agent may write data: URIs, local paths and web addresses); image files are sent as separate messages. */
 export const withoutImages=(text:string)=>text.replace(/!\[([^\]]*)\]\((<[^>\n]*>|[^)\n]*)\)/g,(_all,alt:string,url:string)=>{
   // A web address stays as a plain link (Feishu cannot show it as an image but the user can open it); data: URIs and local paths are dropped.
   const target=url.replace(/^<|>$/g,'').trim();return /^https?:\/\//i.test(target)?`[${alt||target}](${target})`:'';
@@ -33,7 +33,7 @@ export function renderTask(task:Task){
 }
 export function messageSummary(content:string){return [...content.replace(/\s+/g,' ').trim()].slice(0,80).join('');}
 
-// ---- the card body: Codex's steps in order, much as Codex itself lists them
+// ---- the card body: the agent's steps in order
 const LONG_MESSAGE=600,CARD_BYTES=26000;
 const oneLine=(text:string,max:number)=>{const line=text.replace(/\s+/g,' ').trim();return line.length>max?`${line.slice(0,max)}…`:line;};
 const markdown=(content:string)=>({tag:'markdown',content});
@@ -48,13 +48,9 @@ function stepElement(step:Step,last:boolean){
     }
     // Commands, file changes and tool calls are not shown on the card: the user wants the answer, not the plumbing (what is made for them
     // arrives as files). They stay in the stored steps.
-    case 'command':return;
-    case 'files':return;
-    case 'tool':return;
-    // What the user added while the task ran, where Codex took it in.
+    case 'command':case 'files':case 'tool':return;
+    // What the user added while the task ran, where the agent took it in.
     case 'user':return markdown(`➕ 补充：${oneLine(withoutImages(step.text)||'（附件）',300)}${step.files.length?`\n📎 ${step.files.map(f=>oneLine(f,60)).join('、')}`:''}`);
-    case 'search':return markdown(`🔍 搜索：${oneLine(step.query,120)}`);
-    case 'todo':return markdown(step.items.map(i=>`${i.completed?'☑':'☐'} ${i.text}`).join('\n'));
   }
 }
 /** A card holds about 30 KB. When a long task has more than that, the oldest panels give up their contents first, then the oldest steps are left out. */

@@ -1,6 +1,6 @@
 {
-  "name": "lark-codex-agent",
-  "version": "1.0.0",
+  "name": "lark-agent",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,9 +12,9 @@
     "test": "npm run build && node --import ./dev/setup.mjs --test dev/*.test.mjs"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "1.75.0",
-    "@openai/codex": "0.163.0",
-    "@openai/codex-sdk": "0.163.0"
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@larksuiteoapi/node-sdk": "1.76.0"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

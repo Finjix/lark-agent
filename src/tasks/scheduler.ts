@@ -3,7 +3,7 @@ import {TaskService} from './service.js';
 import type {Task} from '../types.js';
 import {log,safeError} from '../log.js';
 export function canSchedule(task:Task,active:Task[]){
-  // Each user's messages share one Codex conversation and must retain their order.
+  // Each user's messages share one conversation and must retain their order.
   if(active.some(t=>t.tenant_key===task.tenant_key&&t.user_id===task.user_id))return false;
   if(task.thread_id&&active.some(t=>t.thread_id===task.thread_id))return false;
   const locks=new Set(active.flatMap(t=>JSON.parse(t.resources) as string[]));
@@ -15,7 +15,7 @@ export class Scheduler {
   constructor(private service:TaskService){}
   start(){this.timer=setInterval(()=>this.tick(),500);this.tick();}
   tick(){
-    if(this.stopped||!this.service.codex.ready)return;
+    if(this.stopped||!this.service.agent.ready)return;
     // A database hiccup must cost one round, not the whole process: this runs inside a timer callback.
     try{this.schedule();}catch(e){log.error({error:safeError(e)},'调度轮询失败，下一轮重试');}
   }

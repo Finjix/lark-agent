@@ -1,5 +1,5 @@
 // Preloaded by `npm test`: keep per-user output directories and logs out of the project tree.
-// Codex's home stays the project's own (a test checks it); whatever cleans or writes there takes explicit folders.
+// pi's home stays the project's own; whatever cleans or writes there takes explicit folders.
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';

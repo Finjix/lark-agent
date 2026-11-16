@@ -14,7 +14,7 @@ export interface SupervisorOptions {
   start:()=>Child;
   /** The service's /health answer, or undefined when nothing answers in time. */
   health:()=>Promise<any>;
-  /** Ends the process and everything it started (Codex runs as its children). */
+  /** Ends the process and everything it started (the commands the agent runs are its children). */
   kill:(child:Child)=>void;
   /** Asks the service to stop safely, as `start.cmd stop` does. */
   shutdown:()=>Promise<void>;
@@ -79,7 +79,7 @@ export class Supervisor {
           const health=await this.options.health();
           if(!alive(child)||killed||this.stopping)return;
           if(!health){
-            // It may still be starting (installing plugins comes before the first round of checks, not before /health).
+            // It may still be starting (housekeeping comes before the first round of checks, not before /health).
             if(!answered&&Date.now()-startedAt<this.graceMs)return;
             if(++strikes<this.strikes){log.warn({servicePid:child.pid,strikes},'服务健康检查无应答');return;}
             end({strikes},'服务进程无响应，强制结束');return;

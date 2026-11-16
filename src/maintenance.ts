@@ -58,11 +58,11 @@ const addTo=(total:Removed,more:Removed)=>{total.files+=more.files;total.bytes+=
 const plainDirectory=async(directory:string)=>(await fs.lstat(directory).catch(()=>undefined))?.isDirectory()===true;
 /**
  * Deletes what under `root` nobody has touched since `cutoff`. A file's age is its most recent creation, change or move, so what is still
- * in use stays however long ago it was made; `only` limits the deletion to matching file names. A link is deleted as a link and never entered.
+ * in use stays however long ago it was made; `only` limits the deletion to matching file names, and `shallow` to the files directly in `root`. A link is deleted as a link and never entered.
  * A folder left empty and created before the cutoff goes as well, `root` itself stays. What cannot be deleted now (open in a program,
  * no permission) is left for the next pass.
  */
-async function sweep(root:string,cutoff:number,signal?:AbortSignal,only?:RegExp):Promise<Removed>{
+async function sweep(root:string,cutoff:number,signal?:AbortSignal,only?:RegExp,shallow=false):Promise<Removed>{
   const removed=nothing();
   if(!await plainDirectory(root))return removed;
   const walk=async(directory:string)=>{
@@ -71,6 +71,7 @@ async function sweep(root:string,cutoff:number,signal?:AbortSignal,only?:RegExp)
       const target=path.join(directory,entry.name);
       try{
         if(entry.isDirectory()){
+          if(shallow)continue;
           await walk(target);
           // rmdir refuses a folder that still holds something, which is the answer.
           if((await fs.lstat(target)).birthtimeMs<cutoff)await fs.rmdir(target).catch(()=>{});
@@ -87,25 +88,21 @@ async function sweep(root:string,cutoff:number,signal?:AbortSignal,only?:RegExp)
 }
 
 /**
- * What of Codex's home may go once it is old, relative to it. Everything else there stays: its databases (they also hold the chats),
- * the configuration (with the gateway key), the installation id, its skills and the temporary files of running processes; of the Windows sandbox's folder, which
- * keeps its setup state next to its logs, only the logs.
+ * What of pi's home may go once it is old, relative to it: the chats (a JSONL file each, written to with every turn, so one in use is never
+ * old) and the crash records. The ChatGPT login (auth.json) and everything else stay.
  */
-const CODEX_EXPENDABLE:{folder:string;only?:RegExp}[]=[
-  {folder:'sessions'},{folder:'archived_sessions'},{folder:'generated_images'},{folder:'shell_snapshots'},{folder:'log'},{folder:'.tmp'},
-  {folder:'.sandbox',only:/\.log$/i},
-];
-export interface Purged {logs:Removed;workspaces:Removed;codex:Removed}
-type Roots=Pick<typeof config,'data'|'user'|'codexHome'>;
+const AGENT_EXPENDABLE:{folder:string;only?:RegExp}[]=[{folder:'sessions',only:/\.jsonl$/i},{folder:'.',only:/^crashes\.json$/}];
+export interface Purged {logs:Removed;workspaces:Removed;agent:Removed}
+type Roots=Pick<typeof config,'data'|'user'|'agentHome'>;
 const usable=(name:string)=>!!name&&name!=='.'&&name!=='..'&&path.basename(name)===name;
 /**
- * Deletes what has not been touched for RETENTION_DAYS: the service's own logs, every file in the users' workspaces (what Codex made, what
- * the users sent), and the expendable files of Codex's home. Backups, the database and everything else stay. A user with a task queued
- * or running keeps their workspace untouched, and Codex's files are left alone while any task runs.
+ * Deletes what has not been touched for RETENTION_DAYS: the service's own logs, every file in the users' workspaces (what the agent made, what
+ * the users sent), and the expendable files of pi's home. Backups, the database and everything else stay. A user with a task queued
+ * or running keeps their workspace untouched, and pi's files are left alone while any task runs.
  */
 export async function purge(store:Store,options:{now?:number;roots?:Roots;signal?:AbortSignal}={}):Promise<Purged>{
   const {now=Date.now(),roots=config,signal}=options,cutoff=now-config.RETENTION_DAYS*DAY;
-  const purged:Purged={logs:nothing(),workspaces:nothing(),codex:nothing()};
+  const purged:Purged={logs:nothing(),workspaces:nothing(),agent:nothing()};
   addTo(purged.logs,await sweep(path.join(roots.data,'logs'),cutoff,signal,/\.jsonl$/));
   for(const {tenant_key,user_id,name} of store.userDirs()){
     if(signal?.aborted)return purged;
@@ -113,7 +110,7 @@ export async function purge(store:Store,options:{now?:number;roots?:Roots;signal
     const directory=path.join(roots.user,name);
     if(await plainDirectory(directory))addTo(purged.workspaces,await sweep(workspaceIn(directory),cutoff,signal));
   }
-  if(!store.active().length)for(const {folder,only} of CODEX_EXPENDABLE)addTo(purged.codex,await sweep(path.join(roots.codexHome,folder),cutoff,signal,only));
+  if(!store.active().length)for(const {folder,only} of AGENT_EXPENDABLE)addTo(purged.agent,await sweep(path.join(roots.agentHome,folder),cutoff,signal,only,folder==='.'));
   return purged;
 }
 
@@ -124,7 +121,7 @@ export function housekeeping(store:Store,signal?:AbortSignal):Promise<void>{
     try{await cleanup(store);}catch(e){log.warn({error:safeError(e)},'保留策略清理失败');}
     try{
       const purged=await purge(store,{signal});
-      if(purged.logs.files+purged.workspaces.files+purged.codex.files)log.info(purged,'已清理超过保留期的数据');
+      if(purged.logs.files+purged.workspaces.files+purged.agent.files)log.info(purged,'已清理超过保留期的数据');
     }catch(e){log.warn({error:safeError(e)},'过期数据清理失败');}
   })().finally(()=>{running=undefined;});
 }

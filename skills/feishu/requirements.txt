@@ -1,0 +1,2 @@
+# Only the hidden-browser login (authorize, logout --browser) needs this; the bridge, serve and doc fetch use the standard library alone.
+websockets==17.4

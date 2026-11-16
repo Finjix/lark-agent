@@ -1,0 +1,2 @@
+# audit-auto uses the Python standard library only (Python 3.11+); nothing to install.
+# ffmpeg is optional (FFMPEG or ffmpeg on the PATH): big videos are compressed to 720p before they are sent.

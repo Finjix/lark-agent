@@ -1,0 +1,11 @@
+{
+  "jobs": [
+    {
+      "name": "audit-rules-sync",
+      "everyMinutes": 1440,
+      "timeoutMinutes": 30,
+      "command": "python",
+      "args": ["skills/audit-auto/scripts/audit.py", "rules", "sync"]
+    }
+  ]
+}

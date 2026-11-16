@@ -1,0 +1,228 @@
+{
+  "schema": 2,
+  "bridge_version": "feishu-sdk-bridge/1",
+  "identity": "user",
+  "probe_workbook": "K7p4s22qrhbwmRtut3Jc6XzOnCf",
+  "production_token": "FZAes3wMlhrwsztmxOacz2GnnOe",
+  "passed": [
+    "occupied_value",
+    "empty_formula",
+    "repeated_occupancy"
+  ],
+  "created_at": "2026-10-22T07:54:13.222Z",
+  "observations": [
+    {
+      "case": "occupied_value",
+      "rejection": "non_empty",
+      "before": [
+        [
+          "KEEP_EXISTING",
+          "=IF(1=1,\"\",\"\")"
+        ]
+      ],
+      "after": [
+        [
+          "KEEP_EXISTING",
+          "=IF(1=1,\"\",\"\")"
+        ]
+      ]
+    },
+    {
+      "case": "empty_formula",
+      "rejection": "non_empty",
+      "before": [
+        [
+          "KEEP_EXISTING",
+          "=IF(1=1,\"\",\"\")"
+        ]
+      ],
+      "after": [
+        [
+          "KEEP_EXISTING",
+          "=IF(1=1,\"\",\"\")"
+        ]
+      ]
+    },
+    {
+      "case": "repeated_occupancy",
+      "rejection": "non_empty",
+      "before": [
+        [
+          "KEEP_EXISTING",
+          "=IF(1=1,\"\",\"\")"
+        ]
+      ],
+      "after": [
+        [
+          "KEEP_EXISTING",
+          "=IF(1=1,\"\",\"\")"
+        ]
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "command": [
+        "info"
+      ],
+      "path": null,
+      "write": false,
+      "elapsed_ms": 0,
+      "ok": true
+    },
+    {
+      "command": [
+        "auth-status"
+      ],
+      "path": null,
+      "write": false,
+      "elapsed_ms": 1,
+      "ok": true
+    },
+    {
+      "command": [
+        "auth-check-scopes"
+      ],
+      "path": null,
+      "write": false,
+      "elapsed_ms": 1,
+      "ok": true
+    },
+    {
+      "command": [
+        "auth-check-scopes"
+      ],
+      "path": null,
+      "write": false,
+      "elapsed_ms": 1,
+      "ok": true
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/wiki/v2/spaces/get_node",
+      "write": false,
+      "elapsed_ms": 395,
+      "ok": true
+    },
+    {
+      "command": [
+        "sheets-create"
+      ],
+      "path": null,
+      "write": true,
+      "elapsed_ms": 1160,
+      "ok": true
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v3/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/sheets/query",
+      "write": false,
+      "elapsed_ms": 291,
+      "ok": true
+    },
+    {
+      "command": [
+        "sheets-cells-set"
+      ],
+      "path": null,
+      "write": true,
+      "elapsed_ms": 534,
+      "ok": true
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 570,
+      "ok": true
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 179,
+      "ok": true
+    },
+    {
+      "command": [
+        "sheets-cells-set"
+      ],
+      "path": null,
+      "write": true,
+      "elapsed_ms": 264,
+      "ok": false
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 178,
+      "ok": true
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 190,
+      "ok": true
+    },
+    {
+      "command": [
+        "sheets-cells-set"
+      ],
+      "path": null,
+      "write": true,
+      "elapsed_ms": 267,
+      "ok": false
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 178,
+      "ok": true
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 171,
+      "ok": true
+    },
+    {
+      "command": [
+        "sheets-cells-set"
+      ],
+      "path": null,
+      "write": true,
+      "elapsed_ms": 255,
+      "ok": false
+    },
+    {
+      "command": [
+        "api-get"
+      ],
+      "path": "/open-apis/sheets/v2/spreadsheets/K7p4s22qrhbwmRtut3Jc6XzOnCf/values_batch_get",
+      "write": false,
+      "elapsed_ms": 223,
+      "ok": true
+    }
+  ],
+  "receipt_id": "f2c9b6ba8c8ec9f1a7b7fe46820a7737fb83f04e776805bddd51f66491de50a3"
+}

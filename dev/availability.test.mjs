@@ -1,38 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {EventEmitter} from 'node:events';
 import {Store} from '../dist/storage/database.js';
-import {TaskService,UNAVAILABLE} from '../dist/tasks/service.js';
+import {TaskService} from '../dist/tasks/service.js';
+import {BOT_DOWN as UNAVAILABLE} from '../dist/types.js';
 import {Scheduler,canSchedule} from '../dist/tasks/scheduler.js';
 import {clockOffset} from '../dist/feishu/clock.js';
 
 const message=(id,user='u1',extra={})=>({tenant:'t',user,chat:'c',message:id,text:'hi',isGroup:false,...extra});
 const notices=store=>store.db.prepare("SELECT payload FROM delivery_outbox WHERE kind='NOTICE' ORDER BY rowid").all().map(r=>JSON.parse(r.payload));
 function setup(ready){
-  const store=new Store(':memory:'),codex=Object.assign(new EventEmitter(),{ready}),service=new TaskService(store,codex);
-  service.authorized=()=>true;return {store,codex,service};
+  const store=new Store(':memory:'),agent={ready},service=new TaskService(store,agent);
+  service.authorized=()=>true;return {store,agent,service};
 }
 
-test('while Codex is unavailable nothing is queued; the user gets one plain refusal, never a promise to run later',async()=>{
-  const {store,codex,service}=setup(false);
+test('while the agent is unavailable nothing is queued; the user gets one plain refusal, never a promise to run later',async()=>{
+  const {store,agent,service}=setup(false);
   await service.receive(message('m1'));await service.receive(message('m1'));await service.receive(message('m2'));
   assert.equal(store.list().length,0,'no task is created');
   const sent=notices(store);assert.equal(sent.length,2,'one refusal per message, none for a redelivered event');
   assert(sent.every(n=>n.text===UNAVAILABLE));assert(!sent.some(n=>/已收到|恢复后|无需重新发送|前面还有/.test(n.text)));
-  codex.ready=true;await service.receive(message('m3'));assert.equal(store.list().length,1,'works again as soon as Codex is back');
+  agent.ready=true;await service.receive(message('m3'));assert.equal(store.list().length,1,'works again as soon as the agent is back');
   store.close();
 });
 
-test('with Codex ready nothing extra is sent, for one user or several',async()=>{
+test('with the agent ready nothing extra is sent, for one user or several',async()=>{
   const {store,service}=setup(true);
   await service.receive(message('a1'));await service.receive(message('b1','u2'));await service.receive(message('c1','u3'));
   assert.equal(store.list().length,3);assert.equal(notices(store).length,0);
   store.close();
 });
 
-test('a redelivered event for a task that already exists is not refused while Codex is down',async()=>{
-  const {store,codex,service}=setup(true);
-  await service.receive(message('m1'));codex.ready=false;await service.receive(message('m1'));
+test('a redelivered event for a task that already exists is not refused while the agent is down',async()=>{
+  const {store,agent,service}=setup(true);
+  await service.receive(message('m1'));agent.ready=false;await service.receive(message('m1'));
   assert.equal(store.list().length,1);assert.equal(notices(store).length,0);
   store.close();
 });
@@ -46,9 +46,9 @@ test('messages sent before this service started are ignored, later ones run',asy
   store.close();
 });
 
-test('a task whose Codex process cannot be started fails at once instead of waiting in a queue',async()=>{
-  const {store,codex,service}=setup(true);
-  codex.run=async function*(){throw Error('spawn codex ENOENT');};
+test('a task whose agent cannot be started fails at once instead of waiting in a queue',async()=>{
+  const {store,agent,service}=setup(true);
+  agent.run=async function*(){throw Error('No API key found for openai-codex');};
   await service.receive(message('m1'));const [task]=store.list();
   store.transition(task.id,'STARTING',{started_at:Date.now()});
   await service.start(store.get(task.id));
@@ -71,7 +71,7 @@ test('starting the service voids what the last run left behind: queued tasks, un
   store.enqueue('notice:1',null,'NOTICE',{chat:'c',message:'q',text:'late'});
   store.enqueue(`file:${done.id}`,done.id,'FILE',{});store.db.prepare("UPDATE delivery_outbox SET status='RETRYING' WHERE id=?").run(`view:${done.id}`);
   const result=store.discardLeftovers();
-  assert.equal(result.cancelled,1);assert.equal(store.get(queued.id).status,'CANCELLED');assert.equal(store.get(running.id).status,'FAILED','its Codex process died with the last run');
+  assert.equal(result.cancelled,1);assert.equal(store.get(queued.id).status,'CANCELLED');assert.equal(store.get(running.id).status,'FAILED','its turn died with the last run');
   const status=id=>store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(id).status;
   assert.equal(status('notice:1'),'FAILED');assert.equal(status(`file:${done.id}`),'FAILED');assert.equal(status(`view:${done.id}`),'FAILED');
   assert.equal(status(`view:${running.id}`),'PENDING','its card is finished, not left at "running"');
@@ -88,15 +88,15 @@ test('markdown images never reach a card: Feishu rejects the whole card for a da
   assert.equal(renderTask({status:'COMPLETED',progress:'',result:'![a](data:image/png;base64,AAAA)',error:''}),'本轮已完成。');
 });
 
-test('every unavailable case tells the user the same one sentence, and nothing about Codex internals',async()=>{
+test("every unavailable case tells the user the same one sentence, and nothing about the agent's internals",async()=>{
   const {BOT_DOWN}=await import('../dist/types.js');
-  assert.equal(BOT_DOWN,'机器人罢工了，请联系 @钟丰骏-实习生');assert.equal(UNAVAILABLE,BOT_DOWN);
-  const {store,codex,service}=setup(true);
-  codex.run=async function*(){throw Error('Codex Exec exited with code 1: 401 Unauthorized');};
+  assert.equal(BOT_DOWN,'机器人罢工了，请联系 @钟丰骏-实习生');
+  const {store,agent,service}=setup(true);
+  agent.run=async function*(){throw Error('401 Unauthorized');};
   await service.receive(message('m1'));const [task]=store.list();
   store.transition(task.id,'STARTING',{started_at:Date.now()});await service.start(store.get(task.id));
   assert.equal(store.get(task.id).error,BOT_DOWN);assert(!JSON.stringify(store.get(task.id)).includes('Unauthorized'),'the cause is for the log');
-  codex.ready=false;await service.receive(message('m2','u2'));assert.equal(notices(store).at(-1).text,BOT_DOWN);
+  agent.ready=false;await service.receive(message('m2','u2'));assert.equal(notices(store).at(-1).text,BOT_DOWN);
   store.close();
 });
 

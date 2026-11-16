@@ -7,7 +7,6 @@ import {terminal,type Task} from '../types.js';
 import {FeishuClient,FeishuError} from './client.js';
 import {cardJson,renderTask,messageSummary,working,elapsedSeconds} from './cards.js';
 import {safeError,log} from '../log.js';
-import {stageGeneratedImage} from './images.js';
 
 /** Runs calls one at a time, at most `cap` starts per sliding `interval` ms. */
 export class RateGate {
@@ -34,10 +33,10 @@ export async function ownedArtifact(workspace:string,candidate:string){
   return {path:file,name:path.basename(file),size:stat.size};
 }
 /**
- * Files Codex put in its working folder while this task ran: new or changed between its start and end (a file copied there counts
+ * Files the agent put in its working folder while this task ran: new or changed between its start and end (a file copied there counts
  * by its creation time). No dotfiles or symlinks, a few levels deep, capped so a stray tree cannot flood the chat.
  */
-// The attachments the user sent live in the workspace's input/ and are not Codex's output.
+// The attachments the user sent live in the workspace's input/ and are not the agent's output.
 const MAX_UNLINKED=10,SLACK_MS=2000,INPUT_DIR='input';
 export async function outputFiles(root:string,window?:{from:number;to:number}){
   const found:string[]=[];
@@ -87,7 +86,7 @@ export class Delivery {
     const files=this.pumpFiles();
     if(this.busy){await files;return;}this.busy=true;
     try{
-      // Refresh the timer even when Codex has no new text. Preserve retry backoff and failures.
+      // Refresh the timer even when the agent has no new text. Preserve retry backoff and failures.
       for(const task of this.store.active())if(working(task)&&this.renderedSeconds.get(task.id)!==elapsedSeconds(task)){
         const row=this.store.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`) as {status:string}|undefined;
         if(row?.status==='DELIVERED')this.store.enqueue(`view:${task.id}`,task.id,'VIEW',{});
@@ -182,18 +181,9 @@ export class Delivery {
       this.store.enqueue(id,task.id,'NOTICE',{chat:task.chat_id,message:task.source_message_id,text:`任务 ${task.id} 的附件未发送：${name}
 ${reason}`});
     };
-    const images=this.store.images(task.id);
-    if(!task.workspace_path){for(const image of images)reject(`codex-image-${image.id}.png`,Error('生成图片缺少交付目录'));return;}
-    // A reply often shows a generated image by its path in Codex's image folder. That image is already delivered from its staged copy, so the link is not a second file.
-    const sources=new Set(images.flatMap(i=>i.savedPath?[path.resolve(i.savedPath).toLowerCase()]:[]));
-    const paths=new Map(artifactLinks(task.result).filter(p=>!sources.has(path.resolve(p).toLowerCase())).map(p=>[p,'file']));
-    for(const image of images){
-      const name=`codex-image-${image.id}.png`;
-      try{
-        const staged=this.store.db.prepare('SELECT path FROM task_artifacts WHERE task_id=? AND name=?').get(task.id,name) as {path:string}|undefined;
-        paths.set(staged?.path??await stageGeneratedImage(task,image),'image');
-      }catch(e){reject(name,e);}
-    }
+    if(!task.workspace_path)return;
+    const image=(file:string)=>/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file';
+    const paths=new Map(artifactLinks(task.result).map(p=>[p,'file']));
     if(Buffer.byteLength(task.result)>12000){
       const file=path.join(task.workspace_path,`lark-result-${task.id}.md`);
       try{
@@ -202,8 +192,8 @@ ${reason}`});
         paths.set(file,'file');
       }catch(e){reject(path.basename(file),e);}
     }
-    // The workspace is the delivery folder: whatever Codex created or changed there during the task goes out even if the reply forgot to link it.
-    for(const file of await outputFiles(task.workspace_path,{from:task.started_at??task.created_at,to:task.finished_at??Date.now()}))if(!paths.has(file))paths.set(file,/\.(png|jpe?g|gif|webp)$/i.test(file)?'image':'file');
+    // The workspace is the delivery folder: whatever the agent created or changed there during the task goes out even if the reply forgot to link it.
+    for(const file of await outputFiles(task.workspace_path,{from:task.started_at??task.created_at,to:task.finished_at??Date.now()}))if(!paths.has(file))paths.set(file,image(file));
     for(const [candidate,requestedKind] of paths){
       try{
         // A reply links all sorts of things (the user's own attachment, a site path); only what is meant to be in the delivery folder can fail loudly.

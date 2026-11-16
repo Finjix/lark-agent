@@ -12,16 +12,16 @@ import {cleanup} from '../dist/maintenance.js';
 const input=(message,user='u1')=>({tenant_key:'t1',user_id:user,chat_id:'c',source_message_id:message,instruction:'任务 '+message});
 const notices=s=>s.due().filter(r=>r.kind==='NOTICE').map(r=>JSON.parse(r.payload).text);
 
-test('an image that cannot be staged is reported while the final reply is still delivered',async()=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'review-image-')),s=new Store(':memory:'),task=s.create(input('img')).task;
-  s.transition(task.id,'COMPLETED',{started_at:task.created_at,workspace_path:dir,thread_id:'thr',result:'这是最终答案'});
-  s.recordImages(task.id,[{id:'img1',savedPath:path.join(dir,'elsewhere.png')}]);
+test('a linked file that cannot be sent is reported while the final reply is still delivered',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'review-file-')),s=new Store(':memory:'),task=s.create(input('img')).task;
+  const folder=path.join(dir,'素材');await fs.mkdir(folder);
+  s.transition(task.id,'COMPLETED',{started_at:task.created_at,workspace_path:dir,thread_id:'thr',result:`这是最终答案，见 [素材](<${folder}>)`});
   const calls=[],fake={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>({message_id:'m'})};
   const delivery=new Delivery(s,fake);await delivery.tick();
   const final=calls.filter(c=>c.method==='PUT'&&c.data.card).map(c=>JSON.parse(c.data.card.data)).at(-1);
-  assert.equal(final.body.elements[0].content,'这是最终答案');
+  assert.match(final.body.elements[0].content,/^这是最终答案/);
   assert.equal(s.db.prepare('SELECT status FROM delivery_outbox WHERE id=?').get(`view:${task.id}`).status,'DELIVERED');
-  assert(notices(s).some(t=>t.includes('codex-image-img1.png')&&t.includes('附件未发送')));
+  assert(notices(s).some(t=>t.includes('素材')&&t.includes('附件未发送')&&t.includes('不是文件')));
   await delivery.tick();await delivery.tick(); // reported once, not on every pass
   assert.equal(s.db.prepare("SELECT count(*) c FROM delivery_outbox WHERE kind='NOTICE'").get().c,1);
   assert.equal(s.db.prepare("SELECT status FROM delivery_outbox WHERE kind='NOTICE'").get().status,'DELIVERED');

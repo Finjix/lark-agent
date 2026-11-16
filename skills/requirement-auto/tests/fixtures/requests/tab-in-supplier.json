@@ -1,0 +1,34 @@
+{
+  "groups": [
+    {
+      "brief": "测试需求一",
+      "cls": {
+        "direction": "方向一",
+        "task_type": "creative_a"
+      },
+      "creative_form": "视频",
+      "keyword": "新爆点",
+      "material_name": "GOFCN1004_玩法_卖点_视频_新爆点",
+      "quantity": 2,
+      "reviewer": "张三",
+      "script_url": "https://centurygames.feishu.cn/docx/ABC123def",
+      "supplier": "a\tb"
+    },
+    {
+      "brief": "测试需求二",
+      "cls": {
+        "currency": "USD",
+        "direction": "方向一",
+        "quotation": "100.50",
+        "task_type": "creative_a"
+      },
+      "creative_form": "图文",
+      "keyword": "另一个",
+      "material_name": "画面_体验_图文_另一个",
+      "quantity": 1,
+      "reviewer": "李四",
+      "script_url": "https://centurygames.feishu.cn/wiki/XYZ789",
+      "supplier": "供应商甲"
+    }
+  ]
+}

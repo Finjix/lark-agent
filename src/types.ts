@@ -11,7 +11,7 @@ export const waiting = (status: string) => (waitingStates as readonly string[]).
 const sqlList = (states: readonly string[]) => `(${states.map(s=>`'${s}'`).join(',')})`;
 /** The terminal and the waiting states as SQL lists. */
 export const TERMINAL_SQL = sqlList(terminalStates), WAITING_SQL = sqlList(waitingStates);
-/** The one thing users are told whenever the bot cannot do its job (Codex unavailable or failing, attachments failing); the cause goes to the log. */
+/** The one thing users are told whenever the bot cannot do its job (the agent unavailable or failing, attachments failing); the cause goes to the log. */
 export const BOT_DOWN = '机器人罢工了，请联系 @钟丰骏-实习生';
 export interface Task {
   id: string; tenant_key: string; user_id: string; chat_id: string; source_message_id: string;
@@ -23,22 +23,19 @@ export interface Task {
   session_id:string|null;
 }
 /**
- * One thing that happened in a turn, in the order it did: what Codex said, a command it ran, files it changed, a tool, a search, its to-do
- * list, and what the user added while it ran (`user`, with the names of the files that came with it). Stored with the task as JSON.
+ * One thing that happened in a turn, in the order it did: what the agent said, a command it ran, files it wrote or edited, another tool it used,
+ * and what the user added while it ran (`user`, with the names of the files that came with it). Stored with the task as JSON.
  */
 export type Step =
   | {id:string;type:'message';text:string;commentary?:true}
   | {id:string;type:'user';text:string;files:string[]}
   | {id:string;type:'command';command:string;output:string;status:'running'|'done'|'failed';exit?:number}
   | {id:string;type:'files';changes:{path:string;kind:string}[];status:'done'|'failed'}
-  | {id:string;type:'tool';server:string;tool:string;args:string;result:string;status:'running'|'done'|'failed'}
-  | {id:string;type:'search';query:string}
-  | {id:string;type:'todo';items:{text:string;completed:boolean}[]};
+  | {id:string;type:'tool';tool:string;args:string;result:string;status:'running'|'done'|'failed'};
 export interface UserSession {
   id:string;tenant_key:string;user_id:string;thread_id:string|null;workspace_path:string|null;created_at:number;
   display_name:string|null;retired_at:number|null;
 }
-export interface GeneratedImage {id:string;savedPath:string;}
 export interface IncomingMessage {
   tenant: string; user: string; chat: string; message: string; text: string; createdAt?: number;
   /** What kind of chat it came from, as the event says: 'p2p' or 'group'. */

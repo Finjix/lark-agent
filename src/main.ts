@@ -2,11 +2,13 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
+import {getShellConfig} from '@earendil-works/pi-coding-agent';
 import {config,ensureDirectories,restrictSecret} from './config.js';
 import {log,safeError} from './log.js';
 import {Store} from './storage/database.js';
-import {CodexRunner,codexCli,codexOutput} from './codex/runner.js';
-import {syncPlugins,inspectPlugins,discover,type Skipped} from './plugins.js';
+import {AgentRunner} from './agent/runner.js';
+import {login,logout} from './agent/login.js';
+import {ensurePython,pythonStatus} from './python.js';
 import {Jobs,declaredJobs} from './jobs.js';
 import {FeishuClient} from './feishu/client.js';
 import {TaskService} from './tasks/service.js';
@@ -21,6 +23,25 @@ import {supervise} from './supervisor.js';
 const FEISHU_STALE_MS=3*60000;
 /** How often the service writes that it is alive, so a silent log can be told apart from a silent service. */
 const HEARTBEAT_MS=30*60000;
+const COMMANDS='start、serve、setup、login [device]、logout、doctor、stop、backup、retry-delivery';
+
+async function doctor(agent:AgentRunner){
+  const store=new Store(config.database);
+  const shell=(()=>{try{return {ok:true,path:getShellConfig().shell};}catch(e){return {ok:false,error:safeError(e)};}})();
+  await agent.probe();
+  const skills=agent.loadSkills(),{jobs,invalid}=await declaredJobs();
+  const checks:any={
+    runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
+    sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length},
+    agent:{ready:agent.ready,pi:agent.version,model:`${agent.provider}/${agent.modelId}`,thinking:agent.thinking,home:config.agentHome,...(agent.error?{error:agent.error}:{})},
+    shell,python:await pythonStatus(),
+    skills:skills.map(s=>({name:s.name,path:path.relative(config.root,s.baseDir)})),
+    jobs:[...jobs.map(j=>({name:j.name,everyMinutes:j.everyMinutes})),...invalid.map(reason=>({invalid:reason}))],
+  };
+  if(checks.configuration.credentials){try{const info=await new FeishuClient().raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
+  store.close();console.log(JSON.stringify(checks,null,2));
+  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
+}
 
 async function main(){
   ensureDirectories();const action=process.argv[2]??'start';
@@ -29,11 +50,15 @@ async function main(){
     const response=await fetch(`http://127.0.0.1:${config.HEALTH_PORT}/shutdown`,{method:'POST',headers:{authorization:`Bearer ${token}`}});
     if(!response.ok)throw Error(`停止请求失败：${response.status}`);console.log('已请求安全停止');return;
   }
-  // The Codex CLI of this project, with the project's own Codex home: `start.cmd codex plugin ...`, `start.cmd codex --version`, ...
-  if(action==='codex'){process.exitCode=await codexCli(process.argv.slice(3));return;}
+  // The skills' Python packages are made ready before the service starts, outside the supervisor's patience for a service that does not answer.
+  if(action==='setup'){await ensurePython();console.log(`Python 环境已就绪：${config.venv}`);return;}
   // `start` runs the service under a supervisor that restarts it when it stops answering; `serve` is the service itself.
-  if(action==='start'){process.exitCode=await supervise();return;}
-  const store=new Store(config.database),codex=new CodexRunner();
+  if(action==='start'){await ensurePython();process.exitCode=await supervise();return;}
+  const agent=new AgentRunner();
+  if(action==='login'){await login(agent,process.argv[3]==='device'?'device':'browser');agent.close();return;}
+  if(action==='logout'){await logout(agent);agent.close();return;}
+  if(action==='doctor'){await doctor(agent);agent.close();return;}
+  const store=new Store(config.database);
   if(action==='retry-delivery'){
     const id=process.argv[3];if(!id)throw Error('请指定任务 ID 或明确传入 all');
     const sql="UPDATE delivery_outbox SET status='PENDING',next_attempt_at=0,version=version+1 WHERE status IN ('FAILED','RETRYING')";
@@ -43,24 +68,7 @@ async function main(){
   if(action==='backup'){
     const file=path.join(config.data,`backup-${Date.now()}.sqlite`);await store.db.backupTo(file);store.close();console.log(file);return;
   }
-  if(action==='doctor'){
-    const checks:any={runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
-      sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length}};
-    await codex.probe();
-    // What `start` would do with each folder in plugins/ (nothing is installed or changed here).
-    checks.plugins=await inspectPlugins().catch(e=>[{folder:'',state:'invalid',reason:safeError(e)}]);
-    // The periodic jobs the plugins in plugins/ declare (lark-agent.json), as `start` would run them.
-    checks.jobs=[];
-    for(const p of (await discover().catch(()=>({found:[]}))).found){
-      const {jobs,invalid}=await declaredJobs({name:p.name,path:path.join(config.plugins,p.folder)});
-      checks.jobs.push(...jobs.map(j=>({plugin:j.plugin,name:j.name,everyMinutes:j.everyMinutes})),...invalid.map(reason=>({plugin:p.name,invalid:reason})));
-    }
-    checks.codex={ready:codex.ready,version:codex.version,home:config.codexHome,model:'AI 网关（.codex/config.toml）',...(codex.error?{error:codex.error}:{})};
-    if(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET){try{const f=new FeishuClient();const info=await f.raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
-    store.close();console.log(JSON.stringify(checks,null,2));
-    if(!checks.runtime.ok||!codex.ready||!checks.configuration.credentials||!accessConfigured()||checks.plugins.some((p:any)=>p.state==='invalid'))process.exitCode=1;return;
-  }
-  if(action!=='serve')throw Error('支持命令：start、serve、codex、doctor、stop、backup、retry-delivery');
+  if(action!=='serve'){store.close();throw Error(`支持命令：${COMMANDS}`);}
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
@@ -68,12 +76,11 @@ async function main(){
   // Housekeeping is told to stop and awaited on shutdown, so it never meets a closed database.
   const halt=new AbortController();let sweeping:Promise<void>=Promise.resolve();
   const housekeep=()=>{sweeping=housekeeping(store,halt.signal);};
-  let feishuStarted=false,lastFeishuAttempt=0,lastCodexProbe=0,lastCodexError='',lastClockSync=0;
+  let feishuStarted=false,lastFeishuAttempt=0,lastAgentProbe=0,lastAgentError='',lastClockSync=0;
   // For the supervisor: when the last round of checks finished. A round that never finishes means something in it hangs.
   let lastPoll=0,feishuState='idle',feishuDownSince=0,lastHeartbeat=Date.now();
-  let pluginsSkipped:Skipped[]=[];
   const token=randomBytes(32).toString('hex'),feishu=new FeishuClient();
-  const service=new TaskService(store,codex,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu),jobs=new Jobs();
+  const service=new TaskService(store,agent,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu),jobs=new Jobs();
   const server=http.createServer((request,response)=>{
     response.setHeader('Content-Type','application/json; charset=utf-8');response.setHeader('Cache-Control','no-store');
     if(request.headers.origin){response.writeHead(403).end('{}');return;}
@@ -83,15 +90,18 @@ async function main(){
       response.end('{"stopping":true}');void stop();return;
     }
     if(request.method!=='GET'||!['/health','/ready'].includes(request.url??'')){response.writeHead(404).end('{}');return;}
-    const ready=codex.ready&&feishu.connected&&accessConfigured();
-    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},uptimeMs:Math.round(process.uptime()*1000),pollAgeMs:lastPoll?Date.now()-lastPoll:null,codex:{ready:codex.ready,version:codex.version,error:codex.error},plugins:{loaded:codex.plugins.map(p=>({name:p.name,version:p.version})),skipped:pluginsSkipped,jobs:jobs.status()},feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
+    const ready=agent.ready&&feishu.connected&&accessConfigured();
+    response.writeHead(request.url==='/ready'&&!ready?503:200).end(JSON.stringify({ready,access:{mode:config.tenants.length?'tenant':'users',tenantCount:config.tenants.length},
+      uptimeMs:Math.round(process.uptime()*1000),pollAgeMs:lastPoll?Date.now()-lastPoll:null,
+      agent:{ready:agent.ready,pi:agent.version,model:`${agent.provider}/${agent.modelId}`,error:agent.error},skills:agent.skills.map(s=>s.name),jobs:jobs.status(),
+      feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
     if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);halt.abort();server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
-    // Codex runs as a child of this service and ends with it: the tasks are finished as failed, and one last delivery pass finishes their cards.
+    // The agent runs in this service and ends with it: the tasks are finished as failed, and one last delivery pass finishes their cards.
     service.stop();await jobs.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
-    feishu.close();codex.close();store.close();
+    feishu.close();agent.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
     // The last lines still go to the console; one that has stalled must not keep the process from ending.
     setTimeout(()=>process.exit(),5000).unref();
@@ -105,13 +115,10 @@ async function main(){
   const leftovers=store.discardLeftovers();if(leftovers.cancelled||leftovers.dropped||leftovers.interrupted)log.info(leftovers,'已作废上次运行遗留的任务和未送达消息');
   // The first round runs before anything can start: no task is running yet, so nothing is skipped.
   housekeep();await sweeping;
-  // What was dropped into plugins/ is installed before any task can run, so every turn has it. A plugin that fails is reported and left out; the bot runs without it.
-  const loaded=await syncPlugins(codexOutput);codex.plugins=loaded.plugins;pluginsSkipped=loaded.skipped;
-  if(loaded.plugins.length)log.info({plugins:loaded.plugins.map(p=>`${p.name}@${p.version}`)},'插件已就绪');
-  // The plugins' periodic jobs run from their installed copies, first a couple of minutes from now.
-  const declared=await Promise.all(loaded.plugins.map(p=>declaredJobs(p)));
-  declared.forEach((d,i)=>{for(const reason of d.invalid)log.warn({plugin:loaded.plugins[i].name,reason},'插件定时任务无效，已跳过');});
-  jobs.start(declared.flatMap(d=>d.jobs));
+  const skills=agent.loadSkills();log.info({skills:skills.map(s=>s.name)},skills.length?'技能已就绪':'skills/ 里没有技能');
+  const declared=await declaredJobs();
+  for(const reason of declared.invalid)log.warn({reason},'定时任务无效，已跳过');
+  jobs.start(declared.jobs);
   scheduler.start();delivery.start();
   let polling=false;
   const reconnect=async()=>{
@@ -121,11 +128,11 @@ async function main(){
         lastClockSync=Date.now();
         void clockOffset().then(offset=>{service.clockOffsetMs=offset;if(Math.abs(offset)>5000)log.warn({offsetMs:Math.round(offset)},'本机时钟与飞书相差较大，已按飞书时间判断消息是否过期，请校准系统时间');}).catch(e=>log.debug({error:safeError(e)},'读取飞书时间失败'));
       }
-      // Not ready: look again every few seconds, so a fix made meanwhile is noticed. Ready: look now and then, so a breakage is too.
-      if(Date.now()-lastCodexProbe>(codex.ready?60000:10000)){
-        lastCodexProbe=Date.now();const was=codex.ready;await codex.probe();
-        if(codex.ready&&!was){log.info({version:codex.version,home:config.codexHome},'Codex 已就绪');lastCodexError='';}
-        else if(!codex.ready&&codex.error!==lastCodexError){lastCodexError=codex.error;log.warn({error:codex.error},'等待 Codex 就绪');}
+      // Not ready: look again every few seconds, so a login made meanwhile is noticed. Ready: look now and then, so a lost one is too.
+      if(Date.now()-lastAgentProbe>(agent.ready?60000:10000)){
+        lastAgentProbe=Date.now();const was=agent.ready;await agent.probe();
+        if(agent.ready&&!was){log.info({pi:agent.version,model:`${agent.provider}/${agent.modelId}`},'智能体已就绪');lastAgentError='';}
+        else if(!agent.ready&&agent.error!==lastAgentError){lastAgentError=agent.error;log.warn({error:agent.error},'等待智能体就绪');}
       }
       const state=feishuStarted?feishu.state:'idle';
       if(feishuStarted&&state!==feishuState){
@@ -143,7 +150,7 @@ async function main(){
       }
       if(Date.now()-lastHeartbeat>=HEARTBEAT_MS){
         lastHeartbeat=Date.now();
-        log.info({feishu:state,codex:codex.ready,running:service.running,rssMB:Math.round(process.memoryUsage().rss/1048576)},'服务运行中');
+        log.info({feishu:state,agent:agent.ready,running:service.running,rssMB:Math.round(process.memoryUsage().rss/1048576)},'服务运行中');
       }
       if(!feishuStarted&&Date.now()-lastFeishuAttempt>15000){lastFeishuAttempt=Date.now();
         try{await feishu.start(message=>service.receive(message));feishuStarted=true;feishuDownSince=feishu.connected?0:Date.now();log.info('飞书长连接已启动');}
@@ -152,7 +159,7 @@ async function main(){
   };
   poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);
   maintain=setInterval(housekeep,86400000);
-  log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书 Codex 机器人已启动');
+  log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书机器人已启动');
   if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭；未获授权的人发消息时，机器人会回复他的 Open ID 和租户');
   await reconnect();
 }

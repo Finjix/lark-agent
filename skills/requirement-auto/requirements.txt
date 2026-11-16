@@ -1,0 +1,1 @@
+# requirement-auto needs only the Python standard library (3.11+); nothing to install.

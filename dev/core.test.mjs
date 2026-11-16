@@ -8,7 +8,6 @@ import {canSchedule,Scheduler} from '../dist/tasks/scheduler.js';
 import {TaskService} from '../dist/tasks/service.js';
 import {ownedArtifact,artifactLinks,outputFiles,Delivery} from '../dist/feishu/delivery.js';
 import {cardJson,renderTask,limitText} from '../dist/feishu/cards.js';
-import {EventEmitter} from 'node:events';
 import {sanitizedFeishuError,FeishuClient} from '../dist/feishu/client.js';
 
 function input(message='m1',user='u1',tenant='t1'){return {tenant_key:tenant,user_id:user,chat_id:'chat-'+user,source_message_id:message,instruction:'任务 '+message};}
@@ -57,7 +56,7 @@ test('equal-timestamp messages serialize per user and a blocked user does not bl
   const tasks=['A','A','A','B','C'].map((user,i)=>s.create(input('fifo-'+i,user)).task);
   for(const t of tasks)s.update(t.id,{created_at:1000});
   assert.deepEqual(s.list('QUEUED').map(t=>t.id),tasks.map(t=>t.id));
-  const service=new TaskService(s,Object.assign(new EventEmitter(),{ready:true}));service.start=()=>new Promise(resolve=>releases.push(resolve));
+  const service=new TaskService(s,{ready:true});service.start=()=>new Promise(resolve=>releases.push(resolve));
   const scheduler=new Scheduler(service);scheduler.tick();
   assert.deepEqual(s.active().map(t=>t.id),[tasks[0].id,tasks[3].id,tasks[4].id]);
   await new Promise(r=>setImmediate(r));for(const release of releases)release();await scheduler.stop();s.close();
@@ -67,7 +66,7 @@ test('scheduler launches every independent user without a numeric cap and stop a
   const s=memory(),releases=[],started=[];
   const tasks=Array.from({length:24},(_,i)=>s.create(input(`parallel-${i}`,`user-${i}`)).task);
   const next=s.create(input('same-user-next','user-0')).task;
-  const service={store:s,codex:{ready:true},paused:()=>false,start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
+  const service={store:s,agent:{ready:true},paused:()=>false,start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
   const scheduler=new Scheduler(service);scheduler.tick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(started.length,24);assert.equal(s.active().length,24);assert.equal(s.get(next.id).status,'QUEUED');
   scheduler.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(started.length,24);
@@ -124,7 +123,7 @@ test('working card shows only the requested status and seconds, and drops it whe
   s.close();
 });
 
-test('timer refreshes without new Codex output, reuses the message, and respects delivery retry backoff',async()=>{
+test('timer refreshes without new output from the agent, reuses the message, and respects delivery retry backoff',async()=>{
   const s=memory(),task=s.create(input()).task,calls=[];let fail=false,replies=0;
   const fake={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});if(fail)throw Error('network down');return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>{replies++;return {message_id:'message'};}};
   const delivery=new Delivery(s,fake);
@@ -141,7 +140,7 @@ test('timer refreshes without new Codex output, reuses the message, and respects
   const after=calls.length;await delivery.tick();assert.equal(calls.length,after);assert.equal(replies,1);
   await delivery.stop();s.close();
 });
-test('outbox retries delivery without calling Codex and serializes card sequences',async()=>{
+test('outbox retries delivery without calling the agent and serializes card sequences',async()=>{
   const s=memory(),task=s.create(input()).task;s.transition(task.id,'COMPLETED',{result:'ok'});let fail=true;const sequences=[];
   const fake={connected:true,raw:async(method,url,data)=>{if(fail){fail=false;throw Error('network down');}if(url.endsWith('/cards'))return {card_id:'card'};sequences.push(data.sequence);return {};},reply:async()=>({message_id:'reply'})};
   const delivery=new Delivery(s,fake);await delivery.tick();assert.equal(s.get(task.id).status,'COMPLETED');
@@ -156,7 +155,7 @@ test('a link to a file outside the delivery folder is ignored without a notice a
   const delivery=new Delivery(s,f);await delivery.tick();assert.equal(s.db.prepare("SELECT count(*) c FROM delivery_outbox WHERE kind='NOTICE'").get().c,0,'no notice');assert.equal(s.db.prepare('SELECT count(*) c FROM task_artifacts').get().c,0);assert.equal(uploaded,false);
   await delivery.stop();s.close();await fs.rm(dir,{recursive:true});
 });
-test('whatever Codex leaves in the workspace is delivered even when the reply does not link it',async()=>{
+test('whatever the agent leaves in the workspace is delivered even when the reply does not link it',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-scan-')),workspace=path.join(dir,'workspace');
   await fs.mkdir(path.join(workspace,'sub'),{recursive:true});
   await fs.writeFile(path.join(workspace,'report.txt'),'r');await fs.writeFile(path.join(workspace,'sub','data.csv'),'d');await fs.writeFile(path.join(workspace,'chart.png'),'p');
@@ -185,7 +184,7 @@ test('a task owns only the files that appeared in its folder while it ran',async
   assert.deepEqual(await names({from:now-5000,to:now+5000}),['report.txt'],'created during the task');
   assert.deepEqual(await names({from:now-60000,to:now-30000}),[],'a file of a later task is not this task\'s');
   assert.deepEqual(await names({from:now+30000,to:now+60000}),[],'a file from before the task started is not sent again');
-  // A copy keeps the old modification time but is a new file, so asking Codex to resend something still works.
+  // A copy keeps the old modification time but is a new file, so asking the agent to resend something still works.
   const old=path.join(dir,'old.txt');await fs.writeFile(old,'o');const past=new Date(now-86400000);await fs.utimes(old,past,past);
   const copy=path.join(dir,'copy.txt');await fs.copyFile(old,copy);
   assert((await names({from:now-5000,to:now+5000})).includes('copy.txt'),'a copied file counts by when it was created here');

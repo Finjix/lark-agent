@@ -1,9 +1,8 @@
-import type {UserInput} from '@openai/codex-sdk';
-import type {Turn} from '../codex/turn.js';
+import type {Steer} from '../agent/runner.js';
+import type {Turn} from '../agent/turn.js';
 
-export type Steer=(input:UserInput[])=>Promise<void>;
 /**
- * How the user's further messages reach one task's turn. The turn offers a way in once Codex takes input and withdraws it when it can no longer
+ * How the user's further messages reach one task's turn. The turn offers a way in once it takes input and withdraws it when it can no longer
  * take any; the task closes it for good when it is over. Hand-overs wait until there is a way in and go one after another, so messages reach
  * the turn in the order they were sent.
  */

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {EventEmitter} from 'node:events';
 import {authorized,accessConfigured} from '../dist/access.js';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
@@ -27,7 +26,7 @@ test('the user allowlist applies when no tenant is set, and empty access configu
 });
 
 test('new enterprise members can create tasks; anybody else is refused, and told who they are so an administrator can add them',async()=>{
-  const store=new Store(':memory:'),service=new TaskService(store,new EventEmitter());service.authorized=m=>authorized(m,policy);
+  const store=new Store(':memory:'),service=new TaskService(store,{ready:true});service.authorized=m=>authorized(m,policy);
   await service.receive(message('first-member'));await service.receive(message('second-member'));
   assert.equal(store.list().length,2);
   const [first,second]=store.list();assert.notEqual(store.sessionFor(first).id,store.sessionFor(second).id);

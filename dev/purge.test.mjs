@@ -15,46 +15,43 @@ const write=async(file,text='x')=>{await fs.mkdir(path.dirname(file),{recursive:
 const exists=file=>fs.access(file).then(()=>true,()=>false);
 const input=(user,message=`m-${user}`)=>({tenant_key:'t',user_id:user,chat_id:'c',source_message_id:message,instruction:'x'});
 
-/** A project in a temporary folder: data, user/<name>/workspace for each name given, and a Codex home. */
+/** A project in a temporary folder: data, user/<name>/workspace for each name given, and pi's home. */
 async function project(...names){
   const base=await fs.mkdtemp(path.join(os.tmpdir(),'lark-purge-')),store=new Store(':memory:');
-  const roots={data:path.join(base,'data'),user:path.join(base,'user'),codexHome:path.join(base,'codex')};
+  const roots={data:path.join(base,'data'),user:path.join(base,'user'),agentHome:path.join(base,'.pi')};
   const workspace=name=>path.join(roots.user,name,'workspace');
   names.forEach((name,i)=>store.userDirName('t',`u${i+1}`,name));
   return {base,store,roots,workspace,done:async()=>{store.close();await fs.rm(base,{recursive:true,force:true});}};
 }
 
-test('what nobody touched for seven days goes from the logs, the workspaces and Codex\'s home; everything else stays',async()=>{
+test('what nobody touched for seven days goes from the logs, the workspaces and pi\'s home; everything else stays',async()=>{
   const p=await project('李小明','小红');
   const gone=[
     await write(path.join(p.roots.data,'logs','2026-10-01-1.jsonl')),
     await write(path.join(p.workspace('李小明'),'input','需求.pdf')),await write(path.join(p.workspace('李小明'),'a','b','c','deep.txt')),
     await write(path.join(p.workspace('李小明'),'.hidden','h')),await write(path.join(p.workspace('李小明'),'report.md')),await write(path.join(p.workspace('小红'),'x.png')),
-    await write(path.join(p.roots.codexHome,'sessions','2026','10','01','rollout-1.jsonl')),await write(path.join(p.roots.codexHome,'generated_images','thread','img.png')),
-    await write(path.join(p.roots.codexHome,'log','codex-login.log')),await write(path.join(p.roots.codexHome,'.sandbox','sandbox.2026-10-01.log')),
-    await write(path.join(p.roots.codexHome,'.tmp','plugins-clone','.git','objects','pack')),
+    await write(path.join(p.roots.agentHome,'sessions','2026-10-01T06-00-00-000Z_0198.jsonl')),await write(path.join(p.roots.agentHome,'crashes.json')),
   ];
   const kept=[
     await write(path.join(p.roots.data,'backup-1.sqlite')),await write(path.join(p.roots.data,'control.token')),await write(path.join(p.roots.data,'logs','notes.txt')),
-    ...['auth.json','config.toml','installation_id','state_5.sqlite','thread_history_1.sqlite'].map(name=>path.join(p.roots.codexHome,name)),
-    path.join(p.roots.codexHome,'.sandbox','setup.json'),path.join(p.roots.codexHome,'skills','.system','imagegen','SKILL.md'),path.join(p.roots.codexHome,'tmp','arg0','.lock'),
-    path.join(p.roots.user,'李小明','plugin-one','tokens.json'),
+    path.join(p.roots.agentHome,'auth.json'),path.join(p.roots.agentHome,'auth.json.lock','x'),path.join(p.roots.agentHome,'sessions','notes.txt'),
+    path.join(p.roots.agentHome,'other','crashes.json'),path.join(p.roots.user,'李小明','feishu','auth.json'),
   ];
   for(const file of kept)await write(file);
   try{
     const young=await purge(p.store,{roots:p.roots,now:after(6)});
-    assert.deepEqual([young.logs.files,young.workspaces.files,young.codex.files],[0,0,0],'not yet seven days');
+    assert.deepEqual([young.logs.files,young.workspaces.files,young.agent.files],[0,0,0],'not yet seven days');
     for(const file of [...gone,...kept])assert(await exists(file),file);
 
     const old=await purge(p.store,{roots:p.roots,now:after(8)});
-    assert.deepEqual([old.logs.files,old.workspaces.files,old.codex.files],[1,5,5]);
+    assert.deepEqual([old.logs.files,old.workspaces.files,old.agent.files],[1,5,2]);
     assert(old.workspaces.bytes>0);
     for(const file of gone)assert(!await exists(file),`${file} should be gone`);
     for(const file of kept)assert(await exists(file),`${file} should stay`);
     // The folders that held them are gone too, but the roots of what was swept are not.
-    assert(!await exists(path.join(p.workspace('李小明'),'a')));assert(!await exists(path.join(p.roots.codexHome,'sessions','2026')));
-    for(const root of [p.workspace('李小明'),p.workspace('小红'),path.join(p.roots.data,'logs'),path.join(p.roots.codexHome,'sessions'),path.join(p.roots.codexHome,'.sandbox')])assert(await exists(root),root);
-    assert.deepEqual(await purge(p.store,{roots:p.roots,now:after(8)}),{logs:{files:0,bytes:0},workspaces:{files:0,bytes:0},codex:{files:0,bytes:0}},'nothing left to do');
+    assert(!await exists(path.join(p.workspace('李小明'),'a')));assert(await exists(path.join(p.roots.agentHome,'other')),'only the files directly in pi\'s home are looked at');
+    for(const root of [p.workspace('李小明'),p.workspace('小红'),path.join(p.roots.data,'logs'),path.join(p.roots.agentHome,'sessions')])assert(await exists(root),root);
+    assert.deepEqual(await purge(p.store,{roots:p.roots,now:after(8)}),{logs:{files:0,bytes:0},workspaces:{files:0,bytes:0},agent:{files:0,bytes:0}},'nothing left to do');
   }finally{await p.done();}
 });
 
@@ -87,15 +84,15 @@ test('links are removed as links and never followed, and a linked workspace is n
   }finally{await fs.rm(p.workspace('外链'),{force:true}).catch(()=>{});await fs.rm(outside,{recursive:true,force:true});await p.done();}
 });
 
-test('a user with an unfinished task keeps their workspace; the files of Codex wait until no task is running',async()=>{
+test('a user with an unfinished task keeps their workspace; pi\'s chats wait until no task is running',async()=>{
   const p=await project('忙','闲');
   const busyFile=await write(path.join(p.workspace('忙'),'a.txt')),idleFile=await write(path.join(p.workspace('闲'),'b.txt')),log=await write(path.join(p.roots.data,'logs','x.jsonl'));
   try{
     const task=p.store.create(input('u1')).task;
     await purge(p.store,{roots:p.roots,now:after(8)});
     assert(await exists(busyFile),'a queued task counts');assert(!await exists(idleFile),'another user is swept regardless');assert(!await exists(log));
-    // Codex's files: untouched while a task runs, swept once none does.
-    const session=await write(path.join(p.roots.codexHome,'sessions','rollout.jsonl'));
+    // pi's chats: untouched while a task runs, swept once none does.
+    const session=await write(path.join(p.roots.agentHome,'sessions','chat.jsonl'));
     p.store.transition(task.id,'RUNNING');
     await purge(p.store,{roots:p.roots,now:after(8)});
     assert(await exists(session),'a task is running');assert(await exists(busyFile));
@@ -119,13 +116,13 @@ test('an aborted purge stops, and a directory name that is not a plain name is n
 });
 
 test('housekeeping never rejects and does not start a second round while one is running',async()=>{
-  // It works on the configured folders: Codex's home must not be the project's own (the other folders are temporary under `npm test`).
-  const home=config.codexHome;config.codexHome=await fs.mkdtemp(path.join(os.tmpdir(),'lark-housekeeping-'));
+  // It works on the configured folders: pi's home must not be the project's own (the other folders are temporary under `npm test`).
+  const home=config.agentHome;config.agentHome=await fs.mkdtemp(path.join(os.tmpdir(),'lark-housekeeping-'));
   try{
     const store=new Store(':memory:'),first=housekeeping(store),second=housekeeping(store);
     assert.equal(first,second);await first;store.close();
     await housekeeping(store);
-  }finally{await fs.rm(config.codexHome,{recursive:true,force:true});config.codexHome=home;}
+  }finally{await fs.rm(config.agentHome,{recursive:true,force:true});config.agentHome=home;}
 });
 
 test('an upload whose file is gone fails for good instead of being retried',async()=>{

@@ -1,14 +1,16 @@
 import {Database} from './sqlite.js';
 import {randomUUID} from 'node:crypto';
-import {terminal,BOT_DOWN,TERMINAL_SQL,WAITING_SQL, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession,type GeneratedImage} from '../types.js';
+import {terminal,BOT_DOWN,TERMINAL_SQL,WAITING_SQL, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession} from '../types.js';
 import {displayName} from '../sessions/naming.js';
 
 /**
- * The version of the schema this program creates. 2 added the task states STEERING and STEERED to the tables of 1, so a database of version 1
- * is simply taken over; from then on a program that knows only version 1 refuses it, instead of taking those tasks for running ones. A
- * database of any other version is not touched.
+ * The version of the schema this program creates. 2 added the task states STEERING and STEERED to the tables of 1; 3 dropped the table of the
+ * images Codex generated (the agent has no image tool: images it makes are files in the workspace). A database of version 1 or 2 is taken over
+ * (the old table is dropped); from then on an older program refuses it, instead of misreading it. A database of any other version is not touched.
+ * `thread_id` (of tasks and user_sessions) is the id of the agent's chat: a pi session now, a Codex thread before (such a chat is not found any
+ * more, and the user's next message starts a new one).
  */
-const VERSION=2,TAKEN_OVER=[1];
+const VERSION=3,TAKEN_OVER=[1,2];
 export class Store {
   db: Database; private columns?:Set<string>;
   constructor(file:string){
@@ -43,8 +45,7 @@ export class Store {
         CREATE INDEX IF NOT EXISTS task_event_lookup ON task_events(task_id,kind,id);
         CREATE TABLE IF NOT EXISTS task_artifacts (id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),
           path TEXT NOT NULL,name TEXT NOT NULL,size INTEGER NOT NULL,file_key TEXT,message_id TEXT,kind TEXT NOT NULL DEFAULT 'file',UNIQUE(task_id,path));
-        CREATE TABLE IF NOT EXISTS task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,
-          saved_path TEXT,PRIMARY KEY(task_id,item_id));
+        DROP TABLE IF EXISTS task_generated_images;
         CREATE TABLE IF NOT EXISTS task_inputs (task_id TEXT NOT NULL REFERENCES tasks(id),ordinal INTEGER NOT NULL,
           kind TEXT NOT NULL, key TEXT NOT NULL,name TEXT NOT NULL,path TEXT,size INTEGER,PRIMARY KEY(task_id,ordinal));
         CREATE TABLE IF NOT EXISTS user_sessions (id TEXT PRIMARY KEY,tenant_key TEXT NOT NULL,user_id TEXT NOT NULL,
@@ -87,14 +88,14 @@ export class Store {
       this.update(task.id,{session_id:session.id});return session;
     })();
   }
-  /** Retires a user's chat and opens an empty one in its place; the next input starts a new Codex thread. */
+  /** Retires a user's chat and opens an empty one in its place; the next input starts a new chat of the agent. */
   private replaceSession(previous:UserSession):UserSession{
     const id=randomUUID(),now=Date.now();
     this.db.prepare('UPDATE user_sessions SET retired_at=? WHERE id=?').run(now,previous.id);
     this.db.prepare('INSERT INTO user_sessions(id,tenant_key,user_id,created_at,display_name) VALUES(?,?,?,?,?)').run(id,previous.tenant_key,previous.user_id,now,previous.display_name);
     return this.session(id)!;
   }
-  /** The chat this task was going to continue no longer exists in Codex's home; the task goes on in a new one. */
+  /** The chat this task was going to continue no longer exists in the agent's home; the task goes on in a new one. */
   renewSession(task:Task,reason:'missing'):UserSession{
     return this.db.transaction(()=>{
       const previous=this.sessionFor(task),next=this.replaceSession(previous);
@@ -110,11 +111,11 @@ export class Store {
       if(!current?.thread_id)return false;this.replaceSession(current);return true;
     })();
   }
-  /** The folder Codex works in for this user. */
+  /** The folder the agent works in for this user. */
   setSessionWorkspace(id:string,directory:string){this.db.prepare('UPDATE user_sessions SET workspace_path=? WHERE id=?').run(directory,id);}
   bindSession(id:string,threadId:string){
     const session=this.session(id);if(!session)throw Error('用户会话不存在');
-    if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他 Codex 会话');
+    if(session.thread_id&&session.thread_id!==threadId)throw Error('用户会话已经绑定其他对话');
     this.db.prepare('UPDATE user_sessions SET thread_id=? WHERE id=?').run(threadId,id);
   }
   list(status?:TaskStatus):Task[]{return (status?this.db.prepare('SELECT * FROM tasks WHERE status=? ORDER BY created_at,rowid').all(status):this.db.prepare('SELECT * FROM tasks ORDER BY created_at,rowid').all()) as unknown as Task[];}
@@ -145,15 +146,6 @@ export class Store {
     })();
   }
   inputs(taskId:string):TaskInput[]{return this.db.prepare('SELECT ordinal,kind,key,name,path,size FROM task_inputs WHERE task_id=? ORDER BY ordinal').all(taskId) as unknown as TaskInput[];}
-  images(taskId:string):GeneratedImage[]{return this.db.prepare('SELECT item_id AS id,saved_path AS savedPath FROM task_generated_images WHERE task_id=? ORDER BY rowid').all(taskId) as unknown as GeneratedImage[];}
-  recordImages(taskId:string,images:GeneratedImage[]){
-    return this.db.transaction(()=>{
-      let changed=0;
-      for(const image of images)changed+=Number(this.db.prepare(`INSERT INTO task_generated_images(task_id,item_id,saved_path) VALUES(?,?,?)
-        ON CONFLICT(task_id,item_id) DO UPDATE SET saved_path=excluded.saved_path WHERE saved_path IS NOT excluded.saved_path`).run(taskId,image.id,image.savedPath).changes);
-      return changed>0;
-    })();
-  }
   inputReady(taskId:string,ordinal:number,path:string,size:number){this.db.prepare('UPDATE task_inputs SET path=?,size=? WHERE task_id=? AND ordinal=?').run(path,size,taskId,ordinal);}
   /** Moves a task from one state to another only if it is still in the first: false when something else got to it first. No card is updated. */
   claim(id:string,from:TaskStatus,to:TaskStatus):boolean{
@@ -173,8 +165,8 @@ export class Store {
     })();
   }
   event(id:string,kind:string,payload:unknown){this.db.prepare('INSERT INTO task_events(task_id,kind,payload,created_at) VALUES(?,?,?,?)').run(id,kind,JSON.stringify(payload),Date.now());}
-  /** True once the user's input was handed to a Codex process; from then on the task may have changed things and is never started again. */
-  submitted(id:string):boolean{return !!this.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='CODEX_SUBMITTED' LIMIT 1").get(id);}
+  /** True once the user's input was handed to the agent; from then on the task may have changed things and is never started again. */
+  submitted(id:string):boolean{return !!this.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='SUBMITTED' LIMIT 1").get(id);}
   enqueue(id:string,taskId:string|null,kind:string,payload:unknown){
     this.db.prepare(`INSERT INTO delivery_outbox(id,task_id,kind,payload) VALUES(?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,status='PENDING',next_attempt_at=0,
@@ -188,7 +180,7 @@ export class Store {
       permanent?'FAILED':'RETRYING',error,Date.now()+Math.min(300000,1000*2**Math.min(8,(this.db.prepare('SELECT attempts FROM delivery_outbox WHERE id=?').get(id) as any)?.attempts??0))+Math.random()*500,id,version);
   }
   /**
-   * Called once when the service starts. Whatever the previous run left behind is dead: Codex ran as a child of that process, so a task that was
+   * Called once when the service starts. Whatever the previous run left behind is dead: the agent ran inside that process, so a task that was
    * running is over (its card is finished once, instead of staying at "running" for ever), and a message that never started (or was being handed
    * to a running one) is cancelled.
    * Undelivered notices and replies of finished tasks are dropped, so starting the service never speaks to users about the past.

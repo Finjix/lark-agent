@@ -1,0 +1,93 @@
+{
+  "account": {
+    "game_ids": [
+      3
+    ],
+    "id": 7,
+    "name": "张三",
+    "roles": [
+      "creative"
+    ],
+    "status": 1
+  },
+  "can_create": true,
+  "can_import": true,
+  "companies": [],
+  "currencies": [
+    {
+      "key": "USD",
+      "value": "usd"
+    },
+    {
+      "key": "CNY",
+      "value": "cny"
+    }
+  ],
+  "departments": [],
+  "directions": [
+    {
+      "game_id": 3,
+      "id": 21,
+      "name": "方向一"
+    },
+    {
+      "game_id": 4,
+      "id": 22,
+      "name": "方向一"
+    }
+  ],
+  "games": [
+    {
+      "code": "GOFCN",
+      "id": 3,
+      "name": "无尽冬日"
+    },
+    {
+      "code": "OTHER",
+      "id": 4,
+      "name": "其他"
+    }
+  ],
+  "schema": 1,
+  "types": [
+    {
+      "key": "creative_a",
+      "type": "creative",
+      "value": 5
+    }
+  ],
+  "users": [
+    {
+      "id": 11,
+      "name": "丙公司（供应商丙）",
+      "roles": [
+        "outsource"
+      ],
+      "status": 1
+    },
+    {
+      "id": 12,
+      "name": "供应商甲",
+      "roles": [
+        "outsource"
+      ],
+      "status": 1
+    },
+    {
+      "id": 13,
+      "name": "张三",
+      "roles": [
+        "creative"
+      ],
+      "status": 1
+    },
+    {
+      "id": 14,
+      "name": "李四",
+      "roles": [
+        "creative"
+      ],
+      "status": 1
+    }
+  ]
+}

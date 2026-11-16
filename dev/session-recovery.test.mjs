@@ -13,7 +13,6 @@ const tables=db=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' O
 const CURRENT={
   tasks:['id','tenant_key','user_id','chat_id','source_message_id','instruction','thread_id','workspace_path','status','result','error','progress','created_at','started_at','finished_at','cancel_requested','resources','cleaned_at','session_id','steps'],
   task_messages:['task_id','message_id','card_id','sequence','finalized'],
-  task_generated_images:['task_id','item_id','saved_path'],
   user_sessions:['id','tenant_key','user_id','thread_id','workspace_path','created_at','display_name','retired_at'],
 };
 
@@ -21,9 +20,9 @@ test('a new database is at the current version and opening it again changes noth
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-db-fresh-')),file=path.join(root,'agent.sqlite');
   try{
     let s=new Store(file);const task=s.create(input()).task,session=s.sessionFor(task);s.bindSession(session.id,'thread');
-    assert.equal(s.db.pragma('user_version',{simple:true}),2);
+    assert.equal(s.db.pragma('user_version',{simple:true}),3);
     for(const [table,list] of Object.entries(CURRENT))assert.deepEqual(columns(s.db,table),list,table);
-    assert.deepEqual(tables(s.db),['delivery_outbox','task_artifacts','task_events','task_generated_images','task_inputs','task_messages','tasks','user_dirs','user_sessions']);
+    assert.deepEqual(tables(s.db),['delivery_outbox','task_artifacts','task_events','task_inputs','task_messages','tasks','user_dirs','user_sessions']);
     assert.deepEqual(indexes(s.db),['current_user_session','outbox_due','task_event_lookup','task_queue','task_user']);
     const schema=()=>s.db.prepare('SELECT name,sql FROM sqlite_master ORDER BY name').all();const before=schema();s.close();
     s=new Store(file);assert.deepEqual(schema(),before);assert.equal(s.session(session.id).retired_at,null,'a current session is not retired by opening the database');
@@ -34,7 +33,7 @@ test('a new database is at the current version and opening it again changes noth
 test('a database of another version is refused and left exactly as it was',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-db-version-'));
   try{
-    for(const version of [3,6,7]){
+    for(const version of [4,6,7]){
       const file=path.join(root,`v${version}.sqlite`),other=new Database(file);
       other.exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY); INSERT INTO tasks VALUES('a'); PRAGMA user_version=${version}`);other.close();
       const bytes=await fs.readFile(file);
@@ -43,15 +42,21 @@ test('a database of another version is refused and left exactly as it was',async
       assert.deepEqual((await fs.readdir(root)).filter(name=>name.startsWith(`v${version}.sqlite-`)),[],'no journal or WAL left behind');
     }
     // An empty file is a new database.
-    const empty=new Database(path.join(root,'empty.sqlite'));empty.close();const created=new Store(path.join(root,'empty.sqlite'));assert.equal(created.db.pragma('user_version',{simple:true}),2);created.close();
+    const empty=new Database(path.join(root,'empty.sqlite'));empty.close();const created=new Store(path.join(root,'empty.sqlite'));assert.equal(created.db.pragma('user_version',{simple:true}),3);created.close();
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
-test('a database of version 1 (from before STEERING/STEERED) is taken over as it is; from then on a program of version 1 refuses it',async()=>{
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-db-v1-')),file=path.join(root,'agent.sqlite');
+test("a database of version 1 or 2 (from the Codex days) is taken over: its tasks are kept and the table of Codex's images goes",async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lark-db-old-'));
   try{
-    let s=new Store(file);const task=s.create(input()).task;s.db.exec('PRAGMA user_version=1');s.close();
-    s=new Store(file);assert.equal(s.db.pragma('user_version',{simple:true}),2);assert.equal(s.get(task.id).status,'QUEUED','its tasks are kept');s.close();
+    for(const version of [1,2]){
+      const file=path.join(root,`v${version}.sqlite`);
+      let s=new Store(file);const task=s.create(input()).task;
+      s.db.exec(`CREATE TABLE task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,saved_path TEXT,PRIMARY KEY(task_id,item_id));
+        INSERT INTO task_generated_images VALUES('${task.id}','img',NULL);PRAGMA user_version=${version}`);s.close();
+      s=new Store(file);assert.equal(s.db.pragma('user_version',{simple:true}),3);assert.equal(s.get(task.id).status,'QUEUED','its tasks are kept');
+      assert(!tables(s.db).includes('task_generated_images'));s.close();
+    }
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 

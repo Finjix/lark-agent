@@ -8,7 +8,7 @@ import {cleanup} from '../dist/maintenance.js';
 import {config} from '../dist/config.js';
 
 const input=(message='one',user='user',tenant='tenant')=>({tenant_key:tenant,user_id:user,chat_id:'chat',source_message_id:message,instruction:message});
-/** A user's session bound to a Codex thread, working in `root`. */
+/** A user's session bound to a chat of the agent, working in `root`. */
 function bound(s,task,thread,root){const session=s.sessionFor(task);s.bindSession(session.id,thread);if(root)s.setSessionWorkspace(session.id,root);return s.session(session.id);}
 /** A finished task whose retention period is over, working in `workspace`. */
 function expired(s,task,thread,workspace){s.transition(task.id,'COMPLETED',{thread_id:thread,workspace_path:workspace});s.update(task.id,{finished_at:1});}

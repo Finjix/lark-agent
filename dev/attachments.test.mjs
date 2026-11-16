@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {EventEmitter} from 'node:events';
 import {Readable} from 'node:stream';
 import {Store} from '../dist/storage/database.js';
 import {incomingMessage,FOLDER_HINT} from '../dist/feishu/incoming.js';
 import {FeishuClient,MAX_INPUT_BYTES,MAX_IMAGE_BYTES,downloadError} from '../dist/feishu/client.js';
 import {config} from '../dist/config.js';
-import {prepareInputs,removeInputs,inputFilename,sessionInputs} from '../dist/feishu/inputs.js';
-import {codexInput} from '../dist/codex/input.js';
+import {prepareInputs,removeInputs,inputFilename} from '../dist/feishu/inputs.js';
+import {sessionInputs} from '../dist/layout.js';
+import {agentInput} from '../dist/agent/input.js';
 import {TaskService} from '../dist/tasks/service.js';
 
 const image={kind:'image',key:'img-user-upload',name:'image-1.png'};
@@ -19,8 +19,8 @@ function event(type,content,overrides={}){
   return {tenant_key:'tenant',sender:{sender_type:'user',sender_id:{open_id:'user'}},
     message:{message_id:'message',chat_id:'chat',chat_type:'p2p',message_type:type,content:JSON.stringify(content),...overrides}};
 }
-/** A Codex that records what it is given and answers at once. */
-const codex=()=>Object.assign(new EventEmitter(),{ready:true,jobs:[],run:async function*(job){this.jobs.push(job);yield {type:'thread.started',thread_id:'thread'};yield {type:'turn.completed',usage:{}};}});
+/** An agent that records what it is given and answers at once. */
+const agent=()=>({ready:true,jobs:[],run:async function*(job){this.jobs.push(job);yield {type:'session',id:'chat'};yield {type:'completed'};}});
 const fakeClient=()=>new FeishuClient({appId:'cli_offline_test',appSecret:'offline-test-placeholder'});
 
 test('binary resource error responses expose the required published application permission',async()=>{
@@ -69,7 +69,7 @@ test('group attachments require the exact bot mention and retain links and other
   assert.equal(incomingMessage(event('post',content,{chat_type:'group',mentions:[{id:{open_id:'other-bot'},key:'@_user_1'}]}),'bot'),undefined);
   const message=incomingMessage(event('post',content,{chat_type:'group',mentions:[{id:{open_id:'bot'},key:'@_user_1'}]}),'bot');
   assert.equal(message.text,' 阅读 来源 (https://example.com)同事');assert.equal(message.attachments.length,1);
-  assert.equal(message.chatType,'group','plugins are told the kind of chat');
+  assert.equal(message.chatType,'group','skills are told the kind of chat');
   assert.equal(incomingMessage(event('post',content),'bot').chatType,'p2p');
 });
 
@@ -90,31 +90,31 @@ test('attachment metadata is stored atomically with the task, survives a restart
 });
 
 test('unauthorized and unsupported attachment messages never create a task or download files',async()=>{
-  const store=new Store(':memory:');let downloads=0;const service=new TaskService(store,codex(),{downloadResource:async()=>{downloads++;}});
+  const store=new Store(':memory:');let downloads=0;const service=new TaskService(store,agent(),{downloadResource:async()=>{downloads++;}});
   service.authorized=()=>false;const message=incomingMessage(event('image',{image_key:'private-image'}),'bot');
   await service.receive(message);assert.equal(store.list().length,0);assert.equal(downloads,0);
   service.authorized=()=>true;await service.receive({...message,message:'bad-message',error:'暂不支持'});
   assert.equal(store.list().length,0);assert.equal(downloads,0);store.close();
 });
 
-test('inputs survive restart, use isolated safe filenames, and reach Codex only after download',async()=>{
+test('inputs survive restart, use isolated safe filenames, and reach the agent only after download',async()=>{
   const chat=await fs.mkdtemp(path.join(os.tmpdir(),'lark-inputs-')),root=path.join(chat,'input');const store=new Store(':memory:');
   const task=store.create(input,[],[image,{kind:'file',key:'file-key',name:'../../需求:报告.docx'}]).task;
   const calls=[];const downloader={downloadResource:async(message,attachment,file)=>{
     calls.push({message,key:attachment.key});await fs.writeFile(file,'input-data',{flag:'wx'});
     return {size:10,contentType:attachment.kind==='image'?'image/jpeg':'application/octet-stream'};
   }};
-  assert.throws(()=>codexInput(task.instruction,store.inputs(task.id)),/尚未接收/);
+  await assert.rejects(agentInput(task.instruction,store.inputs(task.id)),/尚未接收/);
   await prepareInputs(store,task,downloader,root);await prepareInputs(store,task,downloader,root);
   assert.equal(calls.length,2);assert.equal(calls[0].message,'message');
   const inputs=store.inputs(task.id);assert.equal(path.extname(inputs[0].path),'.jpg');
   assert.equal(path.basename(inputs[1].path),'需求_报告.docx','the name it was sent with, only cleaned');
   const flat=path.join(await fs.realpath(chat),'input');
   assert(inputs.every(file=>path.dirname(file.path)===flat),'one flat input folder, no per-task naming');
-  const [text,...images]=codexInput(task.instruction,inputs),slash=p=>p.replaceAll('\\','/');
-  assert(text.text.includes(`\n- ${slash(inputs[0].path)}\n- ${slash(inputs[1].path)}\n`),'every file by path');
-  assert(text.text.endsWith('\n\n改成卡通风格'),'then the request, as typed');
-  assert.deepEqual(images,[{type:'local_image',path:inputs[0].path}],'the image is also attached; the document is only a path');
+  const {text,images}=await agentInput(task.instruction,inputs),slash=p=>p.replaceAll('\\','/');
+  assert(text.includes(`\n- ${slash(inputs[0].path)}\n- ${slash(inputs[1].path)}\n`),'every file by path');
+  assert(text.endsWith('\n\n改成卡通风格'),'then the request, as typed');
+  assert.deepEqual(images,[{type:'image',mimeType:'image/jpeg',data:Buffer.from('input-data').toString('base64')}],'the image is also attached; the document is only a path');
   assert.equal(inputFilename(['..','..','secret.txt'].join(String.fromCharCode(92))),'secret.txt');
   // The same name sent again does not overwrite the earlier file.
   const again=store.create({...input,source_message_id:'again'},[],[{kind:'file',key:'file-key-2',name:'需求:报告.docx'}]).task;
@@ -143,24 +143,24 @@ test('download API uses the source message resource endpoint and enforces the st
   client.close();await fs.rm(root,{recursive:true});
 });
 
-test('a rich-text event is deduplicated, downloaded, and handed to Codex with its original instruction',async()=>{
-  const store=new Store(':memory:'),c=codex();let downloads=0;
+test('a rich-text event is deduplicated, downloaded, and handed to the agent with its original instruction',async()=>{
+  const store=new Store(':memory:'),c=agent();let downloads=0;
   const service=new TaskService(store,c,{downloadResource:async(_message,_attachment,file)=>{
     downloads++;await fs.writeFile(file,'image-data');return {size:10,contentType:'image/png'};
   }});service.authorized=()=>true;
   const message=incomingMessage(event('post',{content:[[{tag:'img',image_key:image.key}],[{tag:'text',text:'改成卡通风格'}]]}),'bot');
   await service.receive(message);await service.receive(message);assert.equal(store.list().length,1);
   const task=store.list()[0];store.transition(task.id,'STARTING');await service.start(store.get(task.id));
-  assert.equal(downloads,1);assert.equal(c.jobs.length,1);assert.equal(store.get(task.id).thread_id,'thread');
-  const saved=store.inputs(task.id)[0].path,job=c.jobs[0];assert.equal(await fs.readFile(saved,'utf8'),'image-data','the file was there before Codex started');
+  assert.equal(downloads,1);assert.equal(c.jobs.length,1);assert.equal(store.get(task.id).thread_id,'chat');
+  const saved=store.inputs(task.id)[0].path,job=c.jobs[0];assert.equal(await fs.readFile(saved,'utf8'),'image-data','the file was there before the agent started');
   assert.equal(path.basename(path.dirname(saved)),'input','attachments land in the workspace\'s input/');assert.equal(path.basename(saved),'image-1.png');
-  assert.equal(path.dirname(path.dirname(saved)),await fs.realpath(job.cwd),'and that workspace is where Codex works');
-  assert(job.input[0].text.includes('改成卡通风格'));assert.deepEqual(job.input.slice(1),[{type:'local_image',path:saved}]);
+  assert.equal(path.dirname(path.dirname(saved)),await fs.realpath(job.cwd),'and that workspace is where the agent works');
+  assert(job.input.text.includes('改成卡通风格'));assert.deepEqual(job.input.images,[{type:'image',mimeType:'image/png',data:Buffer.from('image-data').toString('base64')}]);
   await removeInputs([saved],job.cwd);store.close();
 });
 
-test('failed and cancelled downloads do not start Codex, and partial files are removed',async()=>{
-  const store=new Store(':memory:'),c=codex();
+test('failed and cancelled downloads do not start the agent, and partial files are removed',async()=>{
+  const store=new Store(':memory:'),c=agent();
   const task=store.create(input,[],[image]).task;
   const service=new TaskService(store,c,{downloadResource:async(_message,_attachment,file)=>{await fs.writeFile(file,'partial');throw Error('缺少 im:resource 权限');}});
   store.transition(task.id,'STARTING');await service.start(store.get(task.id));
@@ -172,10 +172,10 @@ test('failed and cancelled downloads do not start Codex, and partial files are r
   assert.equal(store.get(cancelled.id).status,'CANCELLED');assert.equal(c.jobs.length,0);store.close();
 });
 
-test('voice messages arrive as a file, and like any file they go to Codex as a path',()=>{
+test('voice messages arrive as a file, and like any file they go to the agent as a path',async()=>{
   const voice=incomingMessage({sender:{sender_type:'user',sender_id:{open_id:'u'}},tenant_key:'t',message:{message_id:'m',chat_id:'c',chat_type:'p2p',message_type:'audio',content:JSON.stringify({file_key:'k',duration:3000})}},'bot');
   assert.deepEqual(voice.attachments,[{kind:'file',key:'k',name:'语音消息.opus'}]);assert(!voice.error);
-  assert.deepEqual(codexInput('',[{kind:'file',path:'C:/in/语音消息.opus'}]).map(x=>x.type),['text'],'there is no audio input: only the path');
+  const given=await agentInput('',[{kind:'file',path:'C:/in/语音消息.opus'}]);assert.deepEqual(given.images,[],'there is no audio input: only the path');assert(given.text.includes('C:/in/语音消息.opus'));
 });
 
 test('in a group, other people mentioned in plain text keep their names instead of @_user_N placeholders',()=>{
@@ -215,7 +215,7 @@ test('files and videos over 100 MB come in Range pieces into one file; the limit
 });
 
 test('an attachment that is too large fails the task with its reason, not the generic one',async()=>{
-  const store=new Store(':memory:'),c=codex();
+  const store=new Store(':memory:'),c=agent();
   const task=store.create(input,[],[{kind:'image',key:'big',name:'素材.png'}]).task;
   const client=fakeClient();client.sdk.im.messageResource.get=async()=>({headers:{'content-length':String(MAX_IMAGE_BYTES+1)},getReadableStream:()=>Readable.from([Buffer.alloc(2)])});
   const service=new TaskService(store,c,client);
