@@ -8,5 +8,4 @@ data/
 user/
 shared/
 .pi/
-.venv/
 __pycache__/

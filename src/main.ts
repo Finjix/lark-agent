@@ -51,7 +51,7 @@ async function main(){
     if(!response.ok)throw Error(`停止请求失败：${response.status}`);console.log('已请求安全停止');return;
   }
   // The skills' Python packages are made ready before the service starts, outside the supervisor's patience for a service that does not answer.
-  if(action==='setup'){await ensurePython();console.log(`Python 环境已就绪：${config.venv}`);return;}
+  if(action==='setup'){await ensurePython();console.log(`技能的 Python 依赖已就绪：${config.python}`);return;}
   // `start` runs the service under a supervisor that restarts it when it stops answering; `serve` is the service itself.
   if(action==='start'){await ensurePython();process.exitCode=await supervise();return;}
   const agent=new AgentRunner();

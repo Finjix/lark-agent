@@ -14,7 +14,7 @@ import {Turn} from '../dist/agent/turn.js';
 import {cardJson,cardElements,renderTask} from '../dist/feishu/cards.js';
 import {agentInput,MAX_ATTACHED_IMAGE_BYTES} from '../dist/agent/input.js';
 import {AgentRunner,SessionMissing,SteerRefused} from '../dist/agent/runner.js';
-import {skillEnv,withPath,venvScripts} from '../dist/agent/environment.js';
+import {skillEnv,withPath,pythonFolders} from '../dist/agent/environment.js';
 import {agentInstructions} from '../dist/agent/instructions.js';
 import {BOT_DOWN,InputRejected} from '../dist/types.js';
 
@@ -101,12 +101,13 @@ test('the text goes to the agent as typed; attachments are listed by path and im
     await assert.rejects(agentInput('x',[{kind:'file',path:null}]),/尚未接收/);
   }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
-test('commands run with the project\'s Python first, UTF-8, the folder skills share and the bot\'s app; a user\'s turn also says whose it is',()=>{
+test('commands run with the machine\'s Python, UTF-8, the folder skills share and the bot\'s app; a user\'s turn also says whose it is',()=>{
   const base={Path:'C:\\Windows',LARK_AGENT_USER_DIR:'C:\\stale',lark_agent_chat_id:'stale',KEEP_ME:'yes'};
   const none=skillEnv(undefined,base);
   assert.equal(none.LARK_AGENT_USER_DIR,undefined,'what describes a user is never inherited from the service');assert.equal(none.lark_agent_chat_id,undefined);
-  assert.equal(none.LARK_AGENT_SHARED_DIR,config.shared);assert.equal(none.KEEP_ME,'yes');assert.equal(none.PYTHONUTF8,'1');assert.equal(none.VIRTUAL_ENV,config.venv);
-  assert(none.Path.startsWith(venvScripts()+path.delimiter),'python is the project\'s');
+  assert.equal(none.LARK_AGENT_SHARED_DIR,config.shared);assert.equal(none.KEEP_ME,'yes');assert.equal(none.PYTHONUTF8,'1');
+  assert.equal(none.Path.split(path.delimiter).at(-1),'C:\\Windows','the service\'s PATH is kept');
+  assert.deepEqual([pythonFolders('python'),pythonFolders('C:\\Python313\\python.exe')],[[],['C:\\Python313']],'a Python given by full path goes in front of PATH');
   const user=skillEnv({dir:'D:/p/user/张三',openId:'ou_1',chat:'oc_1'},base);
   assert.deepEqual([user.LARK_AGENT_USER_DIR,user.LARK_AGENT_USER_OPEN_ID,user.LARK_AGENT_CHAT_ID,user.LARK_AGENT_CHAT_TYPE],['D:/p/user/张三','ou_1','oc_1',undefined],'a value not known is left out');
   assert.deepEqual(withPath({Path:'C:\\x',PATH:'C:\\y',other:'1'},['C:\\py'],'win32'),{Path:'C:\\py;C:\\x',other:'1'},'one spelling of PATH on Windows, the tools in front');

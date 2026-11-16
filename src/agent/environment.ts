@@ -9,9 +9,9 @@ import {config} from '../config.js';
 export interface SkillUser {dir:string;openId:string;chat?:string;chatType?:string}
 /** What a skill's scripts get from the host, besides the service's own environment. */
 export const SKILL_ENV=['LARK_AGENT_USER_DIR','LARK_AGENT_USER_OPEN_ID','LARK_AGENT_CHAT_ID','LARK_AGENT_CHAT_TYPE','LARK_AGENT_SHARED_DIR','FEISHU_APP_ID','FEISHU_APP_SECRET'] as const;
-/** The project's Python environment: what `python` means to a skill. */
-export const venvScripts=()=>path.join(config.venv,process.platform==='win32'?'Scripts':'bin');
-export const venvPython=()=>path.join(venvScripts(),process.platform==='win32'?'python.exe':'python');
+/** The machine's Python: what `python` means to a skill. Given as a full path (`PYTHON`), its folder goes in front of PATH so commands find it. */
+export const systemPython=()=>config.python;
+export const pythonFolders=(python=systemPython())=>path.isAbsolute(python)?[path.dirname(python)]:[];
 
 /** The environment with these folders in front of PATH (Windows spells the variable any way; one spelling is kept). */
 export function withPath(env:Record<string,string>,folders:string[],platform=process.platform):Record<string,string>{
@@ -25,7 +25,7 @@ export function withPath(env:Record<string,string>,folders:string[],platform=pro
 
 /**
  * The environment of every command the agent runs and of every job: the service's own (so `.env` settings such as AUDIT_AUTO_GEMINI_KEY reach
- * the skills), with the project's Python first on PATH and reading and writing UTF-8, the folder skills share and the bot's Feishu app. For a
+ * the skills), with the machine's Python (see systemPython) and reading and writing UTF-8, the folder skills share and the bot's Feishu app. For a
  * user's turn it also says whose turn it is (see SkillUser). What describes a user is never inherited from the service, and a value that is not
  * set is left out rather than passed empty.
  */
@@ -35,5 +35,5 @@ export function skillEnv(user?:SkillUser,base:NodeJS.ProcessEnv=process.env):Rec
   const given:Record<string,string|undefined>={LARK_AGENT_SHARED_DIR:config.shared,FEISHU_APP_ID:config.FEISHU_APP_ID,FEISHU_APP_SECRET:config.FEISHU_APP_SECRET,
     ...(user?{LARK_AGENT_USER_DIR:user.dir,LARK_AGENT_USER_OPEN_ID:user.openId,LARK_AGENT_CHAT_ID:user.chat,LARK_AGENT_CHAT_TYPE:user.chatType}:{})};
   for(const [key,value] of Object.entries(given))if(value)env[key]=value;
-  return withPath({...env,VIRTUAL_ENV:config.venv,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'},[venvScripts()]);
+  return withPath({...env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'},pythonFolders());
 }

@@ -6,16 +6,16 @@ pi 的登录、对话等一切状态都放在项目自己的 `.pi/` 里。系统
 
 ## 运行
 
-需要 Node.js ≥ 24、Python ≥ 3.11（`python` 在 PATH 上，或用环境变量 `PYTHON` 指定）和 Git for Windows（pi 用其中的 Git Bash 执行命令）。pi 和飞书官方 SDK 由 `npm ci` 按 lockfile 装进项目；数据库用 Node 内置 `node:sqlite`；技能用的 Python 包装在项目自己的 `.venv` 里。
+需要 Node.js ≥ 24、Python ≥ 3.11（`python` 在 PATH 上，或用环境变量 `PYTHON` 指定）和 Git for Windows（pi 用其中的 Git Bash 执行命令）。pi 和飞书官方 SDK 由 `npm ci` 按 lockfile 装进项目；数据库用 Node 内置 `node:sqlite`；技能用的 Python 包直接装进这个系统 Python。
 
 1. 飞书后台配置应用，见 [docs/feishu.md](docs/feishu.md)。
 2. `.env.example` 复制为 `.env`，填凭证和访问范围；audit-auto 审片用的内部 AI 网关 key 填 `AUDIT_AUTO_GEMINI_KEY`。
 3. `start.cmd login`：用 ChatGPT 订阅（Plus/Pro）登录，在本机浏览器里完成；本机没人操作浏览器时用 `start.cmd login device`，按提示在任意设备上打开链接、输入代码。登录存在 `.pi/auth.json`，令牌由 pi 自动续期，所有飞书用户共用这一个账号。`start.cmd logout` 退出。
-4. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译，再准备 Python 环境）。日志出现“智能体已就绪”和“飞书长连接已启动”即可用。服务运行中执行 `start.cmd login` 也行，10 秒内生效，不用重启。
+4. `start.cmd doctor` 自检，`start.cmd` 启动（首次自动 `npm ci`，每次先编译，再安装技能的 Python 依赖）。日志出现“智能体已就绪”和“飞书长连接已启动”即可用。服务运行中执行 `start.cmd login` 也行，10 秒内生效，不用重启。
 
 模型默认 `openai-codex/gpt-6.1-sol`、推理强度 `medium`，在 `.env` 的 `AGENT_PROVIDER` / `AGENT_MODEL` / `AGENT_THINKING` 里改，改后重启。ChatGPT 账号登录失效、额度用完等账号问题，用户只会看到“机器人罢工了”（额度用完时显示模型给的原因），原因写在日志里。
 
-**换电脑**：把项目目录拿过去（`node_modules`、`dist`、`.venv` 不用），`npm install`，复制 `.env`，再 `start.cmd login`。要保留各用户的工作目录和技能数据就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.pi/sessions`；技能共用的数据（如 audit-auto 的审核群规范和监听的群）在 `shared/`，要保留也一并复制。
+**换电脑**：把项目目录拿过去（`node_modules`、`dist` 不用），`npm install`，复制 `.env`，再 `start.cmd login`。要保留各用户的工作目录和技能数据就一并复制 `user/`，要保留各用户的对话上下文就一并复制 `.pi/sessions`；技能共用的数据（如 audit-auto 的审核群规范和监听的群）在 `shared/`，要保留也一并复制。
 
 ## 智能体的运行方式
 
@@ -39,7 +39,6 @@ pi 以 SDK 的方式跑在服务进程里：每个任务一个 pi 会话（带�
 | `user` | 每个用户的数据和工作目录，见下 |
 | `shared` | 技能给所有用户共用的数据，每个技能一个文件夹（如 `shared/audit-auto/`） |
 | `.pi` | pi 的全部状态（ChatGPT 登录、对话），见上 |
-| `.venv` | 技能用的 Python 环境（`start.cmd` 自动创建） |
 | `.env` | 凭证、白名单和 AI 网关 key，不入 Git |
 
 ```
@@ -71,8 +70,8 @@ user/
 | `audit-auto` | AI 审片：按 GOF / GOT 的固定规范和审核群整理出的动态规范，用 Gemini（内部 AI 网关）审广告视频 | `user/<名>/audit-auto/`、`shared/audit-auto/` |
 | `requirement-auto` | GOFCN 素材需求：发布需求（进度表、CLS 草稿、截图）、上传素材到 CLS 创意列表；飞书经由 feishu 技能 | `user/<名>/requirement-auto/` |
 
-- **技能脚本的环境**：智能体执行的每条命令都带着：项目的 Python 排在 PATH 最前（`python` 就是 `.venv` 里的，`PYTHONUTF8=1`）、`LARK_AGENT_USER_DIR`（`user/<名>`，不是其中的 `workspace`）、`LARK_AGENT_USER_OPEN_ID`、`LARK_AGENT_CHAT_ID`（这一轮的消息来自哪个会话，私聊或群的 chat_id）、`LARK_AGENT_CHAT_TYPE`（`p2p` 或 `group`，取自飞书的消息事件；服务重启前就排着的任务没有这一项）、`LARK_AGENT_SHARED_DIR`（`shared/`）、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`，以及服务自己的环境（`.env` 里的设置，如 `AUDIT_AUTO_GEMINI_KEY`）。工作目录是用户的 `workspace/`。
-- **Python 环境**：`start.cmd`（和 `start.cmd setup`）在 `.venv` 不存在时用本机的 Python 创建它，每个技能的 `requirements.txt` 有变化时一起装进去；没变化时什么都不做。
+- **技能脚本的环境**：智能体执行的每条命令都带着：系统的 Python（`python` 就是 PATH 上的那个；用 `PYTHON` 指定完整路径时，它所在的目录排在 PATH 最前；`PYTHONUTF8=1`）、`LARK_AGENT_USER_DIR`（`user/<名>`，不是其中的 `workspace`）、`LARK_AGENT_USER_OPEN_ID`、`LARK_AGENT_CHAT_ID`（这一轮的消息来自哪个会话，私聊或群的 chat_id）、`LARK_AGENT_CHAT_TYPE`（`p2p` 或 `group`，取自飞书的消息事件；服务重启前就排着的任务没有这一项）、`LARK_AGENT_SHARED_DIR`（`shared/`）、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`，以及服务自己的环境（`.env` 里的设置，如 `AUDIT_AUTO_GEMINI_KEY`）。工作目录是用户的 `workspace/`。
+- **Python 环境**：用系统的 Python（`PYTHON` 指定的，或 PATH 上的 `python`，3.11 及以上），不建虚拟环境。`start.cmd`（和 `start.cmd setup`）在每个技能的 `requirements.txt` 有变化、或换了一个 Python 时，把它们 `pip install` 进这个 Python（site-packages 不可写时 pip 自动装到用户目录）；没变化时什么都不做。安装记录在 `data/lark-agent-requirements.sha256`。
 - **数据**：技能自己的数据放在 `user/<名>/<技能名>/`（例如用户的登录信息和中间文件），不在 `workspace/` 里，所以不会被自动清理，也不会被当成交付文件发给用户。不属于哪个用户的放在 `shared/<技能名>/`，同样不清理、不发送。用户之间的隔离只是约定：智能体的命令没有限制，同一个 Windows 账号，被提示词注入的模型能读到别人的目录。
 - **定时任务**：不属于哪个用户的一轮、要定期做的事写在项目根目录的 `jobs.json`。现在只有 audit-auto 每天读一遍在监听的审核群：
 
@@ -116,7 +115,7 @@ user/
 ```bat
 start.cmd doctor
 start.cmd login [device]        :: 用 ChatGPT 订阅登录；logout 退出
-start.cmd setup                 :: 创建 .venv、安装技能的 Python 依赖（start 时也会自动做）
+start.cmd setup                 :: 把技能的 Python 依赖装进系统 Python（start 时也会自动做）
 start.cmd stop                  :: 通过本机令牌接口安全停止，也可 Ctrl+C（守护进程随之退出，不会重启）
 start.cmd serve                 :: 不带守护进程直接运行服务（排查问题用）
 start.cmd backup                :: 备份数据库到 data/
@@ -129,7 +128,7 @@ start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任
 
 ## 版本
 
-`@earendil-works/pi-coding-agent` 和 `@earendil-works/pi-ai` 固定同一版本（现为 1.5.2），升级时两个一起改。任务通过 SDK 的 `createAgentSession` 执行（`prompt` 开始一轮，执行期间的消息用 `steer`，`/new` 用 `abort`），`src/agent/runner.ts` 把会话事件换成本项目的步骤（`src/agent/turn.ts`），卡片由这些步骤生成。升级后看一下 pi 的 CHANGELOG 里 SDK、会话事件和 `openai-codex` 登录有没有变化，再跑 `npm test`、`start.cmd doctor`。各技能的测试：`.venv\Scripts\python -m unittest discover -s skills\<名>\tests -t skills\<名>`。
+`@earendil-works/pi-coding-agent` 和 `@earendil-works/pi-ai` 固定同一版本（现为 1.5.2），升级时两个一起改。任务通过 SDK 的 `createAgentSession` 执行（`prompt` 开始一轮，执行期间的消息用 `steer`，`/new` 用 `abort`），`src/agent/runner.ts` 把会话事件换成本项目的步骤（`src/agent/turn.ts`），卡片由这些步骤生成。升级后看一下 pi 的 CHANGELOG 里 SDK、会话事件和 `openai-codex` 登录有没有变化，再跑 `npm test`、`start.cmd doctor`。各技能的测试：`python -m unittest discover -s skills\<名>\tests -t skills\<名>`。
 
 数据库（`data/agent.sqlite`）的版本记在 `user_version` 里，现为 3：版本 2 加了任务状态 `STEERING`/`STEERED`，版本 3 去掉了 Codex 生成图片的表（`task_generated_images`）；版本 1、2 的库启动时直接沿用并改记为 3（删掉那张表），其他版本的库会被拒绝，启动时报错并说明是哪个文件。所以升级后不能直接回滚到 Codex 版（它会拒绝这个库）；确需回滚，先停服务，用任意 SQLite 工具执行 `CREATE TABLE task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,saved_path TEXT,PRIMARY KEY(task_id,item_id)); PRAGMA user_version=2;` 再启动旧版。表结构变化时要同时升版本并写明处理办法。
 

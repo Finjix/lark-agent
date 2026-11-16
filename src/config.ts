@@ -30,8 +30,9 @@ export const config = {
   data:path.join(root,'data'), user:path.join(root,'user'),
   // pi's own state (the ChatGPT login, the chats): inside the project, never the system's ~/.pi.
   agentHome:path.join(root,'.pi'),
-  // The skills every turn has (standard Agent Skills: a folder with SKILL.md) and the Python their scripts run with.
-  skills:path.join(root,'skills'), venv:path.join(root,'.venv'),
+  // The skills every turn has (standard Agent Skills: a folder with SKILL.md) and the machine's Python their scripts run with (`PYTHON`, or
+  // whatever `python` is on PATH).
+  skills:path.join(root,'skills'), python:text('PYTHON','python'),
   // Commands run on a timer, outside any user's turn (see jobs.ts).
   jobs:path.join(root,'jobs.json'),
   // What skills keep for every user alike (audit-auto's review-group rules, say), in a folder of each skill's own; never cleaned up, never sent.

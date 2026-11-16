@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {config} from '../dist/config.js';
 import {declaredJobs,Jobs} from '../dist/jobs.js';
-import {venvPython} from '../dist/agent/environment.js';
+import {systemPython} from '../dist/agent/environment.js';
 
 const until=async(check,ms=10000)=>{const end=Date.now()+ms;while(!check()){if(Date.now()>end)throw Error('timed out');await new Promise(r=>setTimeout(r,20));}};
 async function jobsFile(declared){
@@ -19,11 +19,11 @@ async function scriptJob(body,extra={}){
   return {dir,job:{name:'sync',everyMinutes:60,timeoutMinutes:1,command:process.execPath,args:['job.mjs'],...extra}};
 }
 
-test('jobs.json lists the jobs; python is the project\'s Python and node the service\'s own, anything else is run as written',async()=>{
+test('jobs.json lists the jobs; python is the machine\'s Python and node the service\'s own, anything else is run as written',async()=>{
   assert.deepEqual(await declaredJobs((await jobsFile()).file),{jobs:[],invalid:[]},'no file, no jobs');
   const {file}=await jobsFile({jobs:[{name:'audit-rules-sync',everyMinutes:1440,command:'python',args:['skills/audit-auto/scripts/audit.py','rules','sync']},
     {name:'n',everyMinutes:60,command:'node'},{name:'x',everyMinutes:60,command:'C:/tools/x.exe',args:['a']}]});
-  assert.deepEqual((await declaredJobs(file)).jobs,[{name:'audit-rules-sync',everyMinutes:1440,timeoutMinutes:30,command:venvPython(),args:['skills/audit-auto/scripts/audit.py','rules','sync']},
+  assert.deepEqual((await declaredJobs(file)).jobs,[{name:'audit-rules-sync',everyMinutes:1440,timeoutMinutes:30,command:systemPython(),args:['skills/audit-auto/scripts/audit.py','rules','sync']},
     {name:'n',everyMinutes:60,timeoutMinutes:30,command:process.execPath,args:[]},{name:'x',everyMinutes:60,timeoutMinutes:30,command:'C:/tools/x.exe',args:['a']}]);
   const shipped=await declaredJobs(config.jobs);
   assert.deepEqual([shipped.invalid,shipped.jobs.map(j=>j.name)],[[],['audit-rules-sync']],'the project\'s own jobs.json is valid');

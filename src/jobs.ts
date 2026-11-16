@@ -2,7 +2,7 @@ import {spawn,type ChildProcess} from 'node:child_process';
 import fs from 'node:fs/promises';
 import {config} from './config.js';
 import {log,safeError} from './log.js';
-import {skillEnv,venvPython} from './agent/environment.js';
+import {skillEnv,systemPython} from './agent/environment.js';
 
 /**
  * Commands run on a timer, for work that is nobody's turn (audit-auto reads its review groups once a day, say). They are listed in jobs.json
@@ -10,7 +10,7 @@ import {skillEnv,venvPython} from './agent/environment.js';
  *
  *   {"jobs":[{"name":"audit-rules-sync","everyMinutes":1440,"timeoutMinutes":30,"command":"python","args":["skills/audit-auto/scripts/audit.py","rules","sync"]}]}
  *
- * A job runs in the project folder (`python` is the project's Python, `node` the node that runs this service), the first time a little after
+ * A job runs in the project folder (`python` is the machine's Python, `node` the node that runs this service), the first time a little after
  * the service starts and then every `everyMinutes`; a run still going when the next is due is not started twice, and one that outlasts
  * `timeoutMinutes` is ended. Its environment is what the skills get without a user (see skillEnv): there is no user folder, Open ID or chat.
  * What it prints is logged (the end of it); it is not sent to anybody.
@@ -21,7 +21,7 @@ export interface JobState {name:string;everyMinutes:number;running:boolean;runs:
 const NAME=/^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const MAX_MINUTES=7*24*60;
 const OUTPUT_KEPT=4000;
-const COMMANDS:Record<string,()=>string>={python:venvPython,node:()=>process.execPath};
+const COMMANDS:Record<string,()=>string>={python:systemPython,node:()=>process.execPath};
 
 /** The jobs jobs.json lists, and why the ones that cannot run are left out. No file, no jobs. */
 export async function declaredJobs(file=config.jobs):Promise<{jobs:Job[];invalid:string[]}>{
