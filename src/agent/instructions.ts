@@ -4,11 +4,13 @@
  * what using them takes. The agent itself still could do anything (its bash runs without limits); this is what holds it back.
  */
 export function agentInstructions(skills:readonly {name:string}[]):string{
-  const names=skills.map(s=>s.name);
-  const offered=names.length?`Installed skills: ${names.join(', ')}. They are your only capabilities.`
-    :'No skills are installed, so you have no capabilities to act on the user\'s behalf: tell the user so.';
-  const feishu=names.includes('feishu')
-    ?'11. Feishu: the feishu skill holds the user\'s own Feishu login and reads Feishu documents, wiki pages and spreadsheets the user links. When a request needs what a Feishu link holds and no skill that covers the request reads it itself, read it with the feishu skill. The Feishu login is yours to handle, for every skill: when a command reports that the Feishu login is missing, has lapsed or lacks permissions, log the user in as the feishu skill describes, then go on with the request. The login QR code is for this user alone and only in a private chat. Log in, again or out only for that, or when the user asks.'
+  const names=skills.map(s=>s.name),hasFeishu=names.includes('feishu');
+  // Feishu is groundwork for the other skills (the documents they are given, the login they use), not something offered to the user.
+  const own=names.filter(n=>n!=='feishu');
+  const offered=own.length?`Installed skills: ${own.join(', ')}. They are your only capabilities.${hasFeishu?' The feishu skill is also installed, but only as groundwork for them (rule 11), not as a capability of yours.':''}`
+    :`No skills are installed${hasFeishu?' besides the feishu skill, which only serves other skills (rule 11)':''}, so you have no capabilities to act on the user's behalf: tell the user so.`;
+  const feishu=hasFeishu
+    ?'11. Feishu: the feishu skill holds the user\'s own Feishu login and reads Feishu documents, wiki pages and spreadsheets. It is groundwork for the other skills, not a capability you offer: when telling the user what you can do (who you are, what you can help with, what you could do with something they sent), never list reading Feishu content or logging in to Feishu, only what the other skills do. Use it only in service of another skill: when a request another skill covers needs what a Feishu link holds and that skill does not read it itself, read it with the feishu skill. A Feishu link with no request another skill covers is not a request to read it: tell the user what you can do instead. The Feishu login is yours to handle, for every skill: when a command reports that the Feishu login is missing, has lapsed or lacks permissions, log the user in as the feishu skill describes, then go on with the request. The login QR code is for this user alone and only in a private chat. Log in, again or out only for that, or when the user asks.'
     :'11. Feishu: no feishu skill is installed, so you cannot log the user in to Feishu or read Feishu links: say so when a request needs it.';
   return [
     'You are 小薯 (Xiaoshu), a cat: the AI assistant of MCC Q3, an internal agent app of the MCC Q3 team, working in Feishu (Lark). You help the user only through the capabilities that skills provide.',

@@ -116,7 +116,8 @@ test('commands run with the machine\'s Python, UTF-8, the folder skills share an
 test('the agent is told to work only through the skills, Feishu included, and to do no more on the machine than using them takes',()=>{
   const none=agentInstructions([]),some=agentInstructions([{name:'feishu'},{name:'requirement-auto'},{name:'audit-auto'}]);
   assert.match(none,/No skills are installed/);assert.doesNotMatch(none,/Installed skills/);assert.match(none,/no feishu skill is installed/);
-  assert.match(some,/Installed skills: feishu, requirement-auto, audit-auto\./);assert.doesNotMatch(some,/No skills are installed/);
+  assert.match(some,/Installed skills: requirement-auto, audit-auto\. They are your only capabilities\. The feishu skill is also installed, but only as groundwork/);assert.match(some,/never list reading Feishu content or logging in to Feishu/);
+  assert.match(agentInstructions([{name:'feishu'}]),/No skills are installed besides the feishu skill/);assert.doesNotMatch(some,/No skills are installed/);
   assert.match(some,/log the user in as the feishu skill describes/);assert.match(some,/only in a private chat/);
   for(const text of [none,some]){assert.match(text,/only with the skills/);assert.match(text,/read that skill's SKILL\.md in full/);assert.match(text,/cannot be done without it/);
     assert.match(text,/environment variables, keys, credentials/);assert.match(text,/which skill you are using/);assert.match(text,/Git Bash/);

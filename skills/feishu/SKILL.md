@@ -1,6 +1,6 @@
 ---
 name: feishu
-description: "The user's own Feishu (Lark) login, and reading a Feishu document, wiki page or spreadsheet the user links into Markdown. Use when a request needs what a Feishu link (feishu.cn/docx, /wiki, /sheets) holds and no other skill reads it itself; when the user asks to log in to Feishu (登录飞书), log in again or log out; and whenever a command of this or another skill reports that the Feishu login is missing, has lapsed or lacks permissions (login_required, scopes_missing, 'log the user in with the feishu skill')."
+description: "Groundwork for the other skills, not a capability to offer the user (never list it among what you can do): the user's own Feishu (Lark) login, and reading a Feishu document, wiki page or spreadsheet the user links into Markdown. Use when a request another skill covers needs what a Feishu link (feishu.cn/docx, /wiki, /sheets) holds and that skill does not read it itself; when the user asks to log in to Feishu (登录飞书), log in again or log out; and whenever a command of this or another skill reports that the Feishu login is missing, has lapsed or lacks permissions (login_required, scopes_missing, 'log the user in with the feishu skill')."
 compatibility: "Python 3.11+ (standard library; the websockets package for the hidden-browser login, see requirements.txt). Edge or Chrome for the QR login (FEISHU_BROWSER to pick one). Needs FEISHU_APP_ID / FEISHU_APP_SECRET of a Feishu app with the user-identity permissions in references/bridge.md."
 metadata:
   version: "2.0.0"
