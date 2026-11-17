@@ -27,6 +27,11 @@ export interface TurnJob {
    * with SteerRefused when the turn ends first.
    */
   steerable?:(steer:Steer|undefined)=>void;
+  /**
+   * Gives up on the turn: it ends at once (the session is let go of and disposed) without waiting for pi to settle, which a command that hangs
+   * on what it started (a browser waiting for a scan, say) can keep from happening. The turn should have been stopped (`signal`) first.
+   */
+  abandon?:AbortSignal;
 }
 export interface RunnerOptions {
   /** Where the ChatGPT login lives; tests pass their own runtime. */
@@ -163,6 +168,10 @@ export class AgentRunner {
     });
     const abort=()=>{void session.abort();};
     job.signal.addEventListener('abort',abort,{once:true});
+    // Given up on: the events end now, and so does the wait for the run below.
+    let abandoned=()=>{};const given=new Promise<void>(resolve=>{abandoned=resolve;});
+    const abandon=()=>{events.close();abandoned();};
+    job.abandon?.addEventListener('abort',abandon,{once:true});if(job.abandon?.aborted)abandon();
     try{
       job.signal.throwIfAborted();
       yield {type:'session',id:session.sessionId};
@@ -184,11 +193,14 @@ export class AgentRunner {
         await taken;
       });
       yield* events.drain();
-      await run;
+      if(job.abandon?.aborted)throw Error('本轮已放弃，未等智能体结束');
+      await Promise.race([run,given]);
+      if(job.abandon?.aborted)throw Error('本轮已放弃，未等智能体结束');
     }finally{
-      finished=true;job.steerable?.(undefined);job.signal.removeEventListener('abort',abort);unsubscribe();
+      finished=true;job.steerable?.(undefined);job.signal.removeEventListener('abort',abort);job.abandon?.removeEventListener('abort',abandon);unsubscribe();
       for(const h of handed.splice(0))h.refused(new SteerRefused());
-      if(!settled)await session.abort().catch(()=>{});
+      // An abort that hangs as the run does is not waited for once the turn is given up on.
+      if(!settled)await Promise.race([session.abort().catch(()=>{}),given]);
       session.dispose();
     }
   }

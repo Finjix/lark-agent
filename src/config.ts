@@ -19,7 +19,7 @@ if(!locks||typeof locks!=='object'||Array.isArray(locks)||Object.values(locks).s
 export const THINKING_LEVELS=['off','minimal','low','medium','high','xhigh','max'] as const;
 export const config = {
   FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
-  CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',5000,250),
+  CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250),
   TASK_TIMEOUT_MS:int('TASK_TIMEOUT_MS',0), HEALTH_PORT:int('HEALTH_PORT',8765,1,65535),
   // Logs, workspace files and the agent's chats untouched for this long are deleted (see maintenance.ts).
   RETENTION_DAYS:int('RETENTION_DAYS',14,1),

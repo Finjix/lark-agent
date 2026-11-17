@@ -9,7 +9,7 @@ import {fauxProvider,fauxAssistantMessage,fauxToolCall,fauxText} from '@earendil
 import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
-import {Scheduler} from '../dist/tasks/scheduler.js';
+import {Scheduler,canSchedule} from '../dist/tasks/scheduler.js';
 import {Turn} from '../dist/agent/turn.js';
 import {cardJson,cardElements,renderTask} from '../dist/feishu/cards.js';
 import {agentInput,MAX_ATTACHED_IMAGE_BYTES} from '../dist/agent/input.js';
@@ -373,6 +373,54 @@ test('a task stopped mid-turn ends even when its events never do (a browser left
   assert.equal(store.busy('t','u1'),false,'the next input is accepted');assert.equal(service.interrupt(after),false);
   store.close();
 });
+test('a turn given up on still holds its user and resources until it has ended, so the next task never shares its workspace and chat with it',async()=>{
+  let end;const ended=new Promise(r=>{end=r;});
+  const {store,service}=setup(async function*(job){
+    yield started('th');yield say('a','请扫码');yield completed;
+    // Winding down hangs (a browser left waiting): only being let go of ends it, and that takes as long as `ended` says.
+    await new Promise(resolve=>job.abandon.addEventListener('abort',resolve,{once:true}));await ended;
+  });
+  service.exitWaitMs=20;
+  const first=store.create(input('m1','u1')).task;store.transition(first.id,'STARTING',{started_at:Date.now()});
+  await service.start(store.get(first.id));
+  assert.equal(store.get(first.id).status,'COMPLETED','the user has the answer');
+  assert.deepEqual(service.held().map(t=>t.id),[first.id],'its turn is still ending');
+  const next=store.create(input('m2','u1')).task,other=store.create(input('m3','u2')).task;
+  const active=()=>[...store.active(),...service.held()];
+  assert.equal(canSchedule(store.get(next.id),active()),false,'the same user waits');
+  assert.equal(canSchedule(store.get(other.id),active()),true,'other users do not');
+  end();await until(()=>service.held().length===0);
+  assert.equal(canSchedule(store.get(next.id),active()),true,'once it has ended the next task starts');
+  store.close();
+});
+
+test('a turn that never ends lets go of its user after lingerMaxMs, and says so',async()=>{
+  const {store,service}=setup(async function*(){yield started('th');yield completed;await new Promise(()=>{});});
+  service.exitWaitMs=10;service.lingerMaxMs=30;
+  const task=await (async()=>{const t=store.create(input()).task;store.transition(t.id,'STARTING',{started_at:Date.now()});await service.start(store.get(t.id));return t;})();
+  assert.deepEqual(service.held().map(t=>t.id),[task.id]);
+  await until(()=>service.held().length===0);
+  store.close();
+});
+
+test('the runner ends a turn it is told to abandon at once, even while pi has not settled',async()=>{
+  const {runner,faux,cwd,done}=await fakeRunner();
+  try{
+    let release;const hung=new Promise(r=>{release=r;});
+    // A model reply that never comes: pi's run does not settle by itself.
+    faux.setResponses([async()=>{await hung;return fauxAssistantMessage('迟到');}]);
+    const stop=new AbortController(),abandon=new AbortController();
+    const events=runner.run({cwd,input:{text:'hi',images:[]},signal:stop.signal,abandon:abandon.signal})[Symbol.asyncIterator]();
+    assert.equal((await events.next()).value.type,'session');
+    const pending=events.next();
+    stop.abort();abandon.abort();
+    const outcome=await Promise.race([pending.then(()=>'ended',()=>'ended'),new Promise(r=>setTimeout(()=>r('still running'),2000))]);
+    assert.equal(outcome,'ended');
+    assert.equal((await events.return()).done,true,'and its cleanup ran');
+    release();
+  }finally{await done();}
+});
+
 test('a task cancelled before the agent was started is cancelled, not interrupted; /new ends a queued one and a leftover nobody runs',async()=>{
   const {store,agent,service}=setup(async function*(){yield started('th');yield completed;});
   const task=store.create(input()).task;store.transition(task.id,'STARTING',{started_at:Date.now()});store.update(task.id,{cancel_requested:1});

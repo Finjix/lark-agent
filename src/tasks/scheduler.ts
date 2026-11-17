@@ -24,7 +24,8 @@ export class Scheduler {
   }
   private schedule(){
     const blocked=new Set<string>();
-    const active=this.service.store.active();
+    // A task given up on whose turn is still ending counts as running (see TaskService.held).
+    const active=[...this.service.store.active(),...this.service.held()];
     for(const task of this.service.store.waiting()){
       const user=`${task.tenant_key}:${task.user_id}`;
       if(blocked.has(user))continue;

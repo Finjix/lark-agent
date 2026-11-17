@@ -30,7 +30,7 @@ test('scheduler launches every independent user without a numeric cap and stop a
   const s=memory(),releases=[],started=[];
   const tasks=Array.from({length:24},(_,i)=>s.create(input(`parallel-${i}`,`user-${i}`)).task);
   const next=s.create(input('same-user-next','user-0')).task;
-  const service={store:s,agent:{ready:true},paused:()=>false,start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
+  const service={store:s,agent:{ready:true},paused:()=>false,held:()=>[],start:task=>{started.push(task.id);return new Promise(resolve=>releases.push(resolve));}};
   const scheduler=new Scheduler(service);scheduler.tick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(started.length,24);assert.equal(s.active().length,24);assert.equal(s.get(next.id).status,'QUEUED');
   scheduler.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(started.length,24);

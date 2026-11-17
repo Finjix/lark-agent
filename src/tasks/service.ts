@@ -38,6 +38,24 @@ export class TaskService {
    * something running (a browser waiting for a QR scan, say). After this the task ends without waiting for it.
    */
   exitWaitMs=3000;
+  /** How long a turn given up on may still take to end (its session let go of) before it no longer holds its user and resources. */
+  lingerMaxMs=60000;
+  /**
+   * Tasks that are over while their turn is not yet: given up on (see exitWaitMs), the pi session may still be ending. Until it has, the
+   * scheduler counts them as running, so the user's next task (same workspace, same chat file) and one wanting their resources wait.
+   */
+  private lingering=new Map<string,Task>();
+  held():Task[]{return [...this.lingering.values()];}
+  private hold(task:Task,ended:Promise<unknown>){
+    let over=false;
+    this.lingering.set(task.id,task);
+    const limit=new Promise(resolve=>setTimeout(resolve,this.lingerMaxMs).unref());
+    void ended.then(()=>{over=true;},()=>{over=true;});
+    void Promise.race([ended.catch(()=>{}),limit]).then(()=>{
+      if(!over)log.error({taskId:task.id},'放弃的一轮迟迟没有结束，不再为它占着用户和资源');
+      this.lingering.delete(task.id);
+    });
+  }
   constructor(public store:Store,public agent:AgentRunner,private downloader?:ResourceDownloader){}
   notice(message:IncomingMessage,text:string){this.store.enqueue(`notice:${message.tenant}:${message.message}`,null,'NOTICE',{chat:message.chat,message:message.message,text});}
   authorized(message:IncomingMessage){return authorized(message);}
@@ -213,21 +231,24 @@ export class TaskService {
         // its way then is dropped.
         const stop=()=>{timer??=setTimeout(()=>{done.abort();giveUp();},this.exitWaitMs);};
         signal.addEventListener('abort',stop,{once:true});if(signal.aborted)stop();
-        const events=this.agent.run({sessionId:threadId,cwd:folder,input,signal:AbortSignal.any([signal,done.signal]),user,steerable:steer=>steering.offer(steer)})[Symbol.asyncIterator]();
+        const events=this.agent.run({sessionId:threadId,cwd:folder,input,signal:AbortSignal.any([signal,done.signal]),abandon:done.signal,user,steerable:steer=>steering.offer(steer)})[Symbol.asyncIterator]();
+        let over=false;
         try{
           for(;;){
             const next=events.next();
             const event=await Promise.race([next,gaveUp]);
             if(!event){next.catch(()=>{});break;}
-            if(event.done)break;
+            if(event.done){over=true;break;}
             received=true;this.onEvent(task,session,turn,event.value);
             if(turn.state!=='running')stop();
           }
         }finally{
           clearTimeout(timer);signal.removeEventListener('abort',stop);
           // Left early (an event that could not be recorded, say), the turn still ends: returning the iterator runs the runner's cleanup, which
-          // stops the turn. Otherwise the agent would go on with it after the task has failed.
-          void events.return?.(undefined)?.catch(()=>{});
+          // stops the turn. Otherwise the agent would go on with it after the task has failed. Until that cleanup is done, the task still holds
+          // its user and resources (see lingering).
+          const ending=Promise.resolve(events.return?.(undefined));
+          if(over)void ending.catch(()=>{});else this.hold(task,ending);
         }
         break;
       }catch(e){
