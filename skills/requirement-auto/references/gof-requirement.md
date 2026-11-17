@@ -6,11 +6,11 @@ Talk to the user in their language (Chinese unless they write otherwise). Field 
 
 ## Flow
 
-The user gives the requirement documents; a CLS ticket asks a supplier to make the materials. A request is the **full flow** unless the user narrows it ("只要 CSV"): append progress rows -> verify -> CSV -> unpublished CLS draft -> import the CSV into it -> screenshots of the progress sheet and the draft -> copyable group message. Publishing the draft and sending the message are the user's.
+The user gives the requirement documents; a CLS ticket asks a supplier to make the materials. Asked for the whole task, it runs the **full flow**: append progress rows -> verify -> CSV -> unpublished CLS draft -> import the CSV into it -> screenshots of the progress sheet and the draft -> copyable group message. Publishing the draft and sending the message are the user's.
 
 Material files the user sends to put into CLS are [gof-creative-upload.md](gof-creative-upload.md), not this workflow.
 
-Users also take it in steps: **numbers first** ("帮我占 15 条编号", no document yet): rows only (a request without `cls` and `script_url`), then later **the ticket for those rows** ("发单", §5), and **writing into their requirement document** ("把需求填到文档里", §6). Each step has its own plan and go-ahead.
+This is the default order, not a fence: the user may ask for one step, skip steps or have one done again ([Steps on request](../SKILL.md#steps-on-request)). Common ones: **only the CSV** ("只要 CSV"), **numbers first** ("帮我占 15 条编号", no document yet): rows only (a request without `cls` and `script_url`), then later **the ticket for those rows** ("发单", §5), and **writing into their requirement document** ("把需求填到文档里", §6). Again on request: screenshots, the group message, the CSV, a read-back of the draft. A step that writes gets its own short plan and go-ahead.
 
 **Several links in one message are one request:** one plan, one approval, one append of all rows, one CLS draft per document, one group message for all.
 

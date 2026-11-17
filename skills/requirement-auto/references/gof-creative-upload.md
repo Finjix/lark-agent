@@ -6,7 +6,7 @@ Talk to the user in their language (Chinese unless they write otherwise). Field 
 
 ## Flow
 
-The user gives finished materials. A request is the **whole flow** unless the user narrows it ("只登记进度表" / "只上传"): append a progress-sheet row for each file that has none yet -> verify -> upload the files to CLS 创意列表 under their rows' 素材名称 -> save the annotation and read it back -> screenshots of the progress sheet and the creative list.
+The user gives finished materials. Asked for the whole task, it runs the **whole flow**: append a progress-sheet row for each file that has none yet -> verify -> upload the files to CLS 创意列表 under their rows' 素材名称 -> save the annotation and read it back -> screenshots of the progress sheet and the creative list. This is the default order, not a fence: the user may ask for one step ("只登记进度表", "只上传", "再截一张创意列表"), skip steps or have one done again ([Steps on request](../SKILL.md#steps-on-request)); an upload on its own takes the files' rows from the sheet.
 
 1. **Plan:** check logins, collect the files, work out each file's row (already in the sheet, or new: tags, 创意形式, 提炼词) and people, the upload fields, ask only what is left, show one plan, wait for the user's go-ahead.
 2. **Execute:** run the approved plan to the end without asking again. Use your judgement on errors: retry read-only commands, re-login, re-export, fix and re-run what the tools refused. Ask the user only when the plan itself would have to change (files, rows, numbers, names, people) or something only they can do (login scan, permissions).
