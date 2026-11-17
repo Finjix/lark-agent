@@ -65,7 +65,7 @@ def _websockets() -> Any:
     try:
         from websockets.sync import client
     except ImportError:
-        raise Blocked("The Python package websockets (needed to drive the browser) is missing: install the feishu skill's requirements.txt") from None
+        raise Blocked("The Python package websockets (needed to drive the browser) is missing: install feishu-sdk/requirements.txt") from None
     return client
 
 

@@ -1,6 +1,6 @@
 # 飞书任务机器人
 
-Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 → 在本服务进程里用 [pi coding agent](https://pi.dev)（`@earendil-works/pi-coding-agent` 的 SDK，不用它的终端界面）执行 → 卡片、最终回复、交付文件回传飞书。机器人会做的事全部来自 `skills/` 里的标准技能（[Agent Skills](https://agentskills.io/specification)），技能脚本都是 Python；飞书登录和读飞书文档也是一个技能（`feishu`，见“飞书”）。技能不依赖本服务：拷到别的 agent harness（如 Claude Code 的技能目录）里同样能用，见“技能”。
+Windows x64 本地常驻服务：飞书私聊或群聊 @机器人 提交任务 → 在本服务进程里用 [pi coding agent](https://pi.dev)（`@earendil-works/pi-coding-agent` 的 SDK，不用它的终端界面）执行 → 卡片、最终回复、交付文件回传飞书。机器人会做的事全部来自 `skills/` 里的标准技能（[Agent Skills](https://agentskills.io/specification)），技能脚本都是 Python。飞书登录和读飞书文档是智能体内置的能力（`feishu_*` 工具，背后是 `feishu-sdk/`，见“飞书”），只作为技能的基础，不当成对用户提供的能力。
 
 pi 的登录、对话等一切状态都放在项目自己的 `data/pi/` 里。系统里的 pi（`~\.pi`）既不读也不写；换一台电脑只要 `npm install`、`start.cmd login` 一次即可使用。
 
@@ -24,7 +24,7 @@ pi 以 SDK 的方式跑在服务进程里：每个任务一个 pi 会话（带�
 - **位置**：`data/pi/` 保存登录（`auth.json`）和对话（`sessions/`，每个对话一个 JSONL 文件），不入 Git。环境变量 `PI_CODING_AGENT_DIR` 被忽略，始终使用项目里的这个目录；pi 自己不联网（不刷新模型目录、不查新版本、不发遥测）。
 - **配置**：不读 pi 的 `settings.json`、`AGENTS.md`、扩展、提示词模板和项目里的 `.pi`，全部由程序传入（见 `src/agent/runner.ts`）：工具只有 pi 自带的 `read`、`bash`、`edit`、`write`，技能是 `skills/` 里的，自动压缩和出错重试打开，后台保持缓存（cache warming）关闭（每次请求都算订阅额度）。
 - **权限**：没有任何限制：`bash` 能读写本机任何位置、访问网络，也没有人会被询问。因为不能交互，做不到的事只会失败，智能体自己换办法；需要问用户什么，就在回复里问，用户的下一条消息就是回答。
-- **提示词**：pi 自己的编程助手开场白换成本项目的指令（英文，`src/agent/instructions.ts`），角色设定是“小薯”——一只猫，MCC Q3 内部的 agent 应用 AI 助手（语气专业简洁，不卖萌、不带“喵”和 emoji，不妨碍规则和技能的输出；解决不了的问题请用户联系薯薯（钟丰骏））；pi 照常附上技能清单（名称、说明、`SKILL.md` 的位置）和工作目录：只能用技能办事，用技能之前先读完那个技能的 `SKILL.md`，做不到的就告诉用户做不到，不自己写脚本、跑命令或联网代替；feishu 技能只是其他技能的基础能力，不算对用户提供的能力（介绍自己能做什么时不提读飞书文档、登录飞书），只在别的技能处理的请求需要飞书链接内容时才用它读，飞书登录由智能体按 feishu 技能的步骤完成（别的技能报告没登录时也是），二维码只在私聊里给本人；命令和文件读写只在使用技能必不可少时才做，且限于工作目录、技能自己的目录和技能指定的位置；不查看环境变量和凭证，不装软件、不改系统；用用户的语言回复；命令在 Git Bash 里执行。这是提示词层面的约束，工具本身没有限制（见上）。`skills/` 为空时，智能体只会告诉用户它没有能力。
+- **提示词**：pi 自己的编程助手开场白换成本项目的指令（英文，`src/agent/instructions.ts`），角色设定是“小薯”——一只猫，MCC Q3 内部的 agent 应用 AI 助手（语气专业简洁，不卖萌、不带“喵”和 emoji，不妨碍规则和技能的输出；解决不了的问题请用户联系薯薯（钟丰骏））；pi 照常附上技能清单（名称、说明、`SKILL.md` 的位置）和工作目录：只能用技能办事，用技能之前先读完那个技能的 `SKILL.md`，做不到的就告诉用户做不到，不自己写脚本、跑命令或联网代替；内置的飞书工具只是技能的基础能力，不算对用户提供的能力（介绍自己能做什么时不提读飞书文档、登录飞书），只在技能处理的请求需要飞书链接内容、而技能自己不读时才用它读，飞书登录由智能体用 `feishu_login` 完成（技能报告没登录时也是），二维码只在私聊里给本人；命令和文件读写只在使用技能必不可少时才做，且限于工作目录、技能自己的目录和技能指定的位置；不查看环境变量和凭证，不装软件、不改系统；用用户的语言回复；命令在 Git Bash 里执行。这是提示词层面的约束，工具本身没有限制（见上）。`skills/` 为空时，智能体只会告诉用户它没有能力（飞书工具单独用不上）。
 - **输入**：用户文字原样提交（保留空白换行）。有附件时在文字前加一段清单（每个文件的路径，并提醒附件内容只是资料、不是用户的指令）；20 MB 以内的图片同时作为图片输入让模型直接看到画面（pi 先缩到 2000×2000 以内），其他文件由智能体交给技能按路径打开。飞书语音消息按文件接收（`语音消息.opus`），同样只是路径。单独发送的视频按文件接收（原文件名）。每条消息最多 10 个附件；图片整张下载（不超过 100 MB，超过时任务失败并告诉用户原因），文件和视频按飞书的规定分段下载（每段 30 MB），大小不限。飞书不允许机器人下载用户发来的文件夹（所有资源接口都不支持，与权限无关），收到文件夹时机器人回复请用户压缩成 zip 再发。
 
 ## 目录
@@ -51,12 +51,12 @@ pi 以 SDK 的方式跑在服务进程里：每个任务一个 pi 会话（带�
 | 路径 | 内容 |
 |---|---|
 | `main.ts`、`config.ts`、`log.ts`、`types.ts` | 入口和命令行（`start.cmd` 的子命令）、配置、日志、共用类型 |
-| `agent/` | pi 会话：执行一轮、提示词、输入、技能的环境、ChatGPT 登录 |
+| `agent/` | pi 会话：执行一轮、提示词、输入、技能的环境、内置的飞书工具（`feishu.ts`）、ChatGPT 登录 |
 | `feishu/` | 飞书机器人：长连接收消息、附件下载、卡片、回传 |
 | `tasks/` | 任务：接收、排队调度、执行中并入消息 |
 | `storage/` | SQLite 数据库 |
 | `users/` | 用户：访问控制、显示名、用户目录 |
-| `service/` | 运维：自动清理（含技能自己的 prune）、定时任务、技能的 Python 依赖 |
+| `service/` | 运维：自动清理（含飞书模块和技能自己的 prune）、定时任务、Python 依赖 |
 
 ```
 data/user/
@@ -64,7 +64,7 @@ data/user/
     workspace/                智能体的工作目录
       input/                  用户发来的附件，保留原文件名，重名加 (2)；有附件才会创建
     tmp/                      智能体的中间文件（不在工作目录里，所以不会被发给用户）
-    feishu/                   这个用户的飞书登录和无头浏览器（feishu 技能的数据）
+    feishu/                   这个用户的飞书登录和无头浏览器（智能体飞书模块的数据）
     <技能名>/                 其他技能自己的数据（由技能创建）
 ```
 
@@ -81,29 +81,28 @@ data/user/
 
 ## 飞书
 
-飞书是一个技能：`skills/feishu`（Python，`scripts/feishu.py`）以用户本人的身份访问飞书，用法见它的 [SKILL.md](skills/feishu/SKILL.md)，其他技能调用它的协议见 [references/bridge.md](skills/feishu/references/bridge.md)。
+飞书是智能体内置的能力，不是技能：每一轮都带着 5 个飞书工具（`src/agent/feishu.ts`），它们用系统的 Python 和这个用户的环境运行飞书模块 `feishu-sdk/feishu.py`，以用户本人的身份访问飞书。模块的命令见 [feishu-sdk/README.md](feishu-sdk/README.md)，技能调用它的协议见 [feishu-sdk/bridge.md](feishu-sdk/bridge.md)。读飞书只作为技能的基础，不对用户提供（见“提示词”）。
 
-- **登录**：智能体按 SKILL.md 运行 `feishu.py login check`；没登录时 `login qr --output <工作目录里的新 .png>` 发起设备授权，在这个用户的无头浏览器里打开授权页，把飞书的登录二维码存进工作目录随回复发给用户（群聊里拒绝：命令看 `AGENT_CHAT_TYPE`，请用户私聊）；用户扫码确认后 `login finish` 点【授权】、取得并检查登录。本机没有可用的浏览器时，`login qr` 改给链接和验证码。`login logout [--browser]` 退出。
-- **读文档**：`feishu.py doc fetch --url <链接> --output <新 .md>` 把飞书文档 / 知识库节点 / 电子表格读成 Markdown。
-- **登录存在** `data/user/<名>/feishu/`（`auth.json`、待确认的授权、无头浏览器 `browser-profile/`），不发送；只有 `prune` 会清理其中的临时文件和浏览器缓存（见“自动清理”）。登录的账号必须是这个用户本人（`AGENT_USER_OPEN_ID`），别人扫码会被拒绝。一次扫码同时让浏览器登录飞书网页，requirement-auto 的 CLS 单点登录也用它，不用再扫。
-- **其他技能用飞书**：requirement-auto 找同一个 skills 目录下的 `feishu/scripts/feishu.py`（或环境变量 `FEISHU_CLI` 指定的绝对路径），通过它的 bridge（`feishu.py serve` / `bridge`）读写飞书；技能自己不登录，发现没登录就说出来，由智能体用 feishu 技能让用户登录。所以 requirement-auto 要和 feishu 放在一起用。
-- **依赖**：`skills/feishu/requirements.txt`（`websockets`，驱动浏览器用）和其他技能的依赖一起由 `start.cmd` / `start.cmd setup` 安装。
+- **登录**：`feishu_login_check` 检查登录；没登录时 `feishu_login`（模块的 `login qr`）发起设备授权，在这个用户的无头浏览器里打开授权页，把飞书的登录二维码存进工作目录随回复发给用户（群聊里拒绝：模块看 `AGENT_CHAT_TYPE`，请用户私聊）；用户扫码确认后 `feishu_login_finish`（`login finish`）点【授权】、取得并检查登录。本机没有可用的浏览器时改给链接和验证码。`feishu_logout` 退出。
+- **读文档**：`feishu_read_doc`（`doc fetch`）把飞书文档 / 知识库节点 / 电子表格读成 Markdown。
+- **登录存在** `data/user/<名>/feishu/`（`auth.json`、待确认的授权、无头浏览器 `browser-profile/`），不发送；只有模块的 `prune` 会清理其中的临时文件和浏览器缓存（见“自动清理”）。登录的账号必须是这个用户本人（`AGENT_USER_OPEN_ID`），别人扫码会被拒绝。一次扫码同时让浏览器登录飞书网页，requirement-auto 的 CLS 单点登录也用它，不用再扫。
+- **技能用飞书**：服务给每条命令设 `FEISHU_CLI`（`feishu-sdk/feishu.py` 的绝对路径），requirement-auto 通过它的 bridge（`feishu.py serve` / `bridge`）读写飞书；技能自己不登录，发现没登录就说出来，由智能体用 `feishu_login` 让用户登录。
+- **依赖**：`feishu-sdk/requirements.txt`（`websockets`，驱动浏览器用）和技能的依赖一起由 `start.cmd` / `start.cmd setup` 安装。
 
 ## 技能
 
-技能是标准的 Agent Skills：`skills/<名>/` 里有 `SKILL.md`（开头的 `name`、`description` 告诉模型这个技能做什么、什么时候用），详细流程放在 `references/`，脚本放在 `scripts/`（Python），依赖写在 `requirements.txt`。提示词（`SKILL.md`、`references/`、脚本输出给模型看的说明）一律英文，用户看到的固定文字（审片表格、群消息模板、表格列名等）保留中文。**放进 `skills/` 就能用**，下一个任务起生效，不用重启（新增依赖要 `start.cmd setup` 或重启装上）。现有三个：
+技能是标准的 Agent Skills：`skills/<名>/` 里有 `SKILL.md`（开头的 `name`、`description` 告诉模型这个技能做什么、什么时候用），详细流程放在 `references/`，脚本放在 `scripts/`（Python），依赖写在 `requirements.txt`。提示词（`SKILL.md`、`references/`、脚本输出给模型看的说明）一律英文，用户看到的固定文字（审片表格、群消息模板、表格列名等）保留中文。**放进 `skills/` 就能用**，下一个任务起生效，不用重启（新增依赖要 `start.cmd setup` 或重启装上）。现有两个：
 
 | 技能 | 做什么 | 数据 |
 |---|---|---|
-| `feishu` | 用户本人的飞书登录（扫码），把飞书文档 / 知识库 / 电子表格读成 Markdown；也是其他技能访问飞书的通道（bridge），见“飞书” | `data/user/<名>/feishu/` |
 | `audit-auto` | AI 审片：按 GOF / GOT 的固定规范和审核群整理出的动态规范，用 Gemini（内部 AI 网关）审广告视频 | `data/user/<名>/audit-auto/`、`data/shared/audit-auto/` |
-| `requirement-auto` | GOFCN 素材需求：发布需求（进度表、CLS 草稿、截图）、上传素材到 CLS 创意列表；飞书经由 `feishu` 技能（要和它放在同一个 skills 目录） | `data/user/<名>/requirement-auto/` |
+| `requirement-auto` | GOFCN 素材需求：发布需求（进度表、CLS 草稿、截图）、上传素材到 CLS 创意列表；飞书经由智能体的飞书模块（`FEISHU_CLI`），见“飞书” | `data/user/<名>/requirement-auto/` |
 
-- **与本服务解耦**：技能只认一组中性的、全部可选的环境变量（下一条），不知道 lark-agent 的存在。拷到别的 agent harness（如 Claude Code 的 `~/.claude/skills/`）里照样能用：没有这些变量时，用户数据放在 `~/.agent-skills/user/<技能名>/`，共用数据放在 `~/.agent-skills/shared/<技能名>/`；飞书登录按 feishu 技能的 SKILL.md 一步步做（`login qr` → 用户扫码 → `login finish`）；audit-auto 监听审核群时用 `--chat <chat_id>` 指定群，规范的定期更新自己安排（`audit rules sync`）。
-- **技能脚本的环境**：智能体执行的每条命令都带着：系统的 Python（`python` 就是 PATH 上的那个；用 `PYTHON` 指定完整路径时，它所在的目录排在 PATH 最前；`PYTHONUTF8=1`）、`AGENT_USER_DIR`（`data/user/<名>`，不是其中的 `workspace`）、`AGENT_USER_OPEN_ID`、`AGENT_CHAT_ID`（这一轮的消息来自哪个会话，私聊或群的 chat_id）、`AGENT_CHAT_TYPE`（`p2p` 或 `group`，取自飞书的消息事件；服务重启前就排着的任务没有这一项）、`AGENT_SHARED_DIR`（`data/shared/`）、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`，以及服务自己的环境（`.env` 里的设置，如 `AUDIT_AUTO_GEMINI_KEY`）。工作目录是用户的 `workspace/`。
-- **Python 环境**：用系统的 Python（`PYTHON` 指定的，或 PATH 上的 `python`，3.11 及以上），不建虚拟环境。`start.cmd`（和 `start.cmd setup`）在某个技能的 `requirements.txt` 有变化、或换了一个 Python 时，把它们 `pip install` 进这个 Python（site-packages 不可写时 pip 自动装到用户目录）；没变化时什么都不做。安装记录在 `data/lark-agent-requirements.sha256`。
+- **与本服务解耦**：技能只认一组中性的、全部可选的环境变量（下一条），不知道 lark-agent 的存在。拷到别的 agent harness（如 Claude Code 的 `~/.claude/skills/`）里也能用：没有这些变量时，用户数据放在 `~/.agent-skills/user/<技能名>/`，共用数据放在 `~/.agent-skills/shared/<技能名>/`；requirement-auto 要用飞书，还得把 `FEISHU_CLI` 指向一份 `feishu-sdk/feishu.py`，登录用它的 `login qr` → 用户扫码 → `login finish`；audit-auto 监听审核群时用 `--chat <chat_id>` 指定群，规范的定期更新自己安排（`audit rules sync`）。
+- **技能脚本的环境**：智能体执行的每条命令都带着：系统的 Python（`python` 就是 PATH 上的那个；用 `PYTHON` 指定完整路径时，它所在的目录排在 PATH 最前；`PYTHONUTF8=1`）、`AGENT_USER_DIR`（`data/user/<名>`，不是其中的 `workspace`）、`AGENT_USER_OPEN_ID`、`AGENT_CHAT_ID`（这一轮的消息来自哪个会话，私聊或群的 chat_id）、`AGENT_CHAT_TYPE`（`p2p` 或 `group`，取自飞书的消息事件；服务重启前就排着的任务没有这一项）、`AGENT_SHARED_DIR`（`data/shared/`）、`FEISHU_CLI`（飞书模块，见“飞书”）、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`，以及服务自己的环境（`.env` 里的设置，如 `AUDIT_AUTO_GEMINI_KEY`）。工作目录是用户的 `workspace/`。
+- **Python 环境**：用系统的 Python（`PYTHON` 指定的，或 PATH 上的 `python`，3.11 及以上），不建虚拟环境。`start.cmd`（和 `start.cmd setup`）在飞书模块或某个技能的 `requirements.txt` 有变化、或换了一个 Python 时，把它们 `pip install` 进这个 Python（site-packages 不可写时 pip 自动装到用户目录）；没变化时什么都不做。安装记录在 `data/lark-agent-requirements.sha256`。
 - **数据**：技能自己的数据放在 `data/user/<名>/<技能名>/`（例如用户的登录信息和中间文件），不在 `workspace/` 里，所以不会被当成交付文件发给用户，也只由技能自己清理（见“自动清理”）。不属于哪个用户的放在 `data/shared/<技能名>/`，不清理、不发送。用户之间的隔离只是约定：智能体的命令没有限制，同一个 Windows 账号，被提示词注入的模型能读到别人的目录。
-- **自我清理（`prune`）**：技能可以在 `SKILL.md` 开头的 `metadata` 里写 `prune: "scripts/<脚本>.py prune"`（技能目录里的 Python 脚本和参数）。自动清理时，服务对每个有 `<技能名>/` 文件夹、当时没有任务的用户目录运行一次（工作目录是技能目录，环境是这个用户的，没有会话），命令输出一行 `{"status":"ok","files":n,"bytes":n}`；每次最多 30 分钟，超时或服务停止时连同它启动的进程一起结束。删什么由技能自己决定，服务不知道技能文件夹里有什么。三个技能都有：feishu 清保存中断留下的临时文件和隐藏浏览器的缓存，audit-auto 清 `tmp/` 和留存的审核结果 `reviews/`，requirement-auto 清过期的批次和临时文件（见下表）。`start.cmd doctor` 的 `skills` 标出声明了 `prune` 的技能。
+- **自我清理（`prune`）**：技能可以在 `SKILL.md` 开头的 `metadata` 里写 `prune: "scripts/<脚本>.py prune"`（技能目录里的 Python 脚本和参数）。自动清理时，服务对每个有 `<技能名>/` 文件夹、当时没有任务的用户目录运行一次（工作目录是技能目录，环境是这个用户的，没有会话），命令输出一行 `{"status":"ok","files":n,"bytes":n}`；每次最多 30 分钟，超时或服务停止时连同它启动的进程一起结束。删什么由技能自己决定，服务不知道技能文件夹里有什么。飞书模块也这样清理自己的 `feishu/`（`feishu.py prune`：保存中断留下的临时文件和隐藏浏览器的缓存）。两个技能都有：audit-auto 清 `tmp/` 和留存的审核结果 `reviews/`，requirement-auto 清过期的批次和临时文件（见下表）。`start.cmd doctor` 的 `skills` 标出声明了 `prune` 的技能。
 - **定时任务**：不属于哪个用户的一轮、要定期做的事，由技能在使用过程中写进它在 `data/shared/` 的文件夹：`data/shared/<技能名>/jobs.json`。服务启动时读一遍，之后每次例行检查（每小时）再读一遍，新出现的任务排上、删掉或改了的不再按原来的安排跑（正在跑的那一次让它跑完）。现在只有 audit-auto：有审核群在监听时，它写下每三天读一遍这些群的任务（每次最多读 30 分钟，到 30 分钟强制结束；结束时正在进行的那一段下次重读）（最后一个群停止监听时删掉）：
 
   ```json
@@ -114,7 +113,7 @@ data/user/
 
   从项目根目录 `jobs.json` 升级过来、已经有审核群在监听的部署：`data/shared/audit-auto/jobs.json` 要等 audit-auto 下一次保存监听的群时才会写出来；升级后手动跑一次 `python skills\audit-auto\scripts\audit.py rules sync`（或在任一审核群里说「现在更新一下规范」）即可。
 - **只放你信任的技能**：技能的脚本以本服务的账号、不受任何限制地运行。
-- **机器人密钥的代价**：每个用户的每一轮命令都带着 `FEISHU_APP_SECRET`（feishu 技能的设备授权、audit-auto 读审核群都要用）。能和机器人对话的人理论上能让智能体读到它，和 `.env`、`data/pi/auth.json` 一样（见“访问控制”）。想收紧，给设备授权单独建一个飞书应用，把 `.env` 里的 `FEISHU_APP_ID/SECRET` 换成它。
+- **机器人密钥的代价**：每个用户的每一轮命令都带着 `FEISHU_APP_SECRET`（飞书模块的设备授权、audit-auto 读审核群都要用）。能和机器人对话的人理论上能让智能体读到它，和 `.env`、`data/pi/auth.json` 一样（见“访问控制”）。想收紧，给设备授权单独建一个飞书应用，把 `.env` 里的 `FEISHU_APP_ID/SECRET` 换成它。
 
 ## 自动清理
 
@@ -126,7 +125,7 @@ data/user/
 | `data/backup-*.sqlite` | `start.cmd backup` 生成的备份中，最新 3 份以外的 | 最新 3 份（不论多旧） |
 | `data/user/<用户名>/workspace` | **里面所有文件**（用户发来的 `input/` 附件、智能体生成的文件，包括以 `.` 开头的），以及因此变空的文件夹 | 工作目录文件夹本身 |
 | `data/user/<用户名>/tmp` | 智能体的中间文件 | 文件夹本身 |
-| `data/user/<用户名>/<技能名>` | 由技能自己的 `prune` 决定（见“技能”）：feishu 是保存中断留下的 `*.tmp`（`FEISHU_RETENTION_DAYS`，默认 14 天）和隐藏浏览器的缓存（`Cache`、`GPUCache`、`Service Worker/CacheStorage` 等，**整个删，不看新旧**，浏览器在用这个配置时跳过）；audit-auto 是 `tmp/` 和 `reviews/`（`AUDIT_AUTO_RETENTION_DAYS`，默认 14 天）；requirement-auto 是批次 `batches/` 和 `tmp/`（`REQUIREMENT_AUTO_RETENTION_DAYS`，默认 7 天；一个批次整个删、里面有新文件就整个留）。用户不再用这个技能也照样清 | 飞书登录和浏览器里的飞书网页登录、audit-auto 的群设置、requirement-auto 的 CLS 登录 `cls/` 等技能自己的数据；`data/shared/` 整个不动 |
+| `data/user/<用户名>/<技能名>` | 由飞书模块和技能自己的 `prune` 决定（见“技能”）：feishu（飞书模块）是保存中断留下的 `*.tmp`（`FEISHU_RETENTION_DAYS`，默认 14 天）和隐藏浏览器的缓存（`Cache`、`GPUCache`、`Service Worker/CacheStorage` 等，**整个删，不看新旧**，浏览器在用这个配置时跳过）；audit-auto 是 `tmp/` 和 `reviews/`（`AUDIT_AUTO_RETENTION_DAYS`，默认 14 天）；requirement-auto 是批次 `batches/` 和 `tmp/`（`REQUIREMENT_AUTO_RETENTION_DAYS`，默认 7 天；一个批次整个删、里面有新文件就整个留）。用户不再用这个技能也照样清 | 飞书登录和浏览器里的飞书网页登录、audit-auto 的群设置、requirement-auto 的 CLS 登录 `cls/` 等技能自己的数据；`data/shared/` 整个不动 |
 | `data/pi` | 对话文件 `sessions/*.jsonl`（每一轮都会写，用着的不会旧），崩溃记录 `crashes.json` | 登录 `auth.json` 等其余一切 |
 | 数据库 | 结束超过 2×`RETENTION_DAYS` 天的任务记录（事件、卡片、附件、交付、投递），没有任务引用的已退役对话，以及最新 500 条以外已发出的提示；空闲页多时压缩文件 | 未结束的任务、还有投递未发出的任务、当前对话、用户目录分配 |
 
@@ -179,7 +178,7 @@ start.cmd retry-delivery <任务ID|all>  :: 重试失败的投递，不重跑任
 
 ## 版本
 
-`@earendil-works/pi-coding-agent` 和 `@earendil-works/pi-ai` 固定同一版本（现为 1.5.2），升级时两个一起改。任务通过 SDK 的 `createAgentSession` 执行（`prompt` 开始一轮，执行期间的消息用 `steer`，`/new` 用 `abort`），`src/agent/runner.ts` 把会话事件换成本项目的步骤（`src/agent/turn.ts`），卡片由这些步骤生成。升级后看一下 pi 的 CHANGELOG 里 SDK、会话事件和 `openai-codex` 登录有没有变化，再跑 `npm test`、`start.cmd doctor`。各技能的测试（feishu、audit-auto、requirement-auto）：`python -m unittest discover -s skills\<名>\tests -t skills\<名>`。
+`@earendil-works/pi-coding-agent` 和 `@earendil-works/pi-ai` 固定同一版本（现为 1.5.2），升级时两个一起改。任务通过 SDK 的 `createAgentSession` 执行（`prompt` 开始一轮，执行期间的消息用 `steer`，`/new` 用 `abort`），`src/agent/runner.ts` 把会话事件换成本项目的步骤（`src/agent/turn.ts`），卡片由这些步骤生成。升级后看一下 pi 的 CHANGELOG 里 SDK、会话事件和 `openai-codex` 登录有没有变化，再跑 `npm test`、`start.cmd doctor`。飞书模块的测试：`python -m unittest discover -s feishu-sdk\tests -t feishu-sdk`；各技能的测试（audit-auto、requirement-auto）：`python -m unittest discover -s skills\<名>\tests -t skills\<名>`。
 
 数据库（`data/agent.sqlite`）的版本记在 `user_version` 里，现为 3：版本 2 加了任务状态 `STEERING`/`STEERED`，版本 3 去掉了 Codex 生成图片的表（`task_generated_images`）；版本 1、2 的库启动时直接沿用并改记为 3（删掉那张表），其他版本的库会被拒绝，启动时报错并说明是哪个文件。所以升级后不能直接回滚到 Codex 版（它会拒绝这个库）；确需回滚，先停服务，用任意 SQLite 工具执行 `CREATE TABLE task_generated_images (task_id TEXT NOT NULL REFERENCES tasks(id),item_id TEXT NOT NULL,saved_path TEXT,PRIMARY KEY(task_id,item_id)); PRAGMA user_version=2;` 再启动旧版。表结构变化时要同时升版本并写明处理办法。
 

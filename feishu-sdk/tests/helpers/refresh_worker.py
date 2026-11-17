@@ -7,7 +7,7 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from feishu_sdk.auth import FeishuAuth  # noqa: E402
 from feishu_sdk.config import AppCredentials, Endpoints  # noqa: E402

@@ -19,7 +19,7 @@ from .brief import doc_target
 from .feishu import Bridge, WriteUnknown, target
 from .util import Blocked, NODE, canonical, digest, is_object, need
 
-#: Editing a Feishu document: the feishu skill's login asks for it, but a login from before it was added lacks it.
+#: Editing a Feishu document: the agent's Feishu login asks for it, but a login from before it was added lacks it.
 DOC_EDIT_SCOPE = "docx:document"
 
 TYPE_NAMES: dict[int, str] = {
@@ -338,7 +338,7 @@ def _can_edit(bridge: Bridge) -> None:
     """Logins made before documents could be edited lack the permission: the user authorizes once more (the same QR as a first login)."""
     checked = bridge.call("auth-check-scopes", {"required": [DOC_EDIT_SCOPE]}) or {}
     need(checked.get("complete") is True and not (checked.get("missing") or []),
-         "the Feishu login lacks the permission to edit documents (docx:document): log the user in again with the feishu skill (login qr --extra-scope docx:document), then run this again")
+         "the Feishu login lacks the permission to edit documents (docx:document): log the user in to Feishu again (feishu_login with extra_scopes [docx:document]), then run this again")
 
 
 # ---- docx -------------------------------------------------------------------------------------------------------------------------

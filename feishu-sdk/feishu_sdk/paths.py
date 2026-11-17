@@ -16,7 +16,7 @@ from typing import Literal, Mapping
 
 from .errors import BridgeError
 
-# The skill's folder in a user directory, and the user directory without a host.
+# The module's folder in a user directory, and the user directory without a host.
 SKILL_FOLDER = "feishu"
 STANDALONE_USER_DIR = (".agent-skills", "user")
 USER_DIR_ENV = "AGENT_USER_DIR"

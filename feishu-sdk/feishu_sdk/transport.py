@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from .jsutil import get, is_number, js_string
 
 DEFAULT_TIMEOUT_S = 30.0
-USER_AGENT = "feishu-skill/1.0 (python)"
+USER_AGENT = "lark-agent-feishu/1.0 (python)"
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 

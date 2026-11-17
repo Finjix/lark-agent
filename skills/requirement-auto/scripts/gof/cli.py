@@ -7,6 +7,7 @@ Every command prints one line of canonical JSON on stdout; a refusal is {"status
 from __future__ import annotations
 
 import errno
+import json
 import os
 import re
 from typing import Any, Optional
@@ -334,18 +335,20 @@ def _creative_command(command: str, args: list[str], bridge: Any, via: Any) -> d
 
 
 def _feishu_login_todo(feishu: dict) -> str:
-    """What to do about a missing Feishu login: the feishu skill's QR login, asking for the scopes the check found missing."""
+    """What to do about a missing Feishu login: the agent's QR login, asking for the scopes the check found missing."""
     from .agent_feishu import locate_feishu
 
     try:
         entry = f'python "{locate_feishu().replace(os.sep, "/")}"'
     except Blocked:
-        entry = "python <feishu skill>/scripts/feishu.py"
+        entry = "python <Feishu module>/feishu.py"
     missing = feishu.get("missing_scopes") if isinstance(feishu.get("missing_scopes"), list) else []
     extra = "".join(f" --extra-scope {scope}" for scope in missing if isinstance(scope, str) and re.fullmatch(r"[A-Za-z0-9:._-]+", scope))
-    return (f"Feishu: log the user in with the feishu skill (see its SKILL.md): {entry} login qr --output <new file>.png{extra} saves a sign-in QR "
-            f"image; send it to the user only, to scan with the Feishu mobile app, and once they have confirmed run {entry} login finish. That one "
-            "scan also covers CLS. Ask for nothing else until Feishu is ok")
+    scopes = [scope for scope in missing if isinstance(scope, str) and re.fullmatch(r"[A-Za-z0-9:._-]+", scope)]
+    tool = f"feishu_login with extra_scopes {json.dumps(scopes)}" if scopes else "feishu_login"
+    return (f"Feishu: log the user in to Feishu with your Feishu login: {tool} gives a sign-in QR image for the user only, to scan with the Feishu "
+            f"mobile app; once they have confirmed, feishu_login_finish (without those tools: {entry} login qr --output <new file>.png{extra}, then "
+            f"{entry} login finish). That one scan also covers CLS. Ask for nothing else until Feishu is ok")
 
 
 def _prune(args: list[str]) -> dict:

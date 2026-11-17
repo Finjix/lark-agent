@@ -4,7 +4,7 @@ Find the Chrome or Edge that is already installed, start it with its own profile
 WebSocket. No download, no third-party package, no UI automation: it exists so that a person can log in to a web site in an ordinary
 browser and the login can then be observed.
 
-The feishu skill drives the same profile (its Feishu web session is what CLS signs in with) with its own copy of this code. The two share
+The agent's Feishu module drives the same profile (its Feishu web session is what CLS signs in with) with its own copy of this code. The two share
 the profile through the lock below (a file beside the profile, `browser-profile.lock`: {"pid","at","token"}) and the DevToolsActivePort file
 in it, so those two must stay the same in both: change them together or not at all.
 """
@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 from .util import Blocked
 
-#: Environment variable that names the browser executable to use instead of searching for one, the feishu skill's too: both skills must
+#: Environment variable that names the browser executable to use instead of searching for one, the Feishu module's too: both must
 #: start the same browser on the profile they share, or the Feishu web session would not carry over.
 BROWSER_ENV = "FEISHU_BROWSER"
 

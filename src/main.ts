@@ -42,12 +42,14 @@ async function doctor(agent:AgentRunner){
     sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length},
     agent:{ready:agent.ready,pi:agent.version,model:`${agent.provider}/${agent.modelId}`,thinking:agent.thinking,home:config.agentHome,...(agent.error?{error:agent.error}:{})},
     shell,python:await pythonStatus(),
+    // The agent's own Feishu tools (the user's login, documents) and the bridge the skills reach Feishu through.
+    feishuModule:{ok:await fs.stat(config.feishu).then(s=>s.isFile(),()=>false),path:path.relative(config.root,config.feishu)},
     skills:skills.map(s=>({name:s.name,path:path.relative(config.root,s.baseDir),...(prunes.some(p=>p.skill===s.name)?{prune:true}:{})})),
     jobs:[...jobs.map(j=>({name:j.name,everyMinutes:j.everyMinutes})),...invalid.map(reason=>({invalid:reason}))],
   };
   if(checks.configuration.credentials){try{const info=await new FeishuClient().raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
   store.close();console.log(JSON.stringify(checks,null,2));
-  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
+  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.feishuModule.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
 }
 
 async function main(){

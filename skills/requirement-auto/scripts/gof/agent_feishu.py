@@ -1,9 +1,9 @@
-"""How requirement-auto reaches Feishu: through the feishu skill installed next to it.
+"""How requirement-auto reaches Feishu: through the agent's Feishu module (FEISHU_CLI).
 
-Feishu as the user belongs to the feishu skill: the user's Feishu login, the allowlisted API calls and the hidden browser that holds the
+Feishu as the user belongs to the agent's Feishu module (lark-agent's feishu-sdk/feishu.py, named by FEISHU_CLI): the user's Feishu login, the allowlisted API calls and the hidden browser that holds the
 user's Feishu web session, shared with every skill that works in Feishu, so the user logs in once. This module runs that skill's feishu.py
-with this process's environment (the same user directory, Open ID and app), so it serves the same user. The contract is the feishu skill's
-references/bridge.md (`serve` line protocol, `bridge <command>` with JSON on stdin, `feishu-sdk-bridge/1`); nothing of it is imported. This
+with this process's environment (the same user directory, Open ID and app), so it serves the same user. The contract is the module's
+bridge.md (`serve` line protocol, `bridge <command>` with JSON on stdin, `feishu-sdk-bridge/1`); nothing of it is imported. This
 skill never logs in to Feishu.
 """
 
@@ -20,20 +20,17 @@ from .util import Blocked
 
 #: The bridge protocol this code speaks; the module says its own in `info.bridge`.
 BRIDGE_VERSION = "feishu-sdk-bridge/1"
-#: Optional override of where feishu.py is (an absolute path); by default it is the sibling skill's, <skills>/feishu/scripts/feishu.py.
+#: Where the agent's Feishu module is: the absolute path of its feishu.py, set by the host.
 FEISHU_ENV = "FEISHU_CLI"
-SIBLING = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "feishu", "scripts", "feishu.py")
-MISSING = ("The feishu skill is not installed: requirement-auto needs it in the same skills folder (feishu/scripts/feishu.py next to "
-           "requirement-auto/), or FEISHU_CLI set to the absolute path of its feishu.py")
+MISSING = ("The agent's Feishu module is not reachable: FEISHU_CLI must be the absolute path of its feishu.py (lark-agent sets it "
+           "for every command)")
 
 
 def locate_feishu(env: Optional[Mapping[str, str]] = None) -> str:
-    """Where the feishu skill's feishu.py is: FEISHU_CLI when set, otherwise the sibling skill folder."""
+    """Where the agent's Feishu module (feishu.py) is: FEISHU_CLI."""
     env = os.environ if env is None else env
     named = (env.get(FEISHU_ENV) or "").strip()
     if not named:
-        if os.path.isfile(SIBLING):
-            return SIBLING
         raise Blocked(MISSING)
     if os.path.isabs(named) and os.path.isfile(named):
         return named
@@ -53,7 +50,7 @@ def _child_env(env: Optional[Mapping[str, str]]) -> dict[str, str]:
 
 class FeishuServe:
     """
-    The feishu skill's bridge, one `feishu.py serve` process for the whole of this command: started at the first call, ended by close()
+    The Feishu module's bridge, one `feishu.py serve` process for the whole of this command: started at the first call, ended by close()
     (or when this process ends). A call whose process went away before it answered fails, which the caller treats as no answer.
     """
 
@@ -98,7 +95,7 @@ class FeishuServe:
                         child.wait(5)
                     except subprocess.TimeoutExpired:
                         pass
-                    raise ConnectionError("the feishu skill's process ended")
+                    raise ConnectionError("the Feishu module's process ended")
                 try:
                     message = json.loads(raw.decode("utf-8", "replace"))
                 except ValueError:
@@ -107,7 +104,7 @@ class FeishuServe:
                     return message["reply"]
 
     def close(self) -> None:
-        """Lets the feishu skill's process finish what it has and end."""
+        """Lets the Feishu module's process finish what it has and end."""
         child = self._child
         self._child = None
         if child is None:
@@ -148,8 +145,8 @@ _profiles: dict[str, str] = {}
 
 def browser_profile_dir(env: Optional[Mapping[str, str]] = None) -> str:
     """
-    The profile of this user's hidden browser, which is the feishu skill's: its Feishu web session is what CLS's single sign-on and the
-    sheet screenshots need, so one scan covers them all. Asked of the feishu skill once per user directory.
+    The profile of this user's hidden browser, which is the Feishu module's: its Feishu web session is what CLS's single sign-on and the
+    sheet screenshots need, so one scan covers them all. Asked of the module once per user directory.
     """
     env = os.environ if env is None else env
     key = env.get("AGENT_USER_DIR", "")
@@ -166,7 +163,7 @@ def browser_profile_dir(env: Optional[Mapping[str, str]] = None) -> str:
     try:
         info = json.loads(out.strip().split("\n")[-1] if out.strip() else "")
     except ValueError:
-        raise Blocked("the feishu skill did not say where its browser profile is") from None
+        raise Blocked("the Feishu module did not say where its browser profile is") from None
     data = info.get("data") if isinstance(info, dict) else None
     profile = data.get("browser_profile") if isinstance(data, dict) else None
     if not isinstance(info, dict) or info.get("ok") is not True or not isinstance(profile, str) or not os.path.isabs(profile):
@@ -174,6 +171,6 @@ def browser_profile_dir(env: Optional[Mapping[str, str]] = None) -> str:
         if isinstance(info, dict) and info.get("ok") is False:
             error = info.get("error") if isinstance(info.get("error"), dict) else {}
             detail = f": {error.get('message') or ''}"
-        raise Blocked(f"the feishu skill did not say where its browser profile is{detail}")
+        raise Blocked(f"the Feishu module did not say where its browser profile is{detail}")
     _profiles[key] = profile
     return profile

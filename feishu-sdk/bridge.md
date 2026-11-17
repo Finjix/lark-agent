@@ -1,27 +1,27 @@
-# The feishu skill's bridge (for other skills)
+# The Feishu module's bridge (for skills)
 
-How a skill reaches Feishu as the user through this skill, so there is one login, one set of allowlisted calls and one hidden browser, and
-the user scans once. A skill that uses the bridge never logs in: when a reply says the login is missing (`auth_required`,
-`scope_missing`), it says so and the agent logs the user in with this skill's `login qr` / `login finish` (see ../SKILL.md). A caller
-depends only on this contract: it does not import this skill's code and does not read its files.
+How a skill reaches Feishu as the user through the agent's Feishu module, so there is one login, one set of allowlisted calls and one
+hidden browser, and the user scans once. A skill that uses the bridge never logs in: when a reply says the login is missing
+(`auth_required`, `scope_missing`), it says so and the agent logs the user in with its Feishu login tools (`feishu_login` /
+`feishu_login_finish`, which run this module's `login qr` / `login finish`, see README.md). A caller depends only on this contract: it does
+not import this module's code and does not read its files.
 
-Tests: `python -m unittest discover -s skills/feishu/tests -t skills/feishu`. Dependencies: `requirements.txt` (only `websockets`, for
+Tests: `python -m unittest discover -s feishu-sdk/tests -t feishu-sdk`. Dependencies: `requirements.txt` (only `websockets`, for
 driving the browser).
 
 ## Finding feishu.py
 
-Install the feishu skill next to the calling skill (same skills folder), so it is `<skills>/feishu/scripts/feishu.py`; an absolute path in
-`FEISHU_CLI` overrides that. Run it with **the same Python interpreter as the caller** (`sys.executable`). Not found: refuse and say the
-feishu skill is needed; never talk to Feishu on your own.
+The host gives its absolute path in `FEISHU_CLI` (lark-agent: `<project>/feishu-sdk/feishu.py`, set for every command). Run it with
+**the same Python interpreter as the caller** (`sys.executable`). Not set: refuse and say the agent's Feishu module is needed; never talk to
+Feishu on your own.
 
 ```python
 import os
 
-def locate_feishu(skill_dir: str) -> str:
-    named = os.environ.get("FEISHU_CLI", "").strip()
-    path = named or os.path.join(os.path.dirname(skill_dir), "feishu", "scripts", "feishu.py")
+def locate_feishu() -> str:
+    path = os.environ.get("FEISHU_CLI", "").strip()
     if not os.path.isabs(path) or not os.path.isfile(path):
-        raise RuntimeError("the feishu skill is not installed next to this one (or FEISHU_CLI is wrong)")
+        raise RuntimeError("the agent's Feishu module is not reachable (FEISHU_CLI is missing or wrong)")
     return path
 ```
 
@@ -42,7 +42,7 @@ environment's proxy settings.
 |---|---|---|
 | Program | `feishu.py serve` | One request per stdin line `{"id":…,"command":"…","input":{…}}`, one reply per stdout line `{"id":…,"reply":{"ok":true,"data":…}}` or `{"id":…,"reply":{"ok":false,"error":{"kind","message","code?"}}}`. Replies come in the order they finish and carry the request's `id` (a line without one, or not a JSON object, is answered with `invalid_request` and no `id`). Exits 0 once stdin ends and every request has been answered. One process per caller process is enough |
 | Program | `feishu.py bridge <command>`, input JSON on stdin | One line, the same reply; exit 0 (ok) or 2. Only the commands that take input read stdin; `info`, `auth-status`, `auth-verify` and `auth-logout` do not |
-| The agent (../SKILL.md) | `login check/qr/finish/status/logout`, `doc fetch`, `doctor`, `info`, `prune` | One line of JSON; refusal `{"status":"blocked","reason":…}` with exit 2 (`login check`/`finish` not `ok`, `doc fetch` without `saved`, also 2). Not for skills: the login is the agent's |
+| The agent (README.md) | `login check/qr/finish/status/logout`, `doc fetch`, `doctor`, `info`, `prune` | One line of JSON; refusal `{"status":"blocked","reason":…}` with exit 2 (`login check`/`finish` not `ok`, `doc fetch` without `saved`, also 2). Not for skills: the login is the agent's |
 
 ```python
 import json, subprocess, sys
@@ -84,7 +84,7 @@ commands or fields does not change the version; changing what an existing comman
 `error.kind`: `config`, `auth_required`, `login_denied`, `login_expired`, `identity_mismatch`, `scope_missing`, `invalid_request`, `occupied`
 (the server refused to overwrite a non-empty cell), `unknown_result` (a write may have been applied: read back only, never resend),
 `network`, `api`. Messages are already scrubbed of tokens and the app secret and may be relayed as they are. On `auth_required` /
-`scope_missing` say that the Feishu login is needed: the agent logs the user in with the feishu skill, never the calling skill.
+`scope_missing` say that the Feishu login is needed: the agent logs the user in with its Feishu login tools, never the calling skill.
 
 ## Browser
 
@@ -113,7 +113,7 @@ use with `auth-check-scopes`.
 
 User-identity permissions the app must have, published: `wiki:wiki:readonly sheets:spreadsheet:readonly sheets:spreadsheet:read
 sheets:spreadsheet:write_only sheets:spreadsheet drive:export:readonly docx:document:readonly docx:document offline_access`
-(requirement-auto's overwrite probe also `sheets:spreadsheet:create`, asked for with `login qr --extra-scope`).
+(requirement-auto's overwrite probe also `sheets:spreadsheet:create`, asked for with `feishu_login`'s `extra_scopes`).
 
 ## Data
 

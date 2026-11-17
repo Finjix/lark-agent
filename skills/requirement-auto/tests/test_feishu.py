@@ -10,7 +10,6 @@ import sys
 import threading
 import time
 import unittest
-from unittest import mock
 
 from tests.helpers import fixture, make_zip, py_script, temp_dir, write_file
 
@@ -21,7 +20,7 @@ from gof.cli import main
 from gof.context import context
 from gof.feishu import (Bridge, OccupiedRefusal, SCOPES, add_option, execute, plan_with_api, probe, read_rules, reconcile,
                         recompute_api_plan, recompute_plan)
-from gof.agent_feishu import BRIDGE_VERSION, MISSING, SIBLING, FeishuServe, locate_feishu
+from gof.agent_feishu import BRIDGE_VERSION, MISSING, FeishuServe, locate_feishu
 from gof.rules import acceptance, dropdowns
 from gof.seal import seal
 from gof.snapshot import Snapshot
@@ -121,7 +120,7 @@ class BridgeTests(unittest.TestCase):
             self.fails(bridge_with(handler(overrides))[0].doctor, pattern)
 
     def test_serve_protocol(self) -> None:
-        """The feishu skill's `serve` line protocol: requests by id, replies by id, this user's environment."""
+        """The Feishu module's `serve` line protocol: requests by id, replies by id, this user's environment."""
         fake = py_script(tmp(), "feishu.py", "import json, os, sys\n"
                          "assert sys.argv[1:] == ['serve']\n"
                          "for line in sys.stdin:\n"
@@ -147,11 +146,11 @@ class BridgeTests(unittest.TestCase):
         finally:
             serve.close()
 
-    @unittest.skipUnless(os.environ.get("GOF_TEST_REAL_FEISHU") == "1", "set GOF_TEST_REAL_FEISHU=1 to run against the sibling feishu skill's feishu.py")
+    @unittest.skipUnless(os.environ.get("GOF_TEST_REAL_FEISHU") == "1", "set GOF_TEST_REAL_FEISHU=1 to run against the agent's feishu-sdk/feishu.py")
     def test_real_agent_feishu(self) -> None:
-        """The real feishu skill (the sibling folder) answers for this user and enforces its own allowlist."""
+        """The real Feishu module (the project's feishu-sdk) answers for this user and enforces its own allowlist."""
         user = tmp()
-        real = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "feishu", "scripts", "feishu.py")
+        real = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "feishu-sdk", "feishu.py")
         env = {**os.environ, "FEISHU_CLI": real}
         serve = FeishuServe({**env, "AGENT_USER_DIR": user, "FEISHU_APP_ID": "cli_x", "FEISHU_APP_SECRET": "secret-000000"})
         try:
@@ -170,22 +169,21 @@ class BridgeTests(unittest.TestCase):
         fake = py_script(tmp(), "feishu.py", "import sys\nsys.exit(2)\n")
         serve = FeishuServe({**os.environ, "FEISHU_CLI": fake})
         # Far more than a pipe holds, so it is still being written when the process ends.
-        self.assertRaisesRegex(ConnectionError, "the feishu skill's process ended", serve.call, "sheets-cells-set", {"writes": "x" * (4 << 20)})
+        self.assertRaisesRegex(ConnectionError, "the Feishu module's process ended", serve.call, "sheets-cells-set", {"writes": "x" * (4 << 20)})
         serve.close()
         # As the bridge sees it: no answer, which a write takes as an unknown result.
         bridge = Bridge(FeishuServe({**os.environ, "FEISHU_CLI": fake}).call)
         self.fails(lambda: bridge.call("sheets-cells-set", {}, write=True), "write result unknown")
 
     def test_not_found(self) -> None:
-        """A feishu skill that cannot be found is said as such, not as a failed bridge call."""
+        """A Feishu module that cannot be found is said as such, not as a failed bridge call."""
         serve = FeishuServe({**os.environ, "FEISHU_CLI": os.path.join(tmp(), "nowhere", "feishu.py")})
         bridge = Bridge(serve.call)
         self.fails(bridge.doctor, r"^FEISHU_CLI is not the absolute path of feishu\.py$")
         self.fails(lambda: bridge.cells_set("shtABCDEFGH", [{"sheet_id": "s", "range": "A1:A1", "cells": [[{"value": 1}]], "allow_overwrite": False}]), "^FEISHU_CLI")
         self.assertEqual(bridge.check_login(), {"status": "blocked", "reason": "FEISHU_CLI is not the absolute path of feishu.py"})
-        # Nothing names the module: the sibling feishu skill is used, and without one the message says what is missing.
-        self.assertEqual(locate_feishu({}), SIBLING)
-        with mock.patch("gof.agent_feishu.SIBLING", os.path.join(tmp(), "nowhere", "feishu.py")), self.assertRaises(Blocked) as caught:
+        # Nothing names the module: the message says what is missing.
+        with self.assertRaises(Blocked) as caught:
             locate_feishu({})
         self.assertEqual(caught.exception.message, MISSING)
         entry = write_file(os.path.join(tmp(), "feishu", "feishu.py"), "")

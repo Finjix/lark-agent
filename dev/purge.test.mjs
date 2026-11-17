@@ -6,7 +6,7 @@ import path from 'node:path';
 import {Store} from '../dist/storage/database.js';
 import {Delivery} from '../dist/feishu/delivery.js';
 import {config} from '../dist/config.js';
-import {purge,housekeeping,pruneOf,skillPrunes} from '../dist/service/maintenance.js';
+import {purge,housekeeping,pruneOf,skillPrunes,feishuPrune} from '../dist/service/maintenance.js';
 
 const DAY=86400000;
 /** The moment `days` from now. purge judges files by the `now` it is given, and a file made just now cannot be backdated, so time moves instead. */
@@ -162,6 +162,21 @@ test('a skill\'s own prune, named in its SKILL.md, runs for each idle user direc
     assert(!await exists(path.join(p.roots.user,'丙','demo')),'not run where the skill has no folder');
     const heard=JSON.parse(await fs.readFile(path.join(p.roots.user,'甲','demo','heard.json'),'utf8'));
     assert.deepEqual(heard,{args:['prune','--all'],open_id:'u1',chat:null},'the user\'s environment, without a chat');
+  }finally{await p.done();}
+});
+
+test('the agent\'s Feishu module prunes its own folder in each idle user directory, like a skill',async()=>{
+  const p=await project('甲','乙');
+  const module=await write(path.join(p.base,'feishu-sdk','feishu.py'),['import json, os, shutil','root = os.path.join(os.environ["AGENT_USER_DIR"], "feishu")',
+    'shutil.rmtree(os.path.join(root, "Cache"), ignore_errors=True)','print(json.dumps({"status": "ok", "files": 1, "bytes": 5}))'].join('\n'));
+  const cache=await write(path.join(p.roots.user,'甲','feishu','Cache','x')),login=await write(path.join(p.roots.user,'甲','feishu','auth.json'));
+  try{
+    assert.deepEqual((await feishuPrune(module)).map(x=>[x.skill,x.script,x.args]),[['feishu',module,['prune']]]);
+    assert.deepEqual(await feishuPrune(path.join(p.base,'nowhere.py')),[],'no module, nothing to run');
+    const purged=await purge(p.store,{roots:{...p.roots,feishu:module}});
+    assert.deepEqual(purged.skills,{feishu:{files:1,bytes:5}},'run only where there is a feishu/ folder');
+    assert(!await exists(cache));assert(await exists(login));
+    assert.deepEqual(await feishuPrune(),[{skill:'feishu',dir:path.dirname(config.feishu),script:config.feishu,args:['prune']}],'the project\'s own module');
   }finally{await p.done();}
 });
 

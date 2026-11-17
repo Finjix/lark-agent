@@ -32,9 +32,9 @@
 
 技能用机器人的应用身份做事时，另需的应用身份权限：现为 audit-auto 读审核群用的 `im:message.group_msg`（获取群组中所有消息）。开通它以后，群里没有 @机器人 的消息也会推送给服务，服务照旧只处理 @它 的。
 
-## 用户身份权限（feishu 技能）
+## 用户身份权限（智能体的飞书模块）
 
-机器人自己只用上面的应用身份权限。替用户操作飞书（读用户给的飞书文档、技能读写表格和文档）用的是 `feishu` 技能（`skills/feishu`）：用户用设备授权登录（智能体运行它的 `login qr`，在这个用户的无头浏览器里打开授权页，用户用飞书手机端扫一次码；令牌存在 `data/user/<名>/feishu/`），智能体和各技能共用这一个登录。这时应用的“用户身份”权限要包含它们需要的（现为 `wiki:wiki:readonly sheets:spreadsheet:readonly sheets:spreadsheet:read sheets:spreadsheet:write_only sheets:spreadsheet drive:export:readonly docx:document:readonly docx:document offline_access`），发布新版本后用户首次授权会看到这些权限。另外要在应用里允许用户身份授权（设备授权）。授权时报“应用凭证无效”（`invalid_client`），先查 `.env` 里的应用凭证，再查这一项。feishu 技能用的就是机器人的应用（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`），代价见 README“技能”一节。
+机器人自己只用上面的应用身份权限。替用户操作飞书（读用户给的飞书文档、技能读写表格和文档）用的是智能体内置的飞书模块（`feishu-sdk/`）：用户用设备授权登录（智能体的 `feishu_login` 工具，在这个用户的无头浏览器里打开授权页，用户用飞书手机端扫一次码；令牌存在 `data/user/<名>/feishu/`），智能体和各技能共用这一个登录。这时应用的“用户身份”权限要包含它们需要的（现为 `wiki:wiki:readonly sheets:spreadsheet:readonly sheets:spreadsheet:read sheets:spreadsheet:write_only sheets:spreadsheet drive:export:readonly docx:document:readonly docx:document offline_access`），发布新版本后用户首次授权会看到这些权限。另外要在应用里允许用户身份授权（设备授权）。授权时报“应用凭证无效”（`invalid_client`），先查 `.env` 里的应用凭证，再查这一项。飞书模块用的就是机器人的应用（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`），代价见 README“技能”一节。
 
 ## 事件与发布
 

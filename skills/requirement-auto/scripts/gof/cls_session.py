@@ -454,7 +454,7 @@ def capture_login_qr(profile_dir: str, origin: Optional[str] = None, exe: Option
 
 def cls_profile_dir(env: Optional[Mapping[str, str]] = None) -> str:
     """
-    The browser this user's CLS login lives in. It is the feishu skill's (under the user's own directory): CLS signs in through the company's
+    The browser this user's CLS login lives in. It is the agent's Feishu module's (under the user's own directory): CLS signs in through the company's
     Feishu single sign-on, and that browser holds the user's Feishu web session from the Feishu login, so the user scans once for both.
     """
     from .agent_feishu import browser_profile_dir

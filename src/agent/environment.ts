@@ -11,7 +11,7 @@ export interface SkillUser {dir:string;openId:string;chat?:string;chatType?:stri
  * What a skill's scripts get from the host, besides the service's own environment: the skills' neutral host contract. Every one is optional to a
  * skill (run in another harness, it falls back to its own defaults); the folder of one user's data, `AGENT_USER_DIR`, holds a folder per skill.
  */
-export const SKILL_ENV=['AGENT_USER_DIR','AGENT_USER_OPEN_ID','AGENT_CHAT_ID','AGENT_CHAT_TYPE','AGENT_SHARED_DIR','FEISHU_APP_ID','FEISHU_APP_SECRET'] as const;
+export const SKILL_ENV=['AGENT_USER_DIR','AGENT_USER_OPEN_ID','AGENT_CHAT_ID','AGENT_CHAT_TYPE','AGENT_SHARED_DIR','FEISHU_CLI','FEISHU_APP_ID','FEISHU_APP_SECRET'] as const;
 /** The machine's Python: what `python` means to a skill. Given as a full path (`PYTHON`), its folder goes in front of PATH so commands find it. */
 export const systemPython=()=>config.python;
 export const pythonFolders=(python=systemPython())=>path.isAbsolute(python)?[path.dirname(python)]:[];
@@ -28,14 +28,15 @@ export function withPath(env:Record<string,string>,folders:string[],platform=pro
 
 /**
  * The environment of every command the agent runs, every job and every skill's housekeeping: the service's own (so `.env` settings such as
- * AUDIT_AUTO_GEMINI_KEY reach the skills), with the machine's Python (see systemPython) and reading and writing UTF-8, the folder skills share
- * and the bot's Feishu app. For a user it also says whose turn it is (see SkillUser). What describes a user is never inherited from the
+ * AUDIT_AUTO_GEMINI_KEY reach the skills), with the machine's Python (see systemPython) and reading and writing UTF-8, the folder skills share,
+ * the agent's Feishu module (FEISHU_CLI: the absolute path of feishu-sdk/feishu.py, whose bridge is how skills reach Feishu as the user) and the
+ * bot's Feishu app. For a user it also says whose turn it is (see SkillUser). What describes a user is never inherited from the
  * service, and a value that is not set is left out rather than passed empty.
  */
 export function skillEnv(user?:SkillUser,base:NodeJS.ProcessEnv=process.env):Record<string,string>{
   const env:Record<string,string>={};
   for(const [key,value] of Object.entries(base))if(value!==undefined&&!(SKILL_ENV as readonly string[]).includes(key.toUpperCase()))env[key]=value;
-  const given:Record<string,string|undefined>={AGENT_SHARED_DIR:config.shared,FEISHU_APP_ID:config.FEISHU_APP_ID,FEISHU_APP_SECRET:config.FEISHU_APP_SECRET,
+  const given:Record<string,string|undefined>={AGENT_SHARED_DIR:config.shared,FEISHU_CLI:config.feishu,FEISHU_APP_ID:config.FEISHU_APP_ID,FEISHU_APP_SECRET:config.FEISHU_APP_SECRET,
     ...(user?{AGENT_USER_DIR:user.dir,AGENT_USER_OPEN_ID:user.openId,AGENT_CHAT_ID:user.chat,AGENT_CHAT_TYPE:user.chatType}:{})};
   for(const [key,value] of Object.entries(given))if(value)env[key]=value;
   return withPath({...env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'},pythonFolders());

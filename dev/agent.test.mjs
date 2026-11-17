@@ -16,6 +16,7 @@ import {agentInput,MAX_ATTACHED_IMAGE_BYTES} from '../dist/agent/input.js';
 import {AgentRunner,SessionMissing,SteerRefused} from '../dist/agent/runner.js';
 import {skillEnv,withPath,pythonFolders} from '../dist/agent/environment.js';
 import {agentInstructions} from '../dist/agent/instructions.js';
+import {FEISHU_TOOLS,feishuTools,runFeishu} from '../dist/agent/feishu.js';
 import {BOT_DOWN,InputRejected} from '../dist/types.js';
 
 // ---- what the runner reports of a turn (see agent/turn.ts)
@@ -106,22 +107,24 @@ test('commands run with the machine\'s Python, UTF-8, the folder skills share an
   const none=skillEnv(undefined,base);
   assert.equal(none.AGENT_USER_DIR,undefined,'what describes a user is never inherited from the service');assert.equal(none.agent_chat_id,undefined,'whatever its spelling');
   assert.equal(none.AGENT_SHARED_DIR,config.shared);assert.equal(none.KEEP_ME,'yes');assert.equal(none.PYTHONUTF8,'1');
-  assert(Object.keys(none).every(k=>!k.startsWith('LARK_AGENT')&&k!=='FEISHU_CLI'),'no host-specific names: skills find each other themselves');
+  assert(Object.keys(none).every(k=>!k.startsWith('LARK_AGENT')),'no host-specific names');
+  assert.equal(none.FEISHU_CLI,config.feishu,'skills are told where the agent\'s Feishu module is');assert(path.isAbsolute(none.FEISHU_CLI)&&fsSync.existsSync(none.FEISHU_CLI));
   assert.equal(none.Path.split(path.delimiter).at(-1),'C:\\Windows','the service\'s PATH is kept');
   assert.deepEqual([pythonFolders('python'),pythonFolders('C:\\Python313\\python.exe')],[[],['C:\\Python313']],'a Python given by full path goes in front of PATH');
   const user=skillEnv({dir:'D:/p/user/张三',openId:'ou_1',chat:'oc_1'},base);
   assert.deepEqual([user.AGENT_USER_DIR,user.AGENT_USER_OPEN_ID,user.AGENT_CHAT_ID,user.AGENT_CHAT_TYPE],['D:/p/user/张三','ou_1','oc_1',undefined],'a value not known is left out');
   assert.deepEqual(withPath({Path:'C:\\x',PATH:'C:\\y',other:'1'},['C:\\py'],'win32'),{Path:'C:\\py;C:\\x',other:'1'},'one spelling of PATH on Windows, the tools in front');
 });
-test('the agent is told to work only through the skills, Feishu included, and to do no more on the machine than using them takes',()=>{
-  const none=agentInstructions([]),some=agentInstructions([{name:'feishu'},{name:'requirement-auto'},{name:'audit-auto'}]);
-  assert.match(none,/No skills are installed/);assert.doesNotMatch(none,/Installed skills/);assert.match(none,/no feishu skill is installed/);
-  assert.match(some,/Installed skills: requirement-auto, audit-auto\. They are your only capabilities\. The feishu skill is also installed, but only as groundwork/);assert.match(some,/never list reading Feishu content or logging in to Feishu/);
-  assert.match(agentInstructions([{name:'feishu'}]),/No skills are installed besides the feishu skill/);assert.doesNotMatch(some,/No skills are installed/);
-  assert.match(some,/log the user in as the feishu skill describes/);assert.match(some,/only in a private chat/);
+test('the agent works only through the skills, with its Feishu tools as their groundwork, and does no more on the machine than using them takes',()=>{
+  const none=agentInstructions([]),some=agentInstructions([{name:'requirement-auto'},{name:'audit-auto'}]);
+  assert.match(none,/No skills are installed/);assert.doesNotMatch(none,/Installed skills/);
+  assert.match(some,/Installed skills: requirement-auto, audit-auto\. They are your only capabilities\. Your built-in Feishu tools \(feishu_login_check[^)]*\) are groundwork for them/);
+  assert.doesNotMatch(some,/No skills are installed/);
   for(const text of [none,some]){assert.match(text,/only with the skills/);assert.match(text,/read that skill's SKILL\.md in full/);assert.match(text,/cannot be done without it/);
-    assert.match(text,/environment variables, keys, credentials/);assert.match(text,/which skill you are using/);assert.match(text,/Git Bash/);
-    assert.doesNotMatch(text,/feishu_login|Feishu tools/,'no built-in Feishu tools any more');
+    assert.match(text,/environment variables, keys, credentials/);assert.match(text,/which skill or tool you are using/);assert.match(text,/Git Bash/);
+    for(const name of FEISHU_TOOLS)assert(text.includes(name),`${name} is named`);
+    assert.match(text,/never list reading Feishu content or logging in to Feishu/,'Feishu is not offered to the user');
+    assert.match(text,/skills never log in to Feishu themselves/);assert.match(text,/only in a private chat/);
     assert.match(text,/not a request to run a skill on them[^]*each thing you could do with them[^]*only once the user has chosen it/);}
 });
 
@@ -175,14 +178,63 @@ test('a turn runs with the skills and the instructions, its commands have the us
     await assert.rejects(collect(runner,{cwd,sessionId:'no-such-session'}),SessionMissing);
   }finally{await done();}
 });
-test('a turn has pi’s read, bash, edit and write tools and no Feishu tools of its own',async()=>{
-  const {runner,faux,cwd,done}=await fakeRunner();
+// A stand-in for feishu-sdk/feishu.py: answers each command as the real one would, records what it was asked and for whom.
+async function fakeFeishu(dir,answers){
+  const file=path.join(dir,'fake-feishu.py'),calls=path.join(dir,'calls.jsonl');
+  await fs.writeFile(file,['import json, os, sys','args = sys.argv[1:]',
+    `with open(${JSON.stringify(calls)}, "a", encoding="utf-8") as f: f.write(json.dumps({"args": args, "user": os.environ.get("AGENT_USER_DIR"), "chat": os.environ.get("AGENT_CHAT_TYPE"), "cwd": os.getcwd()}) + "\\n")`,
+    `answers = json.loads(${JSON.stringify(JSON.stringify(answers))})`,
+    'key = " ".join(a for a in args[:2] if not a.startswith("--"))','print(json.dumps(answers.get(key, {"status": "blocked", "reason": "unexpected " + key})))'].join('\n'));
+  return {file,calls:async()=>(await fs.readFile(calls,'utf8').catch(()=>'')).trim().split('\n').filter(Boolean).map(l=>JSON.parse(l))};
+}
+const call=async(tools,name,params={})=>JSON.parse((await tools.find(t=>t.name===name).execute('id',params,undefined,undefined,{})).content[0].text);
+test('the Feishu tools run the agent\'s Feishu module as the user, and say what to do next in the tools\' own terms',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-feishu-'));
   try{
+    const user={dir:path.join(dir,'user','张三'),openId:'ou_zs',chat:'oc_1',chatType:'p2p'};
+    const fake=await fakeFeishu(dir,{'login qr':{status:'qr_ready',qr_file:path.join(dir,'x.png'),message:'run `login finish`'},'login finish':{status:'ok',name:'张三'},
+      'login check':{status:'login_required',reason:'r',todo:['`login qr --output …`']},'login logout':{logged_in:false},'doc fetch':{status:'saved',file:'f.md'}});
+    const tools=feishuTools({cwd:dir,user,entry:fake.file});
+    assert.deepEqual(tools.map(t=>t.name),[...FEISHU_TOOLS]);assert(tools.every(t=>t.executionMode==='sequential'),'one at a time: one browser per user');
+    const shown=await call(tools,'feishu_login');
+    assert.equal(shown.status,'qr_ready');assert.match(shown.message,/feishu_login_finish/);assert.doesNotMatch(shown.message,/login finish`/,'the tools\' names, not the command line');
+    const calls=await fake.calls();
+    assert.deepEqual(calls[0].args.slice(0,3),['login','qr','--output']);assert.match(calls[0].args[3],/feishu-login-\d{8}-\d{6}\.png$/);assert.equal(path.dirname(calls[0].args[3]),dir,'the QR goes in the working directory');
+    assert(calls.every(c=>c.user===user.dir&&c.chat==='p2p'&&path.resolve(c.cwd)===path.resolve(dir)),'as this user, in this chat, in the working directory');
+    assert.deepEqual(await call(tools,'feishu_login_finish'),{status:'ok',name:'张三'});
+    assert.deepEqual((await fake.calls()).at(-1).args,['login','finish']);
+    const lapsed=await call(tools,'feishu_login_check');
+    assert.equal(lapsed.status,'login_required');assert.equal(lapsed.todo,undefined,'no command lines meant for a shell');assert.match(lapsed.message,/feishu_login/);
+    await call(tools,'feishu_read_doc',{url:'https://x.feishu.cn/docx/abc?a=1&b=2',output:'doc.md',sheet:'Tab'});
+    assert.deepEqual((await fake.calls()).at(-1).args,['doc','fetch','--url','https://x.feishu.cn/docx/abc?a=1&b=2','--output',path.join(dir,'doc.md'),'--sheet','Tab']);
+    await call(tools,'feishu_login',{extra_scopes:['sheets:spreadsheet:create']});
+    assert.deepEqual((await fake.calls()).at(-1).args.slice(4),['--extra-scope','sheets:spreadsheet:create']);
+    await call(tools,'feishu_logout',{browser:true});assert.deepEqual((await fake.calls()).at(-1).args,['login','logout','--browser']);
+    // A module that says nothing is a refusal, not a crash.
+    const mute=path.join(dir,'mute.py');await fs.writeFile(mute,'import sys\nsys.exit(1)\n');
+    assert.deepEqual(await runFeishu(['login','check'],{cwd:dir,user,entry:mute}),{status:'blocked',reason:'飞书模块没有给出结果'});
+  }finally{await fs.rm(dir,{recursive:true,force:true});}
+});
+test('the real module refuses the login QR in a group chat',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-feishu-'));
+  try{
+    const group=await call(feishuTools({cwd:dir,user:{dir:path.join(dir,'user','张三'),openId:'ou_zs',chat:'oc_1',chatType:'group'}}),'feishu_login');
+    assert.equal(group.status,'blocked');assert.match(group.reason,/group chat/);
+    assert.deepEqual(await fs.readdir(dir),[],'nothing was started or saved');
+  }finally{await fs.rm(dir,{recursive:true,force:true});}
+});
+test('every turn has pi\'s read, bash, edit and write tools and the Feishu tools, run for the user of the turn',async()=>{
+  const {runner,faux,home,cwd,done}=await fakeRunner();
+  try{
+    const fake=await fakeFeishu(home,{'login check':{status:'ok',name:'张三'}});
+    const withFeishu=new AgentRunner({runtime:()=>runner.models(),provider:'faux',model:'m1',thinking:'off',skillsDir:path.join(home,'skills'),sessionsDir:path.join(home,'sessions'),feishu:fake.file});
     let seen='';
-    faux.setResponses([context=>{seen=JSON.stringify(context.messages);return fauxAssistantMessage('好');}]);
-    await collect(runner,{cwd,user:{dir:'D:/u/张三',openId:'ou_zs'}});
-    for(const name of ['read','bash','edit','write'])assert(seen.includes(`"${name}"`),name);
-    assert(!seen.includes('feishu_login'),'Feishu is a skill now');
+    faux.setResponses([context=>{seen=JSON.stringify(context);return fauxAssistantMessage([fauxToolCall('feishu_login_check',{})],{stopReason:'toolUse'});},fauxAssistantMessage('已登录')]);
+    const events=await collect(withFeishu,{cwd,user:{dir:'D:/u/张三',openId:'ou_zs'}});
+    for(const name of ['read','bash','edit','write',...FEISHU_TOOLS])assert(seen.includes(`"${name}"`),name);
+    const end=events.find(e=>e.type==='tool'&&e.status!=='running');
+    assert.deepEqual([end.name,end.status,JSON.parse(end.output)],['feishu_login_check','done',{status:'ok',name:'张三'}]);
+    assert.deepEqual((await fake.calls()).map(c=>[c.args.join(' '),c.user]),[['login check','D:/u/张三']]);
   }finally{await done();}
 });
 test('images go to the model with the message; a failed request is a failed turn',async()=>{

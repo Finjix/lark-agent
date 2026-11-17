@@ -142,6 +142,10 @@ export async function skillPrunes(skills=config.skills):Promise<SkillPrune[]>{
   }
   return found;
 }
+/** The agent's Feishu module cleans up after itself the same way (`feishu.py prune`), in the user directories that hold its `feishu/`. */
+export async function feishuPrune(entry=config.feishu):Promise<SkillPrune[]>{
+  return await fs.stat(entry).then(s=>s.isFile(),()=>false)?[{skill:'feishu',dir:path.dirname(entry),script:entry,args:['prune']}]:[];
+}
 const PRUNE_TIMEOUT_MS=30*60_000;
 /** One prune; on Windows its children outlive it unless the tree is ended, so a timeout or a stop ends the tree (as jobs do). */
 function runPrune(prune:SkillPrune,user:SkillUser,signal?:AbortSignal):Promise<Removed>{
@@ -169,17 +173,17 @@ function runPrune(prune:SkillPrune,user:SkillUser,signal?:AbortSignal):Promise<R
 }
 
 export interface Purged {logs:Removed;backups:Removed;workspaces:Removed;scratch:Removed;skills:Record<string,Removed>;agent:Removed}
-type Roots=Pick<typeof config,'data'|'user'|'agentHome'|'skills'>;
+type Roots=Pick<typeof config,'data'|'user'|'agentHome'|'skills'>&{feishu?:string};
 const usable=(name:string)=>!!name&&name!=='.'&&name!=='..'&&path.basename(name)===name;
 /**
  * Deletes what has not been touched for RETENTION_DAYS: the service's own logs and old backups (the newest few stay), every file in the users'
  * workspaces (what the agent made, what the users sent), the agent's intermediate files in each user directory (tmp/), and the expendable files
- * of pi's home; and runs each skill's own housekeeping (SkillPrune) on the user directories that hold its data. The database, logins and
+ * of pi's home; and runs the Feishu module's and each skill's own housekeeping (SkillPrune) on the user directories that hold its data. The database, logins and
  * everything else stay. A user with a task queued or running keeps their directory untouched, and pi's files are left alone while any task runs.
  */
 export async function purge(store:Store,options:{now?:number;roots?:Roots;signal?:AbortSignal;prunes?:SkillPrune[]}={}):Promise<Purged>{
   const {now=Date.now(),roots=config,signal}=options,cutoff=now-config.RETENTION_DAYS*DAY;
-  const prunes=options.prunes??await skillPrunes(roots.skills);
+  const prunes=options.prunes??[...(roots.feishu?await feishuPrune(roots.feishu):[]),...await skillPrunes(roots.skills)];
   const purged:Purged={logs:nothing(),backups:nothing(),workspaces:nothing(),scratch:nothing(),skills:{},agent:nothing()};
   addTo(purged.logs,await sweep(path.join(roots.data,'logs'),cutoff,signal,/\.jsonl$/));
   addTo(purged.backups,await oldBackups(roots.data,cutoff));

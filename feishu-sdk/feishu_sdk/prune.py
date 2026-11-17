@@ -1,4 +1,4 @@
-"""`prune`: removes what this skill keeps that is expendable, for a host's periodic housekeeping (SKILL.md `metadata.prune`).
+"""`prune`: removes what this module keeps that is expendable, for the host's periodic housekeeping (lark-agent runs it per user).
 
 - Temporary files a save left behind when the process died halfway (`<data root>/*.<pid>.<12 hex>.tmp`, see fsutil.write_json_atomic),
   once untouched for FEISHU_RETENTION_DAYS (default 14) days.

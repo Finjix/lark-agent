@@ -2,7 +2,7 @@
 
 Batches, temporary files and the CLS records (the account the CLS login is pinned to, the QR picture waiting to be scanned), under
 <AGENT_USER_DIR>/requirement-auto/, or ~/.agent-skills/user/requirement-auto/ when the host names no user directory. The Feishu login and the
-hidden browser belong to the feishu skill (see agent_feishu.py). The directory is decided by the host for the process it starts, never by a
+hidden browser belong to the agent's Feishu module (see agent_feishu.py). The directory is decided by the host for the process it starts, never by a
 tool argument or by the model: whoever is served by this process can only reach this one directory.
 """
 
@@ -28,7 +28,7 @@ class DataPaths:
 
 USER_DIR_ENV = "AGENT_USER_DIR"
 OPEN_ID_ENV = "AGENT_USER_OPEN_ID"
-#: The user directory below the home folder when the host names none (the feishu skill uses the same one).
+#: The user directory below the home folder when the host names none (the Feishu module uses the same one).
 DEFAULT_USER_DIR = (".agent-skills", "user")
 
 

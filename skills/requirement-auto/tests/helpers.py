@@ -159,7 +159,7 @@ def find_browser() -> Optional[str]:
 
 
 def py_script(directory: str, name: str, source: str) -> str:
-    """A small Python script written to a file, for stand-ins of other programs (the feishu skill's feishu.py)."""
+    """A small Python script written to a file, for stand-ins of other programs (the Feishu module's feishu.py)."""
     return write_file(os.path.join(directory, name), source)
 
 

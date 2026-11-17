@@ -1,6 +1,6 @@
 """The allowlisted Feishu transport.
 
-It calls the feishu skill's bridge (see agent_feishu.py) and orchestrates validate → write → read back → verify. No generic write, no v2 values
+It calls the agent's Feishu module's bridge (see agent_feishu.py) and orchestrates validate → write → read back → verify. No generic write, no v2 values
 write, no implicit retry, no target override.
 """
 
@@ -51,7 +51,7 @@ class Bridge:
         try:
             reply = self._run(name, {} if payload is None else payload)
         except Blocked:
-            # A refusal before anything went out (the feishu skill is missing, FEISHU_CLI is wrong) says what is to be done about it.
+            # A refusal before anything went out (FEISHU_CLI is missing or wrong) says what is to be done about it.
             raise
         except Exception:
             raise (WriteUnknown(UNKNOWN_WRITE) if write else Blocked("the Feishu bridge call failed")) from None
@@ -100,7 +100,7 @@ class Bridge:
         try:
             reply = self._run("auth-verify", {})
         except Blocked as error:
-            # A feishu skill that cannot be found is not a moment's outage: checking again later does not help.
+            # A Feishu module that cannot be found is not a moment's outage: checking again later does not help.
             return {"status": "blocked", "reason": error.message}
         except Exception:
             return {"status": "unreachable", "reason": "the Feishu bridge call failed"}
@@ -130,10 +130,10 @@ class Bridge:
 
     def doctor(self) -> dict:
         info = self.call("info")
-        need(isinstance(info, dict) and info.get("bridge") == BRIDGE_VERSION, "the feishu skill's bridge version does not match this skill")
+        need(isinstance(info, dict) and info.get("bridge") == BRIDGE_VERSION, "the Feishu module's bridge version does not match this skill")
         need(info.get("app_configured") is True, "no Feishu app configured (FEISHU_APP_ID / FEISHU_APP_SECRET): the host or an administrator sets it")
         auth = self.call("auth-status")
-        need(isinstance(auth, dict) and auth.get("logged_in") is True, "Feishu is not logged in: log the user in with the feishu skill (login qr, then login finish)")
+        need(isinstance(auth, dict) and auth.get("logged_in") is True, "Feishu is not logged in: log the user in to Feishu with your Feishu login (feishu_login, then feishu_login_finish once they confirm)")
         self.check_scopes(SCOPES)
         return {"version": BRIDGE_VERSION, "node": info.get("node", js.UNDEFINED), "logged_in": True, "identity": "user",
                 "user_name": auth.get("name", js.UNDEFINED), "open_id": auth.get("open_id", js.UNDEFINED), "storage": auth.get("storage", js.UNDEFINED),
@@ -504,7 +504,7 @@ def add_option(bridge: Bridge, field_name: str, option: str, sheet_name: str, co
             updated.append(bridge.dropdown_add({"token": token, "sheet_id": sid, "column": column, "first_row": first, "last_row": last,
                                                 "option": option, "color": chosen}))
         except Blocked as error:
-            # A span with no dropdown at all, or one that already has the option, is simply not part of this change. The feishu skill says
+            # A span with no dropdown at all, or one that already has the option, is simply not part of this change. The Feishu module says
             # so in its own words, in Chinese or in English.
             if not re.search(r"没有现有下拉|都已包含|no (existing )?dropdown|already (has|have|contain|include)", error.message, re.IGNORECASE):
                 raise

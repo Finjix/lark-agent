@@ -33,6 +33,8 @@ export const config = {
   // The skills every turn has (standard Agent Skills: a folder with SKILL.md) and the machine's Python their scripts run with (`PYTHON`, or
   // whatever `python` is on PATH).
   skills:path.join(root,'skills'), python:text('PYTHON','python'),
+  // The agent's own Feishu module (the user's Feishu login, documents as Markdown, and the bridge skills reach Feishu through), run with that Python.
+  feishu:path.join(root,'feishu-sdk','feishu.py'),
   // What skills keep for every user alike (audit-auto's review-group rules, say), in a folder of each skill's own; never cleaned up, never sent.
   shared:path.join(root,'data','shared'),
   users:list(text('ALLOWED_USERS')), admins:list(text('ADMIN_USERS')), chats:list(text('ALLOWED_CHATS')), tenants:list(text('ALLOWED_TENANTS')),

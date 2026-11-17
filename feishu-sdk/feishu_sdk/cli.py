@@ -1,4 +1,4 @@
-"""feishu.py, the command line of the feishu skill.
+"""feishu.py, the command line of the agent's Feishu module (lark-agent runs it for its feishu_* tools; skills reach it through the bridge).
 
 Every command prints one line of JSON on stdout (`serve` one per request) and exits with 0, or with 2 when it was refused or the answer is not
 ok ({"status":"blocked","reason":…} for a refusal).
@@ -41,8 +41,9 @@ from .web_login import DeviceWeb, authorize, real_device_web, sign_out_browser
 Result = dict[str, Any]
 SHOWN = {"auth_required", "config", "identity_mismatch", "scope_missing", "invalid_request", "login_denied", "login_expired"}
 NO_ACCESS = {1770032, 131006, 1310213}
-LOGIN_TODO = ("Log the user in with the feishu skill: `login qr --output <new .png in the working directory>`, give the QR picture to "
-              "this user alone to scan with the Feishu phone app, and once they say they confirmed, `login finish`; then retry")
+LOGIN_TODO = ("Log the user in to Feishu with your Feishu login (feishu_login: a QR picture for this user alone to scan with the Feishu "
+              "phone app; once they say they confirmed, feishu_login_finish. On the command line: `login qr --output <new .png>`, then "
+              "`login finish`); then retry")
 _SCOPE = re.compile(r"[a-z_]+(:[a-z_.]+)+")
 
 

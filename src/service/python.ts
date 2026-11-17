@@ -9,10 +9,12 @@ import {systemPython} from '../agent/environment.js';
 
 const run=promisify(execFile);
 const STAMP='lark-agent-requirements.sha256';
-/** Every skill's requirements.txt, in a stable order. */
-export async function requirementFiles(skills=config.skills):Promise<string[]>{
+/** The agent's Feishu module's requirements.txt, then every skill's, in a stable order. */
+export async function requirementFiles(skills=config.skills,feishu=config.feishu):Promise<string[]>{
   const entries=await fs.readdir(skills,{withFileTypes:true}).catch(()=>[]);
   const files:string[]=[];
+  const own=path.join(path.dirname(feishu),'requirements.txt');
+  if(await fs.stat(own).then(s=>s.isFile(),()=>false))files.push(own);
   for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
     const file=path.join(skills,entry.name,'requirements.txt');
     if(entry.isDirectory()&&await fs.stat(file).then(s=>s.isFile(),()=>false))files.push(file);
