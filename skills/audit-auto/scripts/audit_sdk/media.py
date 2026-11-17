@@ -1,14 +1,13 @@
 """Getting a material file ready to send to Gemini inline (port of media.ts; the gateway has no Files API).
 
 Gemini samples a video into frames at the fps it is told and scales every frame down, so a 1080p master carries nothing a 720p copy
-does not: big videos are re-encoded to 720p with ffmpeg when the computer has it (FFMPEG, or ffmpeg on the PATH), which cuts the
-upload from minutes to seconds. Without ffmpeg a video is sent as it is, up to INLINE_MAX. Duration and orientation are read from the
+does not: a video over INLINE_MAX (or in a container Gemini does not take) is re-encoded to 720p 24 fps with ffmpeg when the
+computer has it (FFMPEG, or ffmpeg on the PATH). Without ffmpeg a video is sent as it is, up to INLINE_MAX. Duration and orientation are read from the
 MP4/MOV header itself, so they need no ffmpeg either.
 """
 
 from __future__ import annotations
 
-import math
 import os
 import re
 import struct
@@ -42,11 +41,11 @@ TYPES: dict[str, _Type] = {
 }
 
 MB = 1024 * 1024
-#: Above this a video is re-encoded when ffmpeg is there (a 68 MB request took 76 s through the gateway, a 15 MB one 8 s).
-COMPRESS_OVER = 40 * MB
-#: The most that is sent inline (the gateway took a 112 MB video; the request is a third bigger again as base64).
-INLINE_MAX = 150 * MB
-IMAGE_MAX = 20 * MB
+#: The most the gateway takes in one inline part (probed 2026-11-17: 256 000 000 bytes passes, one byte more is
+#: refused with "exceeds the maximum allowed inline size of 256000000 bytes"). A bigger video is re-encoded first.
+INLINE_MAX = 256_000_000
+#: The frames a second Gemini is told to look at.
+FPS = 2
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -199,11 +198,8 @@ def orientation(p: Probe) -> str | None:
 
 
 def fps_for(duration: float | None) -> int:
-    """How many frames a second Gemini looks at: ad cuts and subtitles are short, so short videos get up to 4 (about 160 frames at
-    most, some 280 tokens each at high media resolution), long ones Gemini's own 1."""
-    if not duration or not math.isfinite(duration):
-        return 2
-    return min(4, max(1, math.floor(160 / duration)))
+    """How many frames a second Gemini looks at: FPS, whatever the length."""
+    return FPS
 
 
 # ---- ffmpeg
@@ -221,10 +217,10 @@ def find_ffmpeg(env: Mapping[str, str] | None = None) -> str | None:
 
 
 def compress(ffmpeg: str, source: str, output: str, timeout: float = 10 * 60) -> None:
-    """A 720p H.264 copy (the short side at most 720, at most 30 frames a second, AAC sound), streamable from its start."""
+    """A 720p 24 fps H.264 copy (the short side at most 720, AAC sound), streamable from its start."""
     scale = "scale='if(gte(iw,ih),-2,min(720,iw))':'if(gte(iw,ih),min(720,ih),-2)'"
     args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0?", "-vf", scale,
-            "-fpsmax", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-r", "24", "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
             "-ac", "2", "-movflags", "+faststart", output]
     try:
         done = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=timeout,
@@ -264,29 +260,27 @@ def prepare(file: str, scratch: str, ffmpeg: str | None) -> Prepared:
     assert kind is not None
     size_in = os.stat(file).st_size
     need(size_in > 0, "文件是空的")
-    if kind.kind == "image":
-        need(size_in <= IMAGE_MAX, f"图片太大（{_mb(size_in)} MB），请压缩到 {IMAGE_MAX // MB} MB 以内再发")
-        return Prepared(file=file, kind="image", mime=kind.mime, bytes=size_in, sent=size_in, compressed=False)
+    need(kind.kind == "video", "图片不发给 Gemini：由主 agent 自己看")
     original = probe(file)
     sent, info, warning = file, original, None
-    if not kind.native or size_in > COMPRESS_OVER:
+    if not kind.native or size_in > INLINE_MAX:
         if ffmpeg:
             # A folder of its own: two files of the same name may be compressed at the same time.
             stem = os.path.splitext(os.path.basename(file))[0][:60]
-            output = os.path.join(tempfile.mkdtemp(prefix="c-", dir=scratch), f"{stem}-720p.mp4")
+            output = os.path.join(tempfile.mkdtemp(prefix="c-", dir=scratch), f"{stem}-720p24.mp4")
             try:
                 compress(ffmpeg, file, output)
                 sent = output
                 copy = probe(output)
                 info = Probe(duration=copy.duration if copy.duration is not None else original.duration, width=copy.width, height=copy.height)
-            except Exception:  # noqa: BLE001 - sent as it is, when Gemini takes it
+            except Exception:  # noqa: BLE001 - the original cannot go as it is: too big, or a format Gemini does not take
                 need(kind.native, "这种视频格式需要先转码，但转码失败了：请导出成 MP4 再发")
-                warning = "压缩失败，按原文件发送，审得会慢一些"
+                raise Blocked(f"视频太大（{_mb(size_in)} MB），转成 720p 也失败了：请压缩到 {_mb(INLINE_MAX)} MB 以内再发") from None
         else:
             need(kind.native, "这种视频格式（如 MKV）需要先转成 MP4 再发")
     size = size_in if sent == file else os.stat(sent).st_size
     if size > INLINE_MAX:
-        raise Blocked(f"视频太大（{_mb(size)} MB），请压缩到 {INLINE_MAX // MB} MB 以内再发")
+        raise Blocked(f"视频太大（{_mb(size)} MB），请压缩到 {_mb(INLINE_MAX)} MB 以内再发")
     return Prepared(
         file=sent, kind="video", mime=kind.mime if sent == file else "video/mp4", bytes=size_in, sent=size,
         duration=info.duration or None, orientation=orientation(original), fps=fps_for(info.duration), compressed=sent != file, warning=warning,

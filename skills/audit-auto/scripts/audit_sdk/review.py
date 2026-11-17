@@ -1,6 +1,7 @@
 """Reviewing material (port of review.ts).
 
-Each video or image goes to Gemini once, inline, with the project's rules (fixed spec plus dynamic spec) as the system instruction, and
+Images are not sent anywhere: they are handed back (`images`, each with a path that outlives the run) for the agent to review itself
+against the same spec. Each video goes to Gemini once, inline, with the project's rules (fixed spec plus dynamic spec) as the system instruction, and
 comes back as a list of problems — where, what, how to fix — that is rendered as Markdown for the reply. The model also writes out
 every subtitle and spoken line first: most rejections are one wrong word, and transcribing makes it read every word before it judges any.
 
@@ -15,6 +16,7 @@ import base64
 import os
 import posixpath
 import re
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +26,7 @@ from typing import Any, Callable
 from .errors import Blocked, message_of, need
 from .gemini import JsonRequest, Model, Part
 from .jsutil import js_round, to_fixed
-from .media import MB, Prepared, prepare, refusal
+from .media import MB, Prepared, kind_of, prepare, refusal
 from .projects import Project, fixed_spec
 from .rules import load_book, prompt_rules
 from .unzip import unpack_zip
@@ -174,6 +176,8 @@ class ReviewContext:
     log: Callable[[str], None]
     ffmpeg: str | None = None
     concurrency: int = 2
+    #: Where images unpacked from a zip are copied so the agent can still open them once the scratch folder is gone (None: left where they are).
+    images_dir: str | None = None
 
 
 def _basename(path: str) -> str:
@@ -257,6 +261,25 @@ class ReviewOutcome:
     skipped: list[dict[str, str]]
     rules: dict[str, Any]
     markdown: str
+    #: The images, for the agent to review: {name, file}.
+    images: list[dict[str, str]]
+
+
+def _keep_image(item: dict[str, str], ctx: ReviewContext) -> dict[str, str]:
+    """An image the agent will open: one unpacked from a zip (in the scratch folder) is copied out first."""
+    source = item["file"]
+    if not ctx.images_dir or not os.path.abspath(source).startswith(os.path.abspath(ctx.scratch) + os.sep):
+        return {"name": item["name"], "file": source}
+    relative = item["name"].replace("\\", "/").lstrip("/")
+    target = os.path.join(ctx.images_dir, *[p for p in relative.split("/") if p not in ("", ".", "..")])
+    stem, ext = os.path.splitext(target)
+    n = 2
+    while os.path.exists(target):
+        target = f"{stem} ({n}){ext}"
+        n += 1
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.copyfile(source, target)
+    return {"name": item["name"], "file": target}
 
 
 def review(project: Project, files: list[str], note: str | None, ctx: ReviewContext) -> ReviewOutcome:
@@ -270,6 +293,8 @@ def review(project: Project, files: list[str], note: str | None, ctx: ReviewCont
     found, skipped = materials(files, ctx.scratch)
     need(found or skipped, "没有收到要审的文件")
     need(len(found) <= 30, f"一次最多审 30 个素材（这次有 {len(found)} 个），请分批发")
+    images = [_keep_image(item, ctx) for item in found if kind_of(item["file"]) == "image"]
+    found = [item for item in found if kind_of(item["file"]) != "image"]
     results: list[FileResult] = [{} for _ in found]
     lock = threading.Lock()
     done = 0
@@ -293,4 +318,4 @@ def review(project: Project, files: list[str], note: str | None, ctx: ReviewCont
             for future in [pool.submit(work, i) for i in range(len(found))]:
                 future.result()
     return ReviewOutcome(results=results, skipped=skipped, rules={"fixed": not fixed.placeholder, "dynamic": len(book["rules"])},
-                         markdown=render_review(results, skipped))
+                         markdown=render_review(results, skipped) if results or skipped else "", images=images)

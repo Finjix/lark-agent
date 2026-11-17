@@ -186,8 +186,10 @@ def _review_command(args: list[str], ctx: Context) -> Result:
         note = values.get("note")
         outcome = review(project, [os.path.abspath(f) for f in files], note.strip() if isinstance(note, str) and note.strip() else None,
                          ReviewContext(model=_model_of(ctx), root=skill_root(ctx.env), shared=shared_dir(ctx.env, _home(ctx)), scratch=scratch,
-                                       ffmpeg=_ffmpeg(ctx), log=_log_of(ctx)))
-        details: Result = {"project": project.id, "rules": outcome.rules, "files": outcome.results, "skipped": outcome.skipped}
+                                       ffmpeg=_ffmpeg(ctx), log=_log_of(ctx),
+                                       images_dir=os.path.abspath(os.path.join("input", f"zip-images-{iso_now_name()}"))))
+        details: Result = {"project": project.id, "rules": outcome.rules, "files": outcome.results, "skipped": outcome.skipped,
+                           "images": outcome.images}
         kept = _keep_result(ctx, details, outcome.markdown)
         reviewed = sum(1 for r in outcome.results if r["status"] == "reviewed")
         listed = []
@@ -202,12 +204,16 @@ def _review_command(args: list[str], ctx: Context) -> Result:
             listed.append(item)
         # A host may shorten a long output by leaving out its middle: what the skill needs to find the whole result goes first, the
         # Markdown last.
-        result: Result = {"status": "done" if reviewed else "failed"}
+        result: Result = {"status": "done" if reviewed or outcome.images else "failed"}
         if kept:
             result["result_file"] = kept
         result.update({"project": project.id, "rules": outcome.rules, "files": listed})
         if outcome.skipped:
             result["skipped"] = outcome.skipped
+        if outcome.images:
+            # Not reviewed here: the agent looks at each one itself, against the spec files named below.
+            result["images"] = outcome.images
+            result["spec"] = {"fixed": fixed_spec(skill_root(ctx.env), project).file, "dynamic": f"audit rules show --project {project.id}"}
         result["markdown"] = outcome.markdown
         return result
     finally:
@@ -304,7 +310,7 @@ def _doctor(ctx: Context) -> Result:
         return shared
 
     def ffmpeg() -> str:
-        return "有（大视频先压到 720p 再发）" if _ffmpeg(ctx) else "没有（视频按原文件发，最大 150 MB）"
+        return "有（超过 256 MB 的视频先转成 720p 24fps 再发）" if _ffmpeg(ctx) else "没有（视频按原文件发，最大 256 MB）"
 
     def groups() -> str:
         s = status(shared_dir(ctx.env, _home(ctx)), turn_of({}))

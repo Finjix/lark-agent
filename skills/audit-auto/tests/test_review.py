@@ -93,7 +93,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn("not settled yet", got)
         self.assertNotIn("Chinese ad platforms", got, "GOT material is not said to go to Chinese platforms")
 
-    def test_a_gof_review_sends_each_video_inline_with_the_gof_spec_at_the_frame_rate_its_length_calls_for(self) -> None:
+    def test_a_gof_review_sends_each_video_inline_with_the_gof_spec_at_two_frames_a_second(self) -> None:
         directory = temp_dir("input-")
         with open(os.path.join(directory, "说明.txt"), "w", encoding="utf-8") as handle:
             handle.write("x")
@@ -106,8 +106,8 @@ class ReviewTest(unittest.TestCase):
         long = next(c for c in model.calls if "坏的" in text_of(c))
         self.assertIn("广告创意仅供参考", first.system, "the fixed spec of GOF")
         self.assertEqual(first.parts[0]["inlineData"]["mimeType"], "video/mp4")
-        self.assertEqual(first.parts[0]["videoMetadata"]["fps"], 4)
-        self.assertEqual(long.parts[0]["videoMetadata"]["fps"], 1)
+        self.assertEqual(first.parts[0]["videoMetadata"]["fps"], 2)
+        self.assertEqual(long.parts[0]["videoMetadata"]["fps"], 2)
         self.assertEqual(first.media_resolution, "MEDIA_RESOLUTION_HIGH")
         self.assertRegex(text_of(first), r"File name: GOFCN1_竖版\.mp4[\s\S]*Video: 11 s, 竖版[\s\S]*Notes from the user: 这是真人实拍")
         self.assertEqual([r["status"] for r in outcome.results], ["reviewed", "failed"])
@@ -175,6 +175,37 @@ class ReviewTest(unittest.TestCase):
         self.assertEqual(outcome.skipped, [{"file": "素材.zip › 脚本.docx", "reason": "不是视频或图片，没有审"}])
         self.assertTrue(os.listdir(ctx.scratch), "unpacked in the scratch folder")
         self.assertEqual(len(os.listdir(directory)), 1, "nothing written next to the user's files")
+
+    def test_images_are_not_sent_to_gemini_but_handed_back_one_from_a_zip_copied_out_of_the_scratch_folder(self) -> None:
+        directory = temp_dir("input-")
+        poster = os.path.join(directory, "海报.png")
+        with open(poster, "wb") as handle:
+            handle.write(b"png")
+        archive = os.path.join(directory, "素材.zip")
+        with open(archive, "wb") as handle:
+            handle.write(make_zip([ZipFile("图/banner.jpg", "jpg")]))
+        model = FakeModel(lambda _r, _n: ANSWER)
+        ctx = context(model)
+        ctx.images_dir = os.path.join(temp_dir("kept-"), "zip-images")
+        outcome = review(PROJECTS["GOF"], [video(directory, "GOFCN1.mp4"), poster, archive], None, ctx)
+        self.assertEqual(len(model.calls), 1, "only the video goes to Gemini")
+        self.assertEqual([r["name"] for r in outcome.results], ["GOFCN1.mp4"])
+        self.assertEqual([i["name"] for i in outcome.images], ["海报.png", "素材.zip › 图/banner.jpg"])
+        self.assertEqual(outcome.images[0]["file"], poster)
+        kept = outcome.images[1]["file"]
+        self.assertTrue(kept.startswith(ctx.images_dir), "out of the scratch folder, which is removed after the run")
+        with open(kept, "rb") as handle:
+            self.assertEqual(handle.read(), b"jpg")
+
+    def test_images_alone_make_no_markdown(self) -> None:
+        directory = temp_dir("input-")
+        poster = os.path.join(directory, "海报.png")
+        with open(poster, "wb") as handle:
+            handle.write(b"png")
+        model = FakeModel(lambda _r, _n: ANSWER)
+        outcome = review(PROJECTS["GOF"], [poster], None, context(model))
+        self.assertEqual((len(model.calls), outcome.results, outcome.markdown), (0, [], ""))
+        self.assertEqual(outcome.images, [{"name": "海报.png", "file": poster}])
 
     def test_the_command_line_review_prints_the_markdown_and_keeps_the_details_outside_the_workspace(self) -> None:
         user = temp_dir("user-")
