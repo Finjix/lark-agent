@@ -1,4 +1,4 @@
-"""The picture of a requirement document after the agent edited it (doc-shot.ts).
+"""The picture of a requirement document after the agent edited it.
 
 `gof feishu doc-screenshot` for a docx (a sheet goes through sheet_shot.py): the document opened in this user's hidden browser on the block
 that was written, photographed once it has drawn. Feishu scrolls a docx to a block when its link ends in #<block ID>. Nothing is clicked or

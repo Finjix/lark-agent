@@ -35,19 +35,19 @@ class ZipTest(unittest.TestCase):
         with open(result.files[0]["file"], "rb") as handle:
             self.assertEqual(handle.read(), video, "deflated data comes back exactly")
         self.assertEqual(result.skipped, [
-            {"file": "素材.zip › 说明.txt", "reason": "不是视频或图片，没有审"},
-            {"file": "素材.zip › ../逃出去.mp4", "reason": "路径不安全，没有解压"},
+            {"file": "素材.zip › 说明.txt", "reason": "Not a video or an image: not reviewed"},
+            {"file": "素材.zip › ../逃出去.mp4", "reason": "Unsafe path: not unpacked"},
         ])
 
     def test_zip64_archives_unpack_a_damaged_entry_or_too_many_materials_are_refused(self) -> None:
         ok = unpack_zip(zip_file("big.zip", make_zip([ZipFile("a.mp4", "aaaa")], zip64=True)), os.path.join(temp_dir("s-"), "z"), refusal)
         self.assertEqual(len(ok.files), 1)
-        with self.assertRaisesRegex(Blocked, "已损坏"):
+        with self.assertRaisesRegex(Blocked, "is damaged"):
             unpack_zip(zip_file("bad.zip", make_zip([ZipFile("a.mp4", "aaaa", bad_crc=True)])), os.path.join(temp_dir("s-"), "z"), refusal)
-        with self.assertRaisesRegex(Blocked, "不是有效的 zip"):
+        with self.assertRaisesRegex(Blocked, "Not a valid zip"):
             unpack_zip(zip_file("not.zip", b"hello"), os.path.join(temp_dir("s-"), "z"), refusal)
         many = make_zip([ZipFile(f"{i}.mp4", "x") for i in range(51)])
-        with self.assertRaisesRegex(Blocked, "超过 50 个"):
+        with self.assertRaisesRegex(Blocked, "more than 50 materials"):
             unpack_zip(zip_file("many.zip", many), os.path.join(temp_dir("s-"), "z"), refusal)
 
 

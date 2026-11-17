@@ -1,4 +1,4 @@
-"""Shared helpers: refusals, canonical JSON and digests, exclusive file writes, and the allowed targets (util.ts)."""
+"""Shared helpers: refusals, canonical JSON and digests, exclusive file writes, and the allowed targets."""
 
 from __future__ import annotations
 
@@ -109,7 +109,8 @@ def is_object(value: Any) -> bool:
     return isinstance(value, dict)
 
 
-def _parse_url(url: Any) -> Any:
+def parse_url(url: Any) -> Any:
+    """The parts of an absolute URL, or None when it is not one (no scheme, a web URL without a host, a bad port)."""
     if not isinstance(url, str):
         return None
     try:
@@ -130,20 +131,20 @@ def _port_ok(parts: Any) -> bool:
 
 
 def check_target(url: str) -> None:
-    p = _parse_url(url)
+    p = parse_url(url)
     need(p and p.scheme == "https" and (p.hostname or "") == "centurygames.feishu.cn" and _port_ok(p)
-         and not p.username and not p.password and re.sub(r"/+$", "", p.path) == f"/wiki/{NODE}", "实际页面不是获准的测试进度表节点")
+         and not p.username and not p.password and re.sub(r"/+$", "", p.path) == f"/wiki/{NODE}", "the observed page is not the approved progress-sheet node")
 
 
 def check_cls_url(url: str) -> None:
-    p = _parse_url(url)
+    p = parse_url(url)
     need(p and p.scheme == "https" and (p.hostname or "") == "creative.centurygames.cn" and _port_ok(p)
-         and not p.username and not p.password, "草稿 URL 必须是实际 CLS 页面")
+         and not p.username and not p.password, "the draft URL must be a real CLS page")
 
 
 def feishu_doc_path(url: Any, kinds: str, trailing_slash: bool = False) -> str | None:
     """A Feishu document link: https, the company host, no credentials, /wiki/<token> or /docx/<token>. Returns the path."""
-    p = _parse_url(url)
+    p = parse_url(url)
     if not p or p.scheme != "https" or (p.hostname or "") != "centurygames.feishu.cn" or p.username or p.password or not _port_ok(p):
         return None
     path = p.path or "/"
@@ -152,9 +153,9 @@ def feishu_doc_path(url: Any, kinds: str, trailing_slash: bool = False) -> str |
 
 
 def cell_text(value: Any, label: str) -> str:
-    need(isinstance(value, str), f"{label} 必须是文本")
-    need(not re.search(r"[\t\r\n\x00]", value), f"{label} 不能包含表格分隔符或换行")
-    need(not js.trim_start(value).startswith("="), f"{label} 不能作为公式粘贴")
+    need(isinstance(value, str), f"{label} must be text")
+    need(not re.search(r"[\t\r\n\x00]", value), f"{label} cannot contain tabs or line breaks")
+    need(not js.trim_start(value).startswith("="), f"{label} cannot start like a formula")
     return value
 
 

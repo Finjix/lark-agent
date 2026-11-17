@@ -1,4 +1,4 @@
-"""Batches: the approved plan on disk, its immutable event chain, verification of an append, the CSV, the group message (batch.ts)."""
+"""Batches: the approved plan on disk, its immutable event chain, verification of an append, the CSV, the group message."""
 
 from __future__ import annotations
 
@@ -41,10 +41,10 @@ def load_batch(directory: str) -> tuple[str, dict]:
     # The directory is named after the plan; the same plan prepared again (its first batch spent or out of date) gets "-2", "-3" ...
     named = os.path.basename(batch_path)
     need(digest(unsealed)[:24] == token and (named == token or re.fullmatch(re.escape(js.to_str(token)) + r"-[1-9][0-9]*", named)),
-         "批次清单损坏或目录与计划不匹配")
-    need(manifest.get("baseline_sha256") == _sha_file(os.path.join(batch_path, "baseline.xlsx")), "基线文件发生变化")
+         "the batch manifest is damaged or its directory does not match its plan")
+    need(manifest.get("baseline_sha256") == _sha_file(os.path.join(batch_path, "baseline.xlsx")), "the baseline file has changed")
     for name, expected in manifest["artifacts"].items():
-        need(os.path.basename(name) == name and _sha_file(os.path.join(batch_path, name)) == expected, f"批次文件发生变化：{name}")
+        need(os.path.basename(name) == name and _sha_file(os.path.join(batch_path, name)) == expected, f"a batch file has changed: {name}")
     return batch_path, manifest
 
 
@@ -68,7 +68,7 @@ def clipboard_tsv(plan: dict) -> str:
         for col in range(area.min_col, area.max_col + 1):
             raw = row["values"].get(coord_of(col, row["row"]))
             value = "" if raw is None else js.to_str(raw)
-            need(not re.search(r"[\t\r\n]", value), "剪贴板单元格包含分隔符，不能生成原始 TSV")
+            need(not re.search(r"[\t\r\n]", value), "a clipboard cell contains a separator: no raw TSV can be made")
             cells.append(value)
         lines.append("\t".join(cells))
     return "\r\n".join(lines) + "\r\n"
@@ -141,24 +141,18 @@ def _copy_new(source: str, target: str) -> None:
         shutil.copyfileobj(src, dst)
 
 
-def prepare(plan: dict, snapshot: Snapshot, workspace: Optional[str] = None, api_plan: Optional[dict] = None, output_root: Optional[str] = None) -> dict:
-    need(canonical(plan) == canonical(make_plan(snapshot, plan.get("request"), plan.get("current_sheet"))), "当前快照与获批计划不同，需更新计划并重新确认")
+def prepare(plan: dict, snapshot: Snapshot, api_plan: Optional[dict] = None, output_root: Optional[str] = None) -> dict:
+    need(canonical(plan) == canonical(make_plan(snapshot, plan.get("request"), plan.get("current_sheet"))), "the snapshot differs from the approved plan: plan again and have it approved again")
     if api_plan:
         check_seal(api_plan, "api_plan_id")
         check_target(api_plan.get("target") if api_plan.get("target") is not None else "")
-        need(api_plan.get("batch_plan_id") == plan["plan_id"] and api_plan.get("baseline_digest") == snapshot.fingerprint, "接口计划与本批快照不匹配")
+        need(api_plan.get("batch_plan_id") == plan["plan_id"] and api_plan.get("baseline_digest") == snapshot.fingerprint, "the API plan does not match this batch's snapshot")
     tsv = clipboard_tsv(plan)
-    need(not (workspace is not None and output_root is not None), "--workspace 与 --output-root 不能同时使用")
-    if output_root is not None:
-        base = os.path.abspath(output_root)
-    elif workspace is not None:
-        base = os.path.join(os.path.abspath(workspace), "outputs", "gof-requirement")
-    else:
-        base = default_batch_root()
+    base = os.path.abspath(output_root) if output_root is not None else default_batch_root()
     os.makedirs(base, exist_ok=True)
     earlier = _landed_unverified(base, plan, snapshot)
-    need(len(earlier) == 0, f"这份需求已有一批写入发出、尚未核对，表里已有它的行（{'、'.join(earlier)}）："
-         "先对那一批运行 gof feishu reconcile，按结果处理，不能重新追加")
+    need(len(earlier) == 0, f"an earlier batch of this request was sent and never verified, and the sheet has its rows ({', '.join(earlier)}): "
+         "run gof feishu reconcile on that batch and act on its result; it cannot be appended again")
     # A batch is never reused or rewritten: the same plan made again (the workbook's revision moved with nothing visible in the export, or a
     # write that landed nowhere) starts a batch of its own beside the earlier one, which keeps its record.
     directory = _new_batch_dir(base, plan["plan_id"])
@@ -188,12 +182,12 @@ def prepare(plan: dict, snapshot: Snapshot, workspace: Optional[str] = None, api
 
 
 #: Why a batch made by `adopt` has nothing to append, verify or read back.
-ADOPTED = "这一批接管的是进度表里已有的行（gof batch adopt），没有追加，也没有可核对的写入"
+ADOPTED = "this batch took over rows already in the progress sheet (gof batch adopt): it appended nothing and has no write to check"
 
 
 def taken_over(by: Any) -> str:
     """Why a batch whose rows `adopt` took over goes no further."""
-    return f"这一批的行已由批次 {js.to_str(by)} 接管（gof batch adopt）：用那一批继续"
+    return f"this batch's rows were taken over by batch {js.to_str(by)} (gof batch adopt): continue with that one"
 
 
 def adopt(snapshot: Snapshot, numbers: list[int], supplier: Optional[str] = None, reviewer: Optional[str] = None,
@@ -215,7 +209,7 @@ def adopt(snapshot: Snapshot, numbers: list[int], supplier: Optional[str] = None
     from .creative import lookup_rows, name_body
 
     wanted = sorted(set(numbers))
-    need(len(wanted) > 0, "缺少编号")
+    need(len(wanted) > 0, "no numbers given")
     base = os.path.abspath(output_root) if output_root is not None else default_batch_root()
     os.makedirs(base, exist_ok=True)
     # A batch holds its numbers once its rows went out or were taken over; one only prepared holds nothing yet, nor does one a takeover closed.
@@ -233,24 +227,24 @@ def adopt(snapshot: Snapshot, numbers: list[int], supplier: Optional[str] = None
         if not held:
             continue
         first = held[0]["number"]
-        need("append_verified" not in steps and "rows_adopted" not in steps, f"GOFCN{first} 已在批次 {earlier} 里：用这一批继续（gof batch list --number {first}）")
+        need("append_verified" not in steps and "rows_adopted" not in steps, f"GOFCN{first} is in batch {earlier} already: continue with that one (gof batch list --number {first})")
         ws = snapshot.sheet(plan["worksheet"]) if plan.get("worksheet") in snapshot.sheet_names else None
         differ = [coord for r in held for coord, value in (r.get("values") or {}).items()
                   if value is not None and not holds(ws.cells.get(coord) if ws else None, value)]
-        need(len(differ) == 0, f"GOFCN{first} 在批次 {earlier} 里，那一批的写入发出后没有核对通过，表里 {'、'.join(differ[:5])} 和它写的不一样：先对那一批运行 gof feishu reconcile，按结果处理")
+        need(len(differ) == 0, f"GOFCN{first} is in batch {earlier}, whose write was sent and never verified, and {', '.join(differ[:5])} in the sheet differ from what it wrote: run gof feishu reconcile on that batch and act on its result")
         closing.append({"dir": earlier, "numbers": [r["number"] for r in held]})
     by_number = lookup_rows(snapshot, wanted)[0]
     missing = [n for n in wanted if n not in by_number]
-    need(len(missing) == 0, f"进度表里没有这些编号的行：{'、'.join(f'GOFCN{n}' for n in missing)}")
+    need(len(missing) == 0, f"the progress sheet has no rows with these numbers: {', '.join(f'GOFCN{n}' for n in missing)}")
     cut = next((i for i, n in enumerate(wanted) if i > 0 and n != wanted[i - 1] + 1), -1)
     if cut >= 0:
-        raise Blocked(f"编号要连成一段：GOFCN{wanted[cut - 1]} 之后是 GOFCN{wanted[cut]}。一张需求单的名称是 GOFCN首号-GOFCN末号，不连续的编号分段各接管一次")
+        raise Blocked(f"the numbers must be one run: GOFCN{wanted[cut - 1]} is followed by GOFCN{wanted[cut]}. A ticket is named GOFCN<first>-GOFCN<last>, so take over each run of numbers on its own")
     rows = []
     for n in wanted:
         found = by_number[n]
-        where = "、".join(f"{r['sheet']} 第 {r['row']} 行" for r in found)
-        need(len({canonical(r["name"]) for r in found}) == 1, f"GOFCN{n} 在进度表里有 {len(found)} 行、素材名称不同（{where}）")
-        need(found[0]["name"], f"GOFCN{n}（{where}）没有素材名称")
+        where = ", ".join(f"{r['sheet']} row {r['row']}" for r in found)
+        need(len({canonical(r["name"]) for r in found}) == 1, f"GOFCN{n} is on {len(found)} rows of the progress sheet with different 素材名称 ({where})")
+        need(found[0]["name"], f"GOFCN{n} ({where}) has no 素材名称")
         rows.append(found[0])
 
     def one(field: str, label: str, given: Optional[str]) -> str:
@@ -260,8 +254,8 @@ def adopt(snapshot: Snapshot, numbers: list[int], supplier: Optional[str] = None
         for r in rows:
             if r[field] not in values:
                 values.append(r[field])
-        need(len(values) == 1, f"这些行的{label}不一致（{'、'.join(v or '空' for v in values)}）：用 --{field} 指明这张需求单的{label}")
-        need(values[0] != "", f"这些行没有{label}：用 --{field} 指明")
+        need(len(values) == 1, f"the rows' {label} differ ({', '.join(v or 'empty' for v in values)}): give the ticket's {label} with --{field}")
+        need(values[0] != "", f"the rows have no {label}: give it with --{field}")
         return values[0]
 
     supplier_name = one("supplier", "设计师供应商", supplier)
@@ -315,12 +309,12 @@ def events(directory: str) -> list[dict]:
     records: list[dict] = []
     previous = ""
     for offset, file in enumerate(files):
-        need(file == f"{str(offset + 1).zfill(6)}.json", "批次事件缺失/排序异常")
+        need(file == f"{str(offset + 1).zfill(6)}.json", "a batch event is missing or out of order")
         event = read_json(os.path.join(folder, file))
         token = event.get("event_id")
         rest = {k: v for k, v in event.items() if k != "event_id"}
-        need(rest.get("previous") == previous, "批次事件链损坏")
-        need(digest(rest) == token, "批次事件被修改")
+        need(rest.get("previous") == previous, "the batch's event chain is broken")
+        need(digest(rest) == token, "a batch event was modified")
         records.append({**rest, "event_id": token})
         previous = token
     return records
@@ -404,7 +398,7 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
     if "api-plan.json" in manifest["artifacts"] and evidence_is_api:
         api_dropdowns = validate_rule_evidence(batch_path, fresh, validation_evidence)
     baseline = Snapshot(os.path.join(batch_path, "baseline.xlsx"))
-    need(baseline.fingerprint == plan["baseline_digest"], "基线语义摘要与计划不一致")
+    need(baseline.fingerprint == plan["baseline_digest"], "the baseline's digest does not match the plan")
     sheet = plan["worksheet"]
     area = CellRange(plan["range"])
     issues: list[str] = []
@@ -424,7 +418,7 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
         return area.min_row <= row <= area.max_row
 
     if canonical(fresh.sheet_names) != canonical(baseline.sheet_names):
-        elsewhere("工作表列表/顺序发生变化")
+        elsewhere("the list or order of tabs changed")
     expected: dict[str, Any] = {}
     for row in plan["rows"]:
         expected.update(row["values"])
@@ -442,9 +436,9 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
             if not owned(name, coord) and canonical(before.get(coord)) != canonical(after.get(coord)):
                 # The appended rows themselves, beyond the written columns as well: someone writing into them is a collision, not a neighbour's edit.
                 if name == sheet and in_rows(_row_col(coord)[0]):
-                    issues.append(f"计划外修改：{name}!{coord}")
+                    issues.append(f"unplanned change: {name}!{coord}")
                 else:
-                    elsewhere(f"计划外修改：{name}!{coord}")
+                    elsewhere(f"unplanned change: {name}!{coord}")
                 if len(issues) >= 20:
                     done = True
                     break
@@ -459,7 +453,7 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
         after_meta[sheet]["filter"] = before_meta[sheet]["filter"]
     if strict:
         if canonical(before_meta) != canonical(after_meta):
-            issues.append("历史布局/合并/隐藏/保护/筛选发生变化")
+            issues.append("the existing layout, merges, hidden rows, protection or filter changed")
     else:
         for name in dict.fromkeys([*before_meta.keys(), *after_meta.keys()]):
             b = before_meta.get(name)
@@ -478,12 +472,12 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
                 return out
 
             if name == sheet and b and a and (canonical(b.get("protection")) != canonical(a.get("protection")) or canonical(reaching(b)) != canonical(reaching(a))):
-                issues.append("历史布局/合并/隐藏/保护/筛选发生变化")
+                issues.append("the existing layout, merges, hidden rows, protection or filter changed")
             else:
-                elsewhere(f"历史布局/合并/隐藏/筛选发生变化：{name}")
+                elsewhere(f"the existing layout, merges, hidden rows or filter changed: {name}")
     if canonical(validation_projection(baseline, (sheet, area))) != canonical(validation_projection(fresh, (sheet, area))):
-        elsewhere("追加范围外的下拉验证发生变化")
-    need(sheet in fresh.sheet_names, "目标工作表已不存在")
+        elsewhere("dropdown rules outside the appended range changed")
+    need(sheet in fresh.sheet_names, "the target tab no longer exists")
     ws = fresh.sheet(sheet)
     matches = 0
     blanks = 0
@@ -498,13 +492,13 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
             elif not present:
                 blanks += 1
             else:
-                issues.append(f"追加值不符：{coord}")
+                issues.append(f"appended value differs: {coord}")
         elif present:
-            issues.append(f"应为空的新增字段被占用：{coord}")
+            issues.append(f"a new cell that must stay empty is filled: {coord}")
     state = "conflict" if issues else "not_applied" if matches == 0 else "partial" if blanks else "complete"
     ui_validated: list[str] = []
     if state == "complete":
-        need("api-plan.json" not in manifest["artifacts"] or api_dropdowns is not None, "接口追加需要当前快照对应的完整 API 规则回读")
+        need("api-plan.json" not in manifest["artifacts"] or api_dropdowns is not None, "an API append needs the full API read-back of the rules of this snapshot")
         rules = plain_rules(ws)
         for dropdown in plan["dropdowns"]:
             r = CellRange(dropdown["range"])
@@ -520,7 +514,7 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
                 if api_dropdowns is not None:
                     if spec and value is not None and value in spec["options"]:
                         continue
-                    issues.append(f"新增下拉未包含实际值/原有选项：{coord}")
+                    issues.append(f"a new row's dropdown lacks its value or the existing options: {coord}")
                     break
                 matching = [v for v in rules if any(rng.contains(coord) for rng in v.ranges)]
                 if not matching and _ui_validates_omitted_dropdown(dropdown, validation_evidence, fresh, sheet, value):
@@ -533,7 +527,7 @@ def verify(directory: str, fresh: Snapshot, validation_evidence: Any = None) -> 
                     return value is not None and value in options and all(o in options for o in dropdown["options"])
 
                 if not matching or not any(accepts(v) for v in matching):
-                    issues.append(f"新增下拉未包含实际值/原有选项：{coord}")
+                    issues.append(f"a new row's dropdown lacks its value or the existing options: {coord}")
                     break
         if issues:
             state = "conflict"
@@ -559,59 +553,59 @@ def can_start_append(records: list[dict]) -> bool:
 def preflight(directory: str, fresh: Snapshot) -> dict:
     batch_path, manifest = load_batch(directory)
     records = events(batch_path)
-    need(not status(batch_path)["blocked"] and can_start_append(records), "本批已有执行尝试/阻塞，必须先核对现状，不能自动重贴")
-    need(fresh.fingerprint == manifest["plan"]["baseline_digest"], "快照变化或目标被占用，需更新计划并确认")
+    need(not status(batch_path)["blocked"] and can_start_append(records), "this batch has an attempt or a block already: check what is there first; it is never pasted again automatically")
+    need(fresh.fingerprint == manifest["plan"]["baseline_digest"], "the snapshot changed or the target is occupied: plan again and have it approved")
     area = CellRange(manifest["plan"]["range"])
     ws = fresh.sheet(manifest["plan"]["worksheet"])
     for cell in ws.cells.values():
         if area.min_row <= cell.row <= area.max_row:
-            need(not has_content(cell), "目标行已有值、公式或附件元数据")
+            need(not has_content(cell), "a target row holds a value, a formula or attachment data")
     return {"status": "ready_to_append", "range": str(area)}
 
 
 def group_for(plan: dict, group_id: Optional[str]) -> dict:
     found = [g for g in plan["groups"] if g["id"] == group_id]
-    need(len(found) == 1, "分组编号不存在")
+    need(len(found) == 1, "no such group")
     return found[0]
 
 
 def cls_check(directory: str, group_id: str, action: str, ui: dict) -> dict:
-    need(action in ("fill", "save_draft", "import_scripts"), "发布/删除/更新脚本及未知动作均不允许")
+    need(action in ("fill", "save_draft", "import_scripts"), "publishing, deleting, updating scripts and unknown actions are not allowed")
     state = status(directory)
-    need(state["append_verified"] and not state["blocked"], "进度表尚未验证或批次已阻塞")
-    need(group_id in state["groups"], "组不存在")
+    need(state["append_verified"] and not state["blocked"], "the progress-sheet rows are not verified yet, or the batch is blocked")
+    need(group_id in state["groups"], "no such group")
     stages = state["groups"][group_id]
     attempted = [e for e in state["events"] if e.get("group") == group_id and e["step"] == "cls_api_attempt" and e["evidence"].get("action") == action]
-    need(len(attempted) == 0, "本组接口动作已有尝试；必须回读核对，不能自动重发")
-    need("cls_started" in stages and "handoff" not in stages, "需先记录 CLS 尝试，已移交的组不可自动继续")
+    need(len(attempted) == 0, "this group's action was attempted already: read back; it is never sent again automatically")
+    need("cls_started" in stages and "handoff" not in stages, "record cls_started first; a group handed off does not continue automatically")
     ui = ui if isinstance(ui, dict) else {}
-    need(ui.get("logged_in") is True, "CLS 未登录")
-    need(ui.get("can_create") is True, "未证明 CLS 有建单权限")
-    need(ui.get("unpublished") is True, "未证明当前是未发布的新需求/草稿")
-    need(ui.get("save_result") not in ("failure", "unknown"), "草稿保存失败/结果未知，先核对现状")
+    need(ui.get("logged_in") is True, "CLS is not logged in")
+    need(ui.get("can_create") is True, "no proof that the CLS account may create requirements")
+    need(ui.get("unpublished") is True, "no proof that this is a new, unpublished requirement or draft")
+    need(ui.get("save_result") not in ("failure", "unknown"), "the draft save failed or its result is unknown: check what is there first")
     if action == "save_draft":
-        need("draft_saved" not in stages, "已有草稿，不能按新工单重复保存")
-        need(ui.get("required_complete") is True, "CLS 必填未齐全")
+        need("draft_saved" not in stages, "a draft exists already: it is not saved again as a new ticket")
+        need(ui.get("required_complete") is True, "CLS required fields are incomplete")
     if action == "import_scripts":
-        need("draft_saved" in stages and "scripts_imported" not in stages, "未保存草稿或本组已导入，不能重复")
-        need(ui.get("draft_saved") is True and ui.get("unpublished") is True, "需确认当前未发布草稿")
-        need(ui.get("import_enabled") is True and ui.get("import_would_publish") is False, "脚本导入禁用/需要发布/后果未知，保留内部记录并说明具体阻碍")
+        need("draft_saved" in stages and "scripts_imported" not in stages, "no draft saved, or this group's scripts were imported already: not repeated")
+        need(ui.get("draft_saved") is True and ui.get("unpublished") is True, "needs proof of the unpublished draft")
+        need(ui.get("import_enabled") is True and ui.get("import_would_publish") is False, "the script import is disabled, would publish, or has an unknown effect: keep the records and report what blocks it")
     return {"status": "allowed", "action": action, "group": group_id}
 
 
 def _cls_evidence(evidence: dict, api_batch: bool) -> None:
     from .cls import validate_receipt
 
-    need(evidence.get("confirmed") is True and evidence.get("unpublished") is True, "没有确认成功及未发布状态")
+    need(evidence.get("confirmed") is True and evidence.get("unpublished") is True, "no confirmation of success and of the unpublished state")
     check_cls_url(evidence.get("url") if evidence.get("url") is not None else "")
     # A batch made through the bridge (it has an api-plan) only accepts receipts of the CLS API: a screenshot path proves nothing about CLS.
-    need(not api_batch or evidence.get("transport") == "cls_api", "接口批次的 CLS 证据必须是 transport=cls_api 的接口记录")
+    need(not api_batch or evidence.get("transport") == "cls_api", "the CLS evidence of an API batch must be a receipt with transport=cls_api")
     if evidence.get("transport") == "cls_api":
         validate_receipt(evidence)
     else:
         # Historical UI receipts retain their original evidence requirements.
         screenshot = js.to_str(evidence["screenshot"]) if evidence.get("screenshot") is not None else ""
-        need(os.path.isabs(screenshot) and os.path.exists(screenshot) and os.path.isfile(screenshot), "需已存在的截图绝对路径")
+        need(os.path.isabs(screenshot) and os.path.exists(screenshot) and os.path.isfile(screenshot), "needs the absolute path of an existing screenshot")
 
 
 def _has_reason(evidence: dict) -> bool:
@@ -619,7 +613,7 @@ def _has_reason(evidence: dict) -> bool:
 
 
 #: A group whose rows were appended without a CLS ticket, and none attached since.
-NO_TICKET = "这一组的行追加时没有需求单（没有脚本内容，也没有 CSV）：要发单，先用 gof batch ticket 给这一组补上需求单"
+NO_TICKET = "this group's rows were appended without a ticket (no 脚本内容 and no CSV): attach one with gof batch ticket first"
 
 #: What a ticket attached to a batch group may give: the 脚本内容 (a Feishu document or 无), the CLS fields and the group message's label.
 TICKET_KEYS = ["script_url", "cls", "label"]
@@ -631,15 +625,15 @@ def ticket_request(group: dict, ticket_input: Any, adopted: bool = False) -> dic
     Everything that was appended (rows, names, tags, supplier, reviewer) stays as it was approved; rows taken over (`adopted`) stay as the
     sheet has them.
     """
-    need(is_object(ticket_input) and all(k in TICKET_KEYS for k in ticket_input.keys()), f"需求单只接受 {'、'.join(TICKET_KEYS)}")
-    need(isinstance(ticket_input.get("script_url"), str) and js.trim(ticket_input["script_url"]) != "", f"缺少脚本内容：需求文档链接，没有文档时写「{NO_SCRIPT}」")
-    need(is_object(ticket_input.get("cls")) and len(ticket_input["cls"]) > 0, "缺少 CLS 字段（创意方向、任务类型）")
+    need(is_object(ticket_input) and all(k in TICKET_KEYS for k in ticket_input.keys()), f"a ticket takes only {', '.join(TICKET_KEYS)}")
+    need(isinstance(ticket_input.get("script_url"), str) and js.trim(ticket_input["script_url"]) != "", f"script_url is missing: the requirement document link, or \"{NO_SCRIPT}\" when there is none")
+    need(is_object(ticket_input.get("cls")) and len(ticket_input["cls"]) > 0, "the CLS fields (direction, task_type) are missing")
     request = normalize_request({"groups": [{**group["request"], **ticket_input}]}, adopted=adopted)["groups"][0]
 
     def rest(g: dict) -> dict:
         return {k: v for k, v in g.items() if k not in TICKET_KEYS}
 
-    need(canonical(rest(request)) == canonical(rest(group["request"])), "需求单改变了已追加的行，只能补脚本内容和 CLS 字段")
+    need(canonical(rest(request)) == canonical(rest(group["request"])), "the ticket changes the appended rows: it may only add script_url, the CLS fields and label")
     return request
 
 
@@ -671,7 +665,7 @@ def attach_ticket(directory: str, group_id: str, ticket_input: Any, catalog: dic
     batch_path, manifest = load_batch(directory)
     reject_secrets(ticket_input)
     reject_secrets(catalog)
-    need(isinstance(catalog, dict) and catalog.get("can_create") is True, "没有建单权限")
+    need(isinstance(catalog, dict) and catalog.get("can_create") is True, "the CLS account may not create requirements")
     group = group_for(manifest["plan"], group_id)
     request = ticket_request(group, ticket_input, manifest["plan"].get("adopted") is True)
     _, _, defaults, matched = build_payload(request, catalog, group["names"])
@@ -698,10 +692,10 @@ def _check_ticket_allowed(batch_path: str, plan: dict, group_id: str) -> None:
     """A ticket can be attached to a group appended without one, once the rows are verified, until its CLS stage begins."""
     state = status(batch_path)
     need(not state.get("taken_over"), taken_over(state.get("taken_over")))
-    need(not state["blocked"], "批次已阻塞，先处理阻塞原因")
-    need(state["append_verified"], "这一批的行还没有追加并验收，不能补需求单")
-    need(len(group_for(plan, group_id)["request"].get("cls") or {}) == 0, "这一组获批时已带需求单，按原计划建单")
-    need(not any(s.startswith("cls_") or s in TICKET_STEPS for s in state["groups"][group_id]), "这一组已开始建单，需求单不能再改")
+    need(not state["blocked"], "the batch is blocked: deal with the cause first")
+    need(state["append_verified"], "this batch's rows are not appended and verified yet: no ticket can be attached")
+    need(len(group_for(plan, group_id)["request"].get("cls") or {}) == 0, "this group was approved with a ticket: create it as planned")
+    need(not any(s.startswith("cls_") or s in TICKET_STEPS for s in state["groups"][group_id]), "this group's CLS stage has started: its ticket can no longer change")
 
 
 def list_batches(root: Optional[str] = None, number: Optional[int] = None) -> dict:
@@ -749,94 +743,94 @@ def record(directory: str, step: str, group_id: Optional[str] = None, evidence_i
     group = group_id
     # Rows another batch took over are that batch's: nothing goes on here, or the same rows could get a second ticket.
     need(not state.get("taken_over"), taken_over(state.get("taken_over")))
-    need(not state["blocked"] or step in ("resumed", "taken_over"), "已阻塞批次不能继续自动化；保留现场等待用户处理")
+    need(not state["blocked"] or step in ("resumed", "taken_over"), "a blocked batch does not continue automatically; leave it as it is for the user to decide")
     adopted = manifest["plan"].get("adopted") is True
     need(not adopted or step not in ("append_started", "append_verified"), ADOPTED)
     ev = evidence if isinstance(evidence, dict) else {}
     if step == "rows_adopted":
-        need(adopted and len(records) == 0 and group is None, "只有 gof batch adopt 接管已有行时记录")
+        need(adopted and len(records) == 0 and group is None, "recorded only by gof batch adopt when it takes over existing rows")
     elif step == "taken_over":
         need(not adopted and group is None and any(e["step"] == "append_started" for e in records) and not state["append_verified"]
-             and isinstance(ev.get("by"), str) and os.path.isabs(ev["by"]), "只有 gof batch adopt 接管写入未核对的行时记录")
+             and isinstance(ev.get("by"), str) and os.path.isabs(ev["by"]), "recorded only by gof batch adopt when it takes over rows of an unverified write")
     elif step == "resumed" and adopted:
         # Nothing was appended, so there is no write to read back: only what CLS already has must have been looked at.
-        need(state["blocked"] and group is None, "恢复需阻塞记录")
-        need(ev.get("confirmed") is True and _has_reason(ev), "恢复需用户明确决定及原因")
+        need(state["blocked"] and group is None, "resuming needs a blocked record")
+        need(ev.get("confirmed") is True and _has_reason(ev), "resuming needs the user's explicit decision and a reason")
         if any(e["step"] == "cls_started" for e in records):
-            need(ev.get("cls_reconciled") is True, "需先核对现有草稿/导入结果，避免重复工单")
+            need(ev.get("cls_reconciled") is True, "check the existing draft and import first (cls_reconciled), so no second ticket is made")
     elif step == "resumed":
-        need(state["blocked"] and fresh is not None and group is None, "恢复需阻塞记录及最新快照")
-        need(ev.get("confirmed") is True and _has_reason(ev), "恢复需用户明确决定及原因")
+        need(state["blocked"] and fresh is not None and group is None, "resuming needs a blocked record and a fresh snapshot")
+        need(ev.get("confirmed") is True and _has_reason(ev), "resuming needs the user's explicit decision and a reason")
         result = verify(batch_path, fresh, ev.get("validations"))
         never_attempted = not any(e["step"] == "append_started" for e in records)
         if ev.get("retry_append") is True:
-            need("api-plan.json" not in manifest["artifacts"], "接口批次已尝试写入后只能回读，不授权重发")
+            need("api-plan.json" not in manifest["artifacts"], "an API batch whose write was attempted can only be read back; sending again is not allowed")
             need(ev.get("sync_confirmed") is True and not state["append_verified"]
-                 and all(e["step"] in ("append_started", "blocked", "resumed") for e in records), "重试需确认同步完成，且不能已验证追加或开始 CLS")
+                 and all(e["step"] in ("append_started", "blocked", "resumed") for e in records), "a retry needs the sync confirmed, and no verified append or CLS stage")
             need(result["status"] == "not_applied" and fresh.fingerprint == manifest["plan"]["baseline_digest"],
-                 "重试仅允许全批为空且完整快照与基线一致；部分写入/冲突不能重试")
+                 "a retry is allowed only when the whole batch is empty and the full snapshot matches the baseline; a partial write or a conflict cannot be retried")
         else:
             need(result["status"] == "complete" or (never_attempted and result["status"] == "not_applied" and fresh.fingerprint == manifest["plan"]["baseline_digest"]),
-                 "部分写入/冲突/未确认的写入尝试不能恢复")
+                 "a partial, conflicting or unconfirmed write cannot be resumed")
         if any(e["step"] == "cls_started" for e in records):
-            need(ev.get("cls_reconciled") is True, "需先核对现有草稿/导入结果，避免重复工单")
+            need(ev.get("cls_reconciled") is True, "check the existing draft and import first (cls_reconciled), so no second ticket is made")
         evidence = ev = {**ev, "verified_snapshot_digest": fresh.fingerprint}
     elif step == "append_started":
-        need(can_start_append(records) and group is None, "已有写入尝试，禁止重复记录/自动重贴")
+        need(can_start_append(records) and group is None, "a write was attempted already: it is not recorded or pasted again")
     elif step == "append_verified":
-        need(group is None, "追加验证不属于某个组")
-        need(any(e["step"] == "append_started" for e in records) and not state["append_verified"], "追加验证顺序不正确")
-        need(fresh is not None and verify(batch_path, fresh, ev.get("validations"))["status"] == "complete", "追加未完整通过校验")
+        need(group is None, "append_verified belongs to no group")
+        need(any(e["step"] == "append_started" for e in records) and not state["append_verified"], "append_verified is out of order")
+        need(fresh is not None and verify(batch_path, fresh, ev.get("validations"))["status"] == "complete", "the append did not verify completely")
     elif step == "blocked":
-        need(_has_reason(ev), "需阻塞原因")
+        need(_has_reason(ev), "a reason is needed")
     else:
-        need(state["append_verified"], "进度表必须先验证")
+        need(state["append_verified"], "the progress-sheet rows must be verified first")
         plan_group = group_for(manifest["plan"], group)
         # A ticket attached to the group is what its CLS stage works from, not a step of it.
         stages = [s for s in state["groups"][group] if s != "ticket_attached"]
-        need("handoff" not in stages or step == "requirement_number", "本组已移交，不自动继续")
+        need("handoff" not in stages or step == "requirement_number", "this group was handed off and does not continue automatically")
         if step == "ticket_attached":
             _check_ticket_allowed(batch_path, manifest["plan"], group)
             csv = ev.get("csv")
             sha = ev.get("csv_sha256")
             ticket = {k: v for k, v in ev.items() if k not in ("csv", "csv_sha256")}
             request = ticket_request(plan_group, ticket, adopted)
-            need(isinstance(csv, str) and os.path.basename(csv) == csv and re.search(r"\.csv\Z", csv) and csv not in manifest["artifacts"], "需求单的 CSV 文件名无效")
+            need(isinstance(csv, str) and os.path.basename(csv) == csv and re.search(r"\.csv\Z", csv) and csv not in manifest["artifacts"], "invalid CSV file name for the ticket")
             with open(os.path.join(batch_path, csv), "r", encoding="utf-8", newline="") as handle:
                 text = handle.read()
-            need(sha256(text) == sha and text == csv_text(plan_group["names"], request["script_url"]), "需求单的 CSV 与本组的行不符")
+            need(sha256(text) == sha and text == csv_text(plan_group["names"], request["script_url"]), "the ticket's CSV does not match this group's rows")
         elif step == "cls_started":
             need(ticket_group(manifest["plan"], records, group).get("csv"), NO_TICKET)
-            need(len(stages) == 0, "已有 CLS 尝试，先查草稿，不能重复新建")
+            need(len(stages) == 0, "a CLS attempt exists already: look for the draft first; none is created again")
         elif step == "cls_api_attempt":
             action = ev.get("action")
             need(action in ("save_draft", "import_scripts") and isinstance(ev.get("operation_id"), str)
-                 and re.fullmatch(r"[0-9a-f]{64}", ev["operation_id"]), "接口尝试动作/摘要无效")
+                 and re.fullmatch(r"[0-9a-f]{64}", ev["operation_id"]), "invalid action or digest for the API attempt")
             cls_check(batch_path, group, action, ev.get("observations") if ev.get("observations") is not None else {})
         elif step == "draft_saved":
-            need([s for s in stages if s != "cls_api_attempt"] == ["cls_started"], "已有草稿或记录顺序错误")
+            need([s for s in stages if s != "cls_api_attempt"] == ["cls_started"], "a draft exists already, or the records are out of order")
             _cls_evidence(ev, "api-plan.json" in manifest["artifacts"])
             if ev.get("transport") == "cls_api":
                 validate_batch_receipt(batch_path, group, ev, "draft_saved")
         elif step == "scripts_imported":
-            need("draft_saved" in stages and "scripts_imported" not in stages, "导入顺序不正确或重复")
+            need("draft_saved" in stages and "scripts_imported" not in stages, "the import is out of order or repeated")
             _cls_evidence(ev, "api-plan.json" in manifest["artifacts"])
             if ev.get("transport") == "cls_api":
                 validate_batch_receipt(batch_path, group, ev, "scripts_imported")
             need(js.is_int(ev.get("quantity")) and ev["quantity"] == plan_group["request"]["quantity"]
-                 and canonical(ev.get("names")) == canonical(plan_group["names"]), "导入数量/名称不符")
+                 and canonical(ev.get("names")) == canonical(plan_group["names"]), "the imported quantity or names differ")
         elif step == "handoff":
-            need(_has_reason(ev), "需明确人工接手事项")
+            need(_has_reason(ev), "say what the person taking over has to do")
         elif step == "requirement_number":
-            need("draft_saved" in stages or "handoff" in stages, "尚无可补充编号的工单")
-            need(ev.get("confirmed") is True, "正式编号必须来自用户/实际页面或接口回读")
+            need("draft_saved" in stages or "handoff" in stages, "there is no ticket to give a number to yet")
+            need(ev.get("confirmed") is True, "the official number must come from the user, the real page or an API read-back")
         else:
-            raise Blocked("事件步骤不受支持")
+            raise Blocked("unsupported step")
     number = ev.get("requirement_number")
     if number is not None:
-        need(isinstance(number, str) and re.fullmatch(r"GOFCN[0-9]{11}", number), "不是正式需求编号；不能使用素材编号/草稿 ID")
+        need(isinstance(number, str) and re.fullmatch(r"GOFCN[0-9]{11}", number), "not an official requirement number; a material number or a draft ID cannot be used")
     if step == "requirement_number":
-        need(number is not None, "缺少实际需求编号")
+        need(number is not None, "the official requirement number is missing")
     event: dict[str, Any] = {"step": step, "group": group, "evidence": evidence, "time": js.iso(),
                              "previous": records[-1]["event_id"] if records else ""}
     event["event_id"] = digest(event)
@@ -942,16 +936,16 @@ def report(directory: str) -> dict:
     result = {
         "schema": 1, "status": "report_ready", "plan_id": plan["plan_id"], "target": TARGET, "worksheet": plan["worksheet"],
         "sheet_id": context.get("sheet_id"), "range": plan["range"], "state": state, "groups": groups, "message": message(batch_path)["message"],
-        "evidence_time": "各阶段保存的回读时间；本报告不重新查询线上当前状态",
+        "evidence_time": "the read-back times saved at each stage; this report does not query the live state again",
         "links": _links(context.get("sheet_id"), groups),
     }
     if verified:
         evidence = verified["evidence"]
         if evidence.get("transport") == "feishu_api" and evidence.get("snapshot"):
             snapshot_path = os.path.abspath(evidence["snapshot"])
-            need(is_inside(batch_path, snapshot_path), "报告快照必须位于本批目录")
+            need(is_inside(batch_path, snapshot_path), "the report's snapshot must be inside the batch directory")
             snapshot = Snapshot(snapshot_path)
             need(snapshot.fingerprint == evidence.get("snapshot_digest") and verify(batch_path, snapshot, evidence.get("validations"))["status"] == "complete",
-                 "报告对应的本地快照/规则证明已变化")
+                 "the local snapshot or rule proof behind the report has changed")
         result["append_verified"] = {"verified_at": verified["time"], "evidence": verified["evidence"]}
     return result

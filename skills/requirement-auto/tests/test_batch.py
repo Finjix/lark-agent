@@ -1,4 +1,4 @@
-"""Plans, batches, verification, the event chain and the group message (gof-batch.test.ts).
+"""Plans, batches, verification, the event chain and the group message.
 
 The fixtures and golden.json were produced by the Python implementation the TypeScript code replaced; digests and plan ids are not
 comparable (they hash openpyxl's view of the workbook), so everything else is: row ranges, numbers, names, CSV text, verdicts, reasons.
@@ -45,7 +45,7 @@ def open_(name: str) -> Snapshot:
 #: JSON.parse cannot tell 2.0 from 2, so the original check for an integral float is not reproducible.
 KNOWN_DIVERGENT = {"base.xlsx|float-quantity|"}
 #: Refusals whose rule changed after the port: 设计师供应商 may be left open, but not in one group of a batch and not the other.
-CHANGED_REFUSALS = {"base.xlsx|missing-field|": "这一批有的需求写了设计师供应商、有的没写（追加时一列一次写完，不能留空；供应商就是审核人本人时那格留空）：分两次追加"}
+CHANGED_REFUSALS = {"base.xlsx|missing-field|": "some groups of this request fill the 设计师供应商 cell and some do not (a column is written in one go, without gaps; the cell stays empty when the supplier is the reviewer): append in two requests"}
 #: No longer refused: a sheet without a naming formula to copy gets the sheet's naming written by the plan.
 NOW_PLANNED = {"plan-no-formula.xlsx|basic|"}
 
@@ -118,11 +118,10 @@ class GoldenTests(unittest.TestCase):
         with self.assertRaises(Blocked) as caught:
             prepare(stale, snapshot, output_root=tmp())
         self.assertEqual(caught.exception.message, GOLDEN["prepare"]["stale_plan"])
-        self.assertRaisesRegex(Blocked, "不能同时使用", prepare, plan, snapshot, workspace=tmp(), output_root=tmp())
         # Any change to a generated file is noticed.
         with open(os.path.join(directory, "append.tsv"), "a", encoding="utf-8") as handle:
             handle.write("x")
-        self.assertRaisesRegex(Blocked, "批次文件发生变化：append.tsv", status, directory)
+        self.assertRaisesRegex(Blocked, "a batch file has changed: append.tsv", status, directory)
 
     def test_verify_golden(self) -> None:
         """Verification gives the same verdicts as the original implementation for every appended variant."""
@@ -134,7 +133,7 @@ class GoldenTests(unittest.TestCase):
             self.assertEqual(result["expected_cells"], expected["expected_cells"], fx)
             if fx == "applied-renamed-sheet.xlsx":
                 # The original reported an arbitrary 20 of many; the first message is the stable part.
-                self.assertEqual(result["issues"][0], next(i for i in expected["issues"] if i.startswith("工作表列表")))
+                self.assertEqual(result["issues"][0], next(i for i in expected["issues"] if i.startswith("the list or order of tabs")))
                 continue
             self.assertEqual(sorted(result["issues"]), sorted(expected["issues"]), fx)
 
@@ -227,7 +226,7 @@ class GoldenTests(unittest.TestCase):
                 self.assertEqual({"status": "blocked", "reason": error.message}, want, f"{action}/{key}")
         with self.assertRaises(Blocked) as caught:
             cls_check(directory, "09", "save_draft", {})
-        self.assertEqual(caught.exception.message, "组不存在")
+        self.assertEqual(caught.exception.message, "no such group")
 
         self.assertEqual(message(directory), next(f for f in GOLDEN["flow"] if f["name"] == "message")["result"])
         full = report(directory)
@@ -248,10 +247,10 @@ class GoldenTests(unittest.TestCase):
         with open(file, encoding="utf-8") as handle:
             original = handle.read()
         write_file(file, original.replace("append_started", "append_verified"))
-        self.assertRaisesRegex(Blocked, "批次事件被修改", status, directory)
+        self.assertRaisesRegex(Blocked, "a batch event was modified", status, directory)
         write_file(file, original)
         os.rename(file, os.path.join(directory, "events", "000009.json"))
-        self.assertRaisesRegex(Blocked, "批次事件缺失/排序异常", status, directory)
+        self.assertRaisesRegex(Blocked, "a batch event is missing or out of order", status, directory)
 
     def test_canonical(self) -> None:
         """Canonical JSON and digests agree byte for byte with what the batches on disk were sealed with."""
@@ -283,7 +282,7 @@ class GoldenTests(unittest.TestCase):
     def test_unusable_header(self) -> None:
         """A GOFCN sheet with an unusable header is never skipped silently: it stops the plan when it may be the target or hold higher numbers."""
         for fx in ("plan-header-dup.xlsx", "plan-no-header.xlsx"):
-            self.assertRaisesRegex(Blocked, "不能静默跳过", make_plan, open_(fx), request("basic"), None)
+            self.assertRaisesRegex(Blocked, "not skipped silently", make_plan, open_(fx), request("basic"), None)
 
 
 class DerivedRequestTests(unittest.TestCase):
@@ -302,7 +301,7 @@ class DerivedRequestTests(unittest.TestCase):
         self.assertEqual(canonical(listed), canonical(plan))
         # The 素材名称 is the creative's name in CLS too, which cannot hold / or \: such a row could never be uploaded.
         for keyword in ("横版/竖版", "A\\B"):
-            self.assertRaisesRegex(Blocked, r"不能含 / 或 \\", make_plan, open_("base.xlsx"),
+            self.assertRaisesRegex(Blocked, r"cannot contain / or \\", make_plan, open_("base.xlsx"),
                                    {"groups": [derived(quantity=1, primary_tag="玩法", secondary_tag="卖点", creative_form="视频", keyword=keyword)]})
 
     def test_items(self) -> None:
@@ -389,24 +388,24 @@ class MessageTests(unittest.TestCase):
             return "no error"
 
         item = {"quantity": 1, "primary_tag": "玩法", "secondary_tag": "卖点", "creative_form": "视频"}
-        self.assertEqual(refused(quantity=2, items=[item]), "第 1 组的 quantity 与各项数量之和不一致")
-        self.assertEqual(refused(material_name="玩法_卖点_视频_关键词", items=[item]), "第 1 组已按 items 分行，素材名称写在各项里")
-        self.assertEqual(refused(items=[]), "第 1 组的 items 需要至少一项")
-        self.assertEqual(refused(items=[item, {**item, "extra": 1}]), "第 1 组第 2 项有未知字段")
-        self.assertEqual(refused(items=[item, {"quantity": 1, "primary_tag": "玩法", "creative_form": "视频"}]), "第 1 组第 2 项缺少一级/二级标签")
+        self.assertEqual(refused(quantity=2, items=[item]), "group 1: quantity is not the sum of its items' quantities")
+        self.assertEqual(refused(material_name="玩法_卖点_视频_关键词", items=[item]), "group 1 has items: give material_name in the items")
+        self.assertEqual(refused(items=[]), "group 1: items needs at least one entry")
+        self.assertEqual(refused(items=[item, {**item, "extra": 1}]), "group 1 item 2 has unknown fields")
+        self.assertEqual(refused(items=[item, {"quantity": 1, "primary_tag": "玩法", "creative_form": "视频"}]), "group 1 item 2: primary_tag / secondary_tag is missing")
         self.assertEqual(refused(items=[item, {"quantity": 1, "primary_tag": "玩法", "secondary_tag": "卖点"}]),
-                         "这一批有的行写了创意形式、有的没写（追加时一列一次写完，不能留空）：都不写创意形式、把它放在提炼词前面（素材名称不变），或分两次追加")
+                         "some rows of this request have a creative_form and some do not (a column is written in one go, without gaps): leave creative_form out for all and put it in front of the keyword (the name stays the same), or append in two requests")
         # No 创意形式 at all is fine: the formula then gets SUBSTITUTE(…,"__","_") around it.
         self.assertEqual(refused(items=[{"quantity": 1, "primary_tag": "玩法", "secondary_tag": "卖点"}]), "no error")
-        self.assertEqual(refused(items=[{**item, "secondary_tag": "卖点_体验"}]), "第 1 组第 1 项的二级标签“卖点_体验”不能含 _：素材名称按 _ 分段，标签和创意形式各占一段，其余写进提炼词")
-        self.assertEqual(refused(items=[{**item, "creative_form": "3D_AI"}]), "第 1 组第 1 项的创意形式“3D_AI”不能含 _：素材名称按 _ 分段，标签和创意形式各占一段，其余写进提炼词")
+        self.assertEqual(refused(items=[{**item, "secondary_tag": "卖点_体验"}]), 'group 1 item 1: the 二级标签 "卖点_体验" cannot contain _: a 素材名称 is cut into parts at _, a tag or creative_form is one part and the rest goes into the keyword')
+        self.assertEqual(refused(items=[{**item, "creative_form": "3D_AI"}]), 'group 1 item 1: the 创意形式 "3D_AI" cannot contain _: a 素材名称 is cut into parts at _, a tag or creative_form is one part and the rest goes into the keyword')
         for keyword in ("_企鹅", "企鹅_", "企鹅__竖版"):
-            self.assertEqual(refused(items=[{**item, "keyword": keyword}]), f"第 1 组第 1 项的提炼词“{keyword}”不能以 _ 开头或结尾，也不能有连续的 _")
-        self.assertEqual(refused(items=[{**item, "quantity": 0}]), "quantity 必须是正整数")
+            self.assertEqual(refused(items=[{**item, "keyword": keyword}]), f"group 1 item 1: the keyword \"{keyword}\" cannot start or end with _ or hold __")
+        self.assertEqual(refused(items=[{**item, "quantity": 0}]), "quantity must be a positive whole number")
         self.assertEqual(refused(items=[{**item, "material_name": "玩法_卖点_图文_关键词"}]),
-                         "按进度表的命名（GOFCN<素材编号>_<一级标签>_<二级标签>_<创意形式>_<提炼词>），这一行会叫“GOFCN1011_玩法_卖点_视频_关键词”，不是要求的“GOFCN1011_玩法_卖点_图文_关键词”：核对一级标签、二级标签、创意形式和提炼词")
-        self.assertEqual(refused(items=[{"quantity": 1, "material_name": "玩法_卖点_图文_关键词", "creative_form": "视频"}]), "素材名称与创意形式/提炼词不一致，请澄清")
-        self.assertEqual(refused(quantity=1, creative_form="视频"), "第 1 组缺少一级/二级标签")
+                         'by the sheet\'s naming (GOFCN<素材编号>_<一级标签>_<二级标签>_<创意形式>_<提炼词>) this row would be named "GOFCN1011_玩法_卖点_视频_关键词", not the requested "GOFCN1011_玩法_卖点_图文_关键词": check primary_tag, secondary_tag, creative_form and keyword')
+        self.assertEqual(refused(items=[{"quantity": 1, "material_name": "玩法_卖点_图文_关键词", "creative_form": "视频"}]), "material_name does not agree with creative_form / keyword: settle it")
+        self.assertEqual(refused(quantity=1, creative_form="视频"), "group 1: primary_tag / secondary_tag is missing")
         self.assertEqual(refused(**{**item, "script_url": "https://centurygames.feishu.cn/sheets/shtABC123?sheet=x"}), "no error")
 
 
@@ -510,15 +509,15 @@ class NamingTests(unittest.TestCase):
         wrong["groups"][0]["items"][0]["keyword"] = "兵临城下塔防_冻鱼"
         with self.assertRaises(Blocked) as caught:
             make_plan(snapshot, wrong)
-        self.assertEqual(caught.exception.message, "按进度表的命名（GOFCN<素材编号>_<一级标签>_<二级标签>_<创意形式>_<提炼词>），这一行会叫“GOFCN67738_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼”，不是要求的“GOFCN67738_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼_竖版”：核对一级标签、二级标签、创意形式和提炼词")
+        self.assertEqual(caught.exception.message, 'by the sheet\'s naming (GOFCN<素材编号>_<一级标签>_<二级标签>_<创意形式>_<提炼词>) this row would be named "GOFCN67738_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼", not the requested "GOFCN67738_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼_竖版": check primary_tag, secondary_tag, creative_form and keyword')
         # A row of that name already in the sheet is said: the file has most likely been registered before.
         again = make_plan(snapshot, from_files(["GOFCNxxxxx_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版", *names]))
         self.assertEqual(same_name_rows(snapshot, again), [{"name": "AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版",
-                                                            "rows": [{"number": 67737, "name": "GOFCN67737_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版", "where": "26年1月-GOFCN 第 4 行"}]}])
+                                                            "rows": [{"number": 67737, "name": "GOFCN67737_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版", "where": "26年1月-GOFCN row 4"}]}])
         self.assertEqual(same_name_rows(snapshot, plan), [])
         # A name starting with a row's (cut at a _, or within the first word) may be a variant of it: said, for 合并变体名称.
         variants = make_plan(snapshot, from_files(["GOFCNxxxxx_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版_加长版", "GOFCNxxxxx_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版加长", *names]))
-        row67737 = [{"number": 67737, "name": "GOFCN67737_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版", "where": "26年1月-GOFCN 第 4 行"}]
+        row67737 = [{"number": 67737, "name": "GOFCN67737_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版", "where": "26年1月-GOFCN row 4"}]
         self.assertEqual(variant_rows(snapshot, variants), [{"name": "AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版_加长版", "rows": row67737},
                                                             {"name": "AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版加长", "rows": row67737}])
         self.assertEqual(variant_rows(snapshot, plan), [])
@@ -543,21 +542,21 @@ class NamingTests(unittest.TestCase):
         unlinked = {k: v for k, v in from_files(names)["groups"][0].items() if k != "script_url"}
         with self.assertRaises(Blocked) as caught:
             normalize_request({"groups": [unlinked]})
-        self.assertEqual(caught.exception.message, "第 1 组缺少需求字段：脚本内容链接")
+        self.assertEqual(caught.exception.message, "group 1 lacks script_url")
         with self.assertRaises(Blocked) as caught:
             normalize_request({"groups": [{**unlinked, "script_url": " "}]})
-        self.assertEqual(caught.exception.message, "缺少 script_url")
-        self.assertRaisesRegex(Blocked, "脚本链接必须是当前确认的飞书文档", normalize_request, {"groups": [{**finished(names)["groups"][0], "script_url": "https://example.com/x"}]})
+        self.assertEqual(caught.exception.message, "script_url is missing")
+        self.assertRaisesRegex(Blocked, "script_url must be a company Feishu document link", normalize_request, {"groups": [{**finished(names)["groups"][0], "script_url": "https://example.com/x"}]})
         # Finished materials were made by someone: their 设计师供应商 (the uploads' 制作人) is never left open.
         unmade = {k: v for k, v in finished(names)["groups"][0].items() if k != "supplier"}
         for group in (unmade, {**unmade, "supplier": " "}):
             with self.assertRaises(Blocked) as caught:
                 normalize_request({"groups": [group]})
-            self.assertEqual(caught.exception.message, "第 1 组缺少设计师供应商：已做好的素材要写明是谁做的（也是上传的制作人）")
+            self.assertEqual(caught.exception.message, "group 1 lacks a supplier: finished materials need who made them (also the uploads' 制作人)")
         # Files named with their number (GOFCN67680_…) have most likely been registered: their rows are verified, not appended a second time.
         with self.assertRaises(Blocked) as caught:
             normalize_request(finished(["GOFCN67739_AI玩法优化_火车运输御敌_兵临城下塔防_企鹅_竖版"]))
-        self.assertTrue(caught.exception.message.startswith("第 1 组的素材名称已带编号（GOFCN67739_AI玩法优化_火车运输御敌_兵临城下塔防_企鹅_竖版）：带编号的素材多半已在进度表登记，先用 gof creative files --check 核验"))
+        self.assertTrue(caught.exception.message.startswith("group 1: material_name carries a number (GOFCN67739_AI玩法优化_火车运输御敌_兵临城下塔防_企鹅_竖版): a numbered material is most likely registered already, so check it with gof creative files --check"))
         # A requirement's sample name keeps its old number out of the new rows, as before.
         normalize_request(from_files(["GOFCN67739_AI玩法优化_火车运输御敌_兵临城下塔防_企鹅_竖版"]))
 
@@ -583,7 +582,7 @@ class NamingTests(unittest.TestCase):
         # The same files planned again would be appended after themselves.
         again = make_plan(now, finished(names))
         self.assertEqual(again["first_number"], 67740)
-        self.assertRaisesRegex(Blocked, "已有一批写入发出、尚未核对", prepare, again, now, output_root=base)
+        self.assertRaisesRegex(Blocked, "an earlier batch of this request was sent and never verified", prepare, again, now, output_root=base)
         # Files of other names are another batch of materials.
         other = make_plan(now, finished(["GOFCNxxxxx_AI玩法优化_搂冰块抢资源_割资源冰块对抗_横版"]))
         self.assertEqual(prepare(other, now, output_root=base)["status"], "prepared")
@@ -599,7 +598,7 @@ class NamingTests(unittest.TestCase):
         self.assertIsNone(ticketed["rows"][0]["values"]["M5"])
         self.assertRegex(compose_message(ticketed["groups"], [{"group": "01", "step": "draft_saved", "evidence": {}}])["message"], r"\n供应商：张三\n")
         # The column is written in one go: one group's cell empty and another's filled is two appends.
-        self.assertRaisesRegex(Blocked, "供应商就是审核人本人时那格留空", make_plan, snapshot, {"groups": [
+        self.assertRaisesRegex(Blocked, "the cell stays empty when the supplier is the reviewer", make_plan, snapshot, {"groups": [
             derived(quantity=1, primary_tag="AI生成", secondary_tag="设定3.0", supplier="张三"),
             derived(quantity=1, primary_tag="AI生成", secondary_tag="设定3.0", script_url="https://centurygames.feishu.cn/docx/Other123")]})
 

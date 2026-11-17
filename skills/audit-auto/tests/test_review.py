@@ -56,7 +56,7 @@ class ReviewTest(unittest.TestCase):
 
     def test_a_reviewed_file_reads_as_a_table_of_level_place_problem_fix_in_time_order(self) -> None:
         findings = normalize(ANSWER)
-        text = render_file({"name": "GOFCN1.mp4", "status": "reviewed", "media": "video", "duration": 10.77, "orientation": "竖版", "findings": findings,
+        text = render_file({"name": "GOFCN1.mp4", "status": "reviewed", "media": "video", "duration": 10.77, "orientation": "portrait", "findings": findings,
                             "verdict": verdict_of(findings["issues"])})
         self.assertEqual(text, "\n".join([
             "**GOFCN1.mp4**（竖版 · 11 秒 · 真人实拍）",
@@ -70,19 +70,19 @@ class ReviewTest(unittest.TestCase):
             "| 红线 | 00:00–00:03 画面中下（皮带扣） | 露出古驰双 G 标志〔红线 · 侵权〕 | 打码 |",
             "| 要改 | 00:06–00:07 台词 | 「三分钟上头」，上头是防沉迷禁用词〔字幕和口播 · 防沉迷〕 | 换成「三分钟就会」 |",
         ]))
-        clean = render_file({"name": "海报.png", "status": "reviewed", "media": "image", "findings": {"summary": "", "kind": "其他", "lines": [], "issues": []},
+        clean = render_file({"name": "片头.mp4", "status": "reviewed", "media": "video", "findings": {"summary": "", "kind": "其他", "lines": [], "issues": []},
                              "verdict": "可以送审"})
-        self.assertEqual(clean, "**海报.png**（图片）\n结论：可以送审，没有发现问题")
+        self.assertEqual(clean, "**片头.mp4**\n结论：可以送审，没有发现问题")
         piped = normalize({"issues": [{"level": "要改", "time": "00:01", "where": "字幕", "problem": "「A|B」", "rule": "", "fix": ""}]})
         self.assertTrue(render_file({"name": "b.mp4", "status": "reviewed", "media": "video", "findings": piped, "verdict": "改完再送审"})
                         .endswith("\n| 要改 | 00:01 字幕 | 「A\\|B」 | — |"))
-        self.assertEqual(render_file({"name": "a.mp4", "status": "failed", "reason": "视频太大"}), "**a.mp4**\n没审成：视频太大")
+        self.assertEqual(render_file({"name": "a.mp4", "status": "failed", "reason": "The video is too large"}), "**a.mp4**\n没审成：The video is too large")
         self.assertEqual(render_file({"name": "c.mp4", "status": "reviewed", "media": "video", "duration": 2.25, "findings": piped, "verdict": "改完再送审"})
                          .split("\n")[0], "**c.mp4**（2.3 秒）", "rounded as toFixed does")
 
     def test_the_system_instruction_carries_the_fixed_and_the_dynamic_spec_the_dynamic_one_said_to_win(self) -> None:
         system = review_system(PROJECTS["GOF"], "# 固定\n- 不写上头", "- D1〔字幕和口播〕「赚米」不能用")
-        self.assertIn("GOF（无尽冬日）", system)
+        self.assertIn("GOF (无尽冬日", system)
         self.assertIn("## Fixed spec\n# 固定\n- 不写上头", system)
         self.assertIn("## Dynamic spec\n- D1〔字幕和口播〕「赚米」不能用", system)
         self.assertIn("the dynamic rule wins", system)
@@ -97,7 +97,7 @@ class ReviewTest(unittest.TestCase):
         directory = temp_dir("input-")
         with open(os.path.join(directory, "说明.txt"), "w", encoding="utf-8") as handle:
             handle.write("x")
-        model = FakeModel(lambda request, _n: Blocked("AI 网关暂时不可用（HTTP 503），稍后再试") if "坏的" in text_of(request) else ANSWER)
+        model = FakeModel(lambda request, _n: Blocked("The AI gateway is unavailable (HTTP 503): try again later") if "坏的" in text_of(request) else ANSWER)
         outcome = review(PROJECTS["GOF"], [video(directory, "GOFCN1_竖版.mp4"), video(directory, "坏的.mp4", 100), os.path.join(directory, "说明.txt"),
                                            os.path.join(directory, "missing.mp4")], "这是真人实拍", context(model))
         self.assertEqual(len(model.calls), 2)
@@ -109,11 +109,11 @@ class ReviewTest(unittest.TestCase):
         self.assertEqual(first.parts[0]["videoMetadata"]["fps"], 2)
         self.assertEqual(long.parts[0]["videoMetadata"]["fps"], 2)
         self.assertEqual(first.media_resolution, "MEDIA_RESOLUTION_HIGH")
-        self.assertRegex(text_of(first), r"File name: GOFCN1_竖版\.mp4[\s\S]*Video: 11 s, 竖版[\s\S]*Notes from the user: 这是真人实拍")
+        self.assertRegex(text_of(first), r"File name: GOFCN1_竖版\.mp4[\s\S]*Video: 11 s, portrait; you see 2 frames per second[\s\S]*Notes from the user: 这是真人实拍")
         self.assertEqual([r["status"] for r in outcome.results], ["reviewed", "failed"])
         self.assertIn("**GOFCN1_竖版.mp4**（竖版 · 11 秒 · 真人实拍）", outcome.markdown)
-        self.assertIn("**坏的.mp4**\n没审成：AI 网关暂时不可用", outcome.markdown)
-        self.assertIn("没有审的文件：\n- 说明.txt：不是视频或图片，没有审\n- missing.mp4：找不到这个文件", outcome.markdown)
+        self.assertIn("**坏的.mp4**\n没审成：The AI gateway is unavailable", outcome.markdown)
+        self.assertIn("没有审的文件：\n- 说明.txt：Not a video or an image: not reviewed\n- missing.mp4：File not found", outcome.markdown)
         self.assertEqual(outcome.rules, {"fixed": True, "dynamic": 0})
 
     def test_got_is_reviewed_against_its_fixed_spec_and_its_dynamic_spec(self) -> None:
@@ -122,7 +122,7 @@ class ReviewTest(unittest.TestCase):
         model = FakeModel(lambda _r, _n: ANSWER)
         plain = review(PROJECTS["GOT"], [video(directory, "got.mp4")], None, context(model, shared))
         self.assertEqual(plain.results[0]["status"], "reviewed")
-        self.assertIn("## Fixed spec\n# GOT 广告素材审片规范", model.calls[0].system)
+        self.assertIn("## Fixed spec\n# GOT ad material review spec", model.calls[0].system)
         self.assertIn("No dynamic rules yet", model.calls[0].system)
         self.assertEqual(plain.rules, {"fixed": True, "dynamic": 0})
         at = utc("2026-10-30T06:00:00Z")
@@ -130,7 +130,7 @@ class ReviewTest(unittest.TestCase):
             {"id": "D1", "category": "字幕和口播", "rule": "「通关」不能写成「通guan」", "fix": "写汉字", "sources": [{"chat": "oc_1", "message": "om_1", "at": at}],
              "created": 1, "updated": at}]})
         outcome = review(PROJECTS["GOT"], [video(directory, "got.mp4")], None, context(model, shared))
-        self.assertIn("- D1〔字幕和口播〕「通关」不能写成「通guan」 怎么改：写汉字（2026-10-30）", model.calls[1].system)
+        self.assertIn("- D1 [字幕和口播] 「通关」不能写成「通guan」 Fix: 写汉字 (2026-10-30)", model.calls[1].system)
         self.assertEqual(outcome.rules, {"fixed": True, "dynamic": 1})
 
     def test_a_placeholder_fixed_spec_uses_the_dynamic_spec_alone_and_with_none_the_review_is_refused(self) -> None:
@@ -171,8 +171,9 @@ class ReviewTest(unittest.TestCase):
         model = FakeModel(lambda _r, _n: {"summary": "", "kind": "", "lines": [], "issues": []})
         ctx = context(model)
         outcome = review(PROJECTS["GOF"], [archive], None, ctx)
-        self.assertEqual([(r["name"], r["orientation"]) for r in outcome.results], [("素材.zip › 横版/GOFCN2.mp4", "横版"), ("素材.zip › 竖版/GOFCN2.mp4", "竖版")])
-        self.assertEqual(outcome.skipped, [{"file": "素材.zip › 脚本.docx", "reason": "不是视频或图片，没有审"}])
+        self.assertEqual([(r["name"], r["orientation"]) for r in outcome.results], [("素材.zip › 横版/GOFCN2.mp4", "landscape"), ("素材.zip › 竖版/GOFCN2.mp4", "portrait")])
+        self.assertIn("**素材.zip › 横版/GOFCN2.mp4**（横版 · 15 秒）", outcome.markdown)
+        self.assertEqual(outcome.skipped, [{"file": "素材.zip › 脚本.docx", "reason": "Not a video or an image: not reviewed"}])
         self.assertTrue(os.listdir(ctx.scratch), "unpacked in the scratch folder")
         self.assertEqual(len(os.listdir(directory)), 1, "nothing written next to the user's files")
 
@@ -212,7 +213,7 @@ class ReviewTest(unittest.TestCase):
         workspace = os.path.join(user, "workspace")
         os.makedirs(os.path.join(workspace, "input"))
         clip = video(os.path.join(workspace, "input"), "GOFCN3.mp4")
-        env = {"LARK_AGENT_USER_DIR": user, "LARK_AGENT_SHARED_DIR": temp_dir("shared-")}
+        env = {"AGENT_USER_DIR": user, "AGENT_SHARED_DIR": temp_dir("shared-")}
         model = FakeModel(lambda _r, _n: ANSWER)
         lines: list[str] = []
         result, code = main(["review", "--project", "gof", "--file", clip], Context(env=env, model=model, ffmpeg=None, log=lines.append))
@@ -230,18 +231,18 @@ class ReviewTest(unittest.TestCase):
             self.assertEqual(json.load(handle)["files"][0]["findings"]["lines"][0]["text"], "三分钟上头")
         self.assertEqual(os.listdir(workspace), ["input"], "nothing new in the workspace: the host would send it to the user")
         self.assertEqual(os.listdir(os.path.join(user, "audit-auto", "tmp")), [], "the scratch folder of the run is gone")
-        self.assertRegex("\n".join(lines), r"审片 1/1：GOFCN3\.mp4[\s\S]*完成 1/1：GOFCN3\.mp4，4 处问题")
+        self.assertRegex("\n".join(lines), r"Reviewing 1/1: GOFCN3\.mp4[\s\S]*Done 1/1: GOFCN3\.mp4, 4 issue\(s\)")
         # A note that starts with a dash is still the note, not an option.
         dashed, code = main(["review", "--project", "GOF", "--file", clip, "--note", "-B 面从 5 秒开始"], Context(env=env, model=model, ffmpeg=None, log=lambda _l: None))
         self.assertEqual(code, 0, dashed.get("reason"))
         self.assertIn("Notes from the user: -B 面从 5 秒开始", text_of(model.calls[-1]))
 
         for args, reason in [
-            (["review", "--file", clip], "缺少 --project"),
-            (["review", "--project", "GOX", "--file", clip], "只有 GOF 和 GOT"),
-            (["review", "--project", "GOF"], "缺少 --file"),
+            (["review", "--file", clip], "--project is missing"),
+            (["review", "--project", "GOX", "--file", clip], "only GOF and GOT"),
+            (["review", "--project", "GOF"], "--file is missing"),
             (["review", "--project", "GOF", "--file", clip, "--bogus"], "bogus"),
-            (["nonsense"], "用法"),
+            (["nonsense"], "Usage"),
         ]:
             refused, code = main(args, Context(env=env, model=model, ffmpeg=None, log=lambda _l: None))
             self.assertEqual(code, 2, " ".join(args))
@@ -250,7 +251,29 @@ class ReviewTest(unittest.TestCase):
         none, code = main(["review", "--project", "GOF", "--file", os.path.join(user, "nope.mp4")], Context(env=env, model=model, ffmpeg=None, log=lambda _l: None))
         self.assertEqual(code, 2)
         self.assertEqual(none["status"], "failed")
-        self.assertIn("nope.mp4：找不到这个文件", none["markdown"])
+        self.assertIn("nope.mp4：File not found", none["markdown"])
+
+    def test_images_from_a_zip_are_kept_with_the_review_results_never_in_the_working_directory(self) -> None:
+        user = temp_dir("user-")
+        workspace = temp_dir("workspace-")
+        archive = os.path.join(workspace, "素材.zip")
+        with open(archive, "wb") as handle:
+            handle.write(make_zip([ZipFile("图/banner.jpg", "jpg")]))
+        cwd = os.getcwd()
+        os.chdir(workspace)
+        try:
+            result, code = main(["review", "--project", "GOF", "--file", "素材.zip"],
+                                Context(env={"AGENT_USER_DIR": user, "AGENT_SHARED_DIR": temp_dir("shared-")}, model=FakeModel(lambda _r, _n: ANSWER),
+                                        ffmpeg=None, log=lambda _l: None))
+        finally:
+            os.chdir(cwd)
+        self.assertEqual((code, result["status"], result["markdown"]), (0, "done", ""))
+        kept = result["images"][0]["file"]
+        reviews = os.path.join(user, "audit-auto", "reviews")
+        self.assertTrue(kept.startswith(reviews + os.sep), kept)
+        self.assertEqual(os.path.dirname(os.path.dirname(kept)), re.sub(r"\.md$", "-images", result["result_file"]), "next to the review's result")
+        self.assertEqual(os.listdir(workspace), ["素材.zip"], "nothing new in the working directory")
+        self.assertTrue(result["spec"]["fixed"].endswith("gof-rules.md"))
 
 
 if __name__ == "__main__":

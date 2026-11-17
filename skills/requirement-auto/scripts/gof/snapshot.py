@@ -1,4 +1,4 @@
-"""A full XLSX export of the progress workbook as the append checks see it: its fingerprint, the GOFCN tabs, numbers and options (snapshot.ts)."""
+"""A full XLSX export of the progress workbook as the append checks see it: its fingerprint, the GOFCN tabs, numbers and options."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def holds(cell: Optional[CellData], expected: Any) -> bool:
 class Snapshot:
     def __init__(self, file: str) -> None:
         self.path = os.path.abspath(file)
-        need(self.path.lower().endswith(".xlsx"), "保护检查必须使用 XLSX（包含公式），不是 CSV")
+        need(self.path.lower().endswith(".xlsx"), "the checks need the XLSX export (with formulas), not a CSV")
         self.book: WorkbookData = read_workbook(self.path)
         self.sheet_names: list[str] = [s.name for s in self.book.sheets]
         self.last: dict[str, int] = {}
@@ -67,7 +67,7 @@ class Snapshot:
 
     def sheet(self, name: str) -> SheetData:
         found = self._by_name.get(name)
-        need(found, f"工作表不存在：{name}")
+        need(found, f"no such tab: {name}")
         return found  # type: ignore[return-value]
 
     def cell(self, sheet: str, row: int, col: int) -> Optional[CellData]:
@@ -133,9 +133,9 @@ def columns(ws: SheetData) -> Columns:
         text = re.sub(r"\s+", "", (header.value if header and header.value is not None else ""))
         for field, stem in FIELD_HEADERS.items():
             if header_matches(field, text):
-                need(field not in result, f"{ws.name} 的 {stem} 表头不唯一")
+                need(field not in result, f"{ws.name}: the {stem} header is not unique")
                 result[field] = col
-    need(all(f in result for f in REQUIRED_HEADERS), f"{ws.name} 不是完整创意进度表")
+    need(all(f in result for f in REQUIRED_HEADERS), f"{ws.name} is not a complete progress sheet")
     return result
 
 
@@ -150,7 +150,7 @@ def scan_sheets(snapshot: Snapshot) -> tuple[dict[str, Columns], list[dict[str, 
             tables[ws.name] = columns(ws)
         except Blocked as error:
             rejected.append({"name": ws.name, "reason": error.message})
-    need(len(tables) > 0, "找不到完整 GOFCN 进度工作表")
+    need(len(tables) > 0, "no complete GOFCN progress tab found")
     return tables, rejected
 
 
@@ -187,20 +187,20 @@ def choose_sheet(snapshot: Snapshot, request: dict, current: Optional[str]) -> t
 
     explicit = request.get("worksheet") or current
     if explicit:
-        need(explicit in tables, "指定/当前工作表不存在或列结构不匹配，请澄清")
+        need(explicit in tables, "the named tab does not exist or its columns do not fit: settle it")
         chosen = explicit
     else:
         dated = [(sheet_period(name), name) for name in tables if sheet_period(name)]
-        need(len(dated) > 0, "没有可识别年月的工作表，请指定")
+        need(len(dated) > 0, "no tab with a recognizable year and month: name one (worksheet)")
         latest = max(key(p) for p, _ in dated)
         names = [name for p, name in dated if key(p) == latest]
-        need(len(names) == 1, "最新工作表有并列，请指定")
+        need(len(names) == 1, "several tabs are the newest: name one (worksheet)")
         chosen = names[0]
     chosen_period = sheet_period(chosen)
     blocking = [r for r in rejected if not sheet_period(r["name"]) or not chosen_period or key(sheet_period(r["name"])) >= key(chosen_period)]
     first = blocking[0] if blocking else {"name": "undefined", "reason": "undefined"}
     need(len(blocking) == 0,
-         f"GOFCN 工作表“{first['name']}”不是可用的进度表（{first['reason']}），它可能才是目标表或含有更大的编号，不能静默跳过；请先修正该表后再规划")
+         f"the GOFCN tab \"{first['name']}\" is not a usable progress sheet ({first['reason']}); it may be the target or hold higher numbers, so it is not skipped silently: fix that tab first, then plan")
     return chosen, tables, [r["name"] for r in rejected]
 
 
@@ -214,29 +214,29 @@ def collect_ids(snapshot: Snapshot, tables: dict[str, Columns], warnings: Option
             raw_text = raw.value if raw is not None else None
             number: Optional[int] = None
             if raw_text is not None and raw_text != "":
-                need(raw.kind != "b" and re.fullmatch(r"[0-9]+", raw_text), f"{name}!{r} 有非法素材编号")
+                need(raw.kind != "b" and re.fullmatch(r"[0-9]+", raw_text), f"{name}!{r} holds an invalid material number")
                 number = int(raw_text)
-                need(number > 0, "现有素材编号必须为正数")
+                need(number > 0, "existing material numbers must be positive")
             existing_name = existing.value if is_text(existing) else None
             literal = re.match(r"GOFCN([0-9]+)(?:_|\Z)", existing_name) if existing_name is not None else None
             if literal:
                 named = int(literal.group(1))
                 if number is not None and named != number:
-                    warnings.append(f"历史编号与名称不一致：{name}!{r}，两者均保留并参与避让")
+                    warnings.append(f"an existing number does not match its name: {name}!{r}; both are kept and avoided")
                     if named not in identifiers:
                         identifiers[named] = (name, r)
                 else:
                     number = named
             if existing_name is not None and existing_name.startswith("=") and (raw_text is None or raw_text == ""):
                 # An existing naming formula without a number cannot be assigned safely.
-                need('"GOFCN"' not in existing_name.upper(), f"{name}!{r} 有缺失编号的命名公式")
+                need('"GOFCN"' not in existing_name.upper(), f"{name}!{r} has a naming formula without the number")
             if number is not None:
                 seen = identifiers.get(number)
                 if seen:
-                    warnings.append(f"历史编号重复：{number}，{seen[0]}!{seen[1]} / {name}!{r}；不修改")
+                    warnings.append(f"an existing number is repeated: {number}, {seen[0]}!{seen[1]} / {name}!{r}; left as it is")
                 else:
                     identifiers[number] = (name, r)
-    need(len(identifiers) > 0, "没有可继续的 GOFCN 编号，请澄清起始编号")
+    need(len(identifiers) > 0, "no GOFCN number to continue from: settle the first number")
     return identifiers
 
 
@@ -259,7 +259,7 @@ def _unwrap_substitute(formula: str) -> tuple[str, list[tuple[str, str]]]:
         m = _SUBSTITUTE.fullmatch(body)
         if not m:
             break
-        need(literal(m.group(2)) != "", "命名公式的 SUBSTITUTE 不支持空的查找文字")
+        need(literal(m.group(2)) != "", "the naming formula's SUBSTITUTE has an empty search text, which is not supported")
         replacements.insert(0, (literal(m.group(2)), literal(m.group(3))))
         body = f"={js.trim(m.group(1))}"
     return body, replacements
@@ -277,12 +277,12 @@ _TOKENS = re.compile(_STRING_LITERAL + r"|\$?[A-Za-z]+\$?[0-9]+|,")
 def concatenate(formula: str, row_values: dict[str, Any]) -> str:
     inner, replacements = _unwrap_substitute(formula)
     m = re.fullmatch(r"=(?:CONCATENATE|CONCAT)\((.*)\)", inner, re.IGNORECASE)
-    need(m, "命名公式不是受支持的 CONCATENATE/CONCAT，不能推测")
+    need(m, "the naming formula is not a supported CONCATENATE/CONCAT; nothing is guessed")
     body = m.group(1)
     tokens = _TOKENS.findall(body)
     cleaned = re.sub(_STRING_LITERAL + r"|\s+", lambda x: "" if re.match(r"\s", x.group(0)) else x.group(0), body)
-    need("".join(tokens) == cleaned, "命名公式含未支持的表达式")
-    need(len(tokens) > 0 and len(tokens) % 2 == 1 and all(i % 2 == 0 or t == "," for i, t in enumerate(tokens)), "命名公式参数格式不支持")
+    need("".join(tokens) == cleaned, "the naming formula holds an unsupported expression")
+    need(len(tokens) > 0 and len(tokens) % 2 == 1 and all(i % 2 == 0 or t == "," for i, t in enumerate(tokens)), "the naming formula's arguments are not supported")
     output: list[str] = []
     for i in range(0, len(tokens), 2):
         token = tokens[i]
@@ -290,7 +290,7 @@ def concatenate(formula: str, row_values: dict[str, Any]) -> str:
             output.append(token[1:-1].replace('""', '"'))
         else:
             coord = token.replace("$", "").upper()
-            need(coord in row_values, "命名公式引用本批未批准的字段或跨行引用")
+            need(coord in row_values, "the naming formula refers to a field this batch does not write, or to another row")
             value = row_values[coord]
             output.append("" if value is None or value is js.UNDEFINED else js.to_str(value))
     text = "".join(output)
@@ -301,7 +301,7 @@ def concatenate(formula: str, row_values: dict[str, Any]) -> str:
 
 def inline_options(rule: RuleData) -> list[str]:
     f = rule.formula1 or ""
-    need(rule.type == "list" and f.startswith('"') and f.endswith('"') and len(f) >= 2, "下拉选项来源不是可可靠保留的自定义列表")
+    need(rule.type == "list" and f.startswith('"') and f.endswith('"') and len(f) >= 2, "a dropdown's source is not a custom list that can be kept reliably")
     return f[1:-1].replace('""', '"').split(",")
 
 

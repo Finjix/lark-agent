@@ -1,4 +1,4 @@
-"""The picture of a CLS requirement draft the user gets after the requirement flow (draft-shot.ts).
+"""The picture of a CLS requirement draft the user gets after the requirement flow.
 
 The draft's own page (需求草稿, with the imported scripts), opened in this user's hidden CLS browser the way a person reaches it, and
 photographed once it has been drawn. Like the list picture (creative_shot.py) nothing is clicked or typed and nothing in CLS changes; a

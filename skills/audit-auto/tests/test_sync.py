@@ -46,7 +46,7 @@ class SyncTest(unittest.TestCase):
         lark.messages.append(root)
         lark.threads["omt_1"] = [root, message(NOW - DAY + 60_000, {"text": "是因为右下角的箭头"}, thread_id="omt_1", parent_id=root["message_id"])]
         watch(PROJECTS["GOF"], None, GROUP, ctx)
-        self.assertRegex(text_of(model.calls[0]), r"#1 .*这条拒审截图大家看下\n#2 .*（回复 #1）: 是因为右下角的箭头")
+        self.assertRegex(text_of(model.calls[0]), r"#1 .*这条拒审截图大家看下\n#2 .* \(reply to #1\): 是因为右下角的箭头")
         self.assertEqual(groups_of(shared)[0]["threads"]["omt_1"], NOW - DAY + 60_000)
 
         # An hour later the reviewer answers in the thread: the chat's own list has nothing new, the thread has.
@@ -60,7 +60,7 @@ class SyncTest(unittest.TestCase):
         lark.thread = reading  # type: ignore[method-assign]
         sync_all(later)
         self.assertEqual(len(model.calls), 2)
-        self.assertRegex(text_of(model.calls[1]), r"#1 .*王审核（之前的消息）: 这条拒审截图大家看下\n#2 .*（回复 #1）: 以后这种箭头都不行")
+        self.assertRegex(text_of(model.calls[1]), r"#1 .*王审核 \(earlier\): 这条拒审截图大家看下\n#2 .* \(reply to #1\): 以后这种箭头都不行")
         sync_all(later)
         self.assertEqual(len(model.calls), 2, "read once")
         # Two weeks without a reply: the thread is no longer followed.
@@ -104,7 +104,7 @@ class SyncTest(unittest.TestCase):
 
         def refuse(request, _n):
             asked.append(any("inlineData" in p for p in request.parts))
-            return Blocked("AI 网关拒绝了这次请求（HTTP 400）：invalid argument")
+            return Blocked("The AI gateway refused the request (HTTP 400): invalid argument")
 
         run = replace(ctx, model=FakeModel(refuse))
         first = watch(PROJECTS["GOF"], None, GROUP, run)
@@ -121,13 +121,13 @@ class SyncTest(unittest.TestCase):
         self.assertIn("HTTP 400", after["skipped"][0]["reason"])
         self.assertEqual(after["cursor"], NOW - DAY + 1000, "read past it")
         listed = status(shared, Turn(chat="oc_review"))["groups"][0]
-        self.assertTrue(listed["here"], "the current chat is marked, so the skill can say 本群 without showing ids")
+        self.assertTrue(listed["here"], "the current chat is marked, so the skill can say \"this group\" without showing ids")
         self.assertEqual(len(listed["skipped"]), 1)
 
         # A gateway that is down does not count: the chunk is tried again, as it is, however often.
         shared2, lark2, _m2, ctx2 = setup()
         lark2.messages.append(message(NOW - DAY, {"text": "「搞钱」不能写"}))
-        down = FakeModel(lambda _r, _n: GatewayDown("AI 网关暂时不可用（HTTP 503），稍后再试"))
+        down = FakeModel(lambda _r, _n: GatewayDown("The AI gateway is unavailable (HTTP 503): try again later"))
         for i in range(4):
             (sync_all(replace(ctx2, model=down)) if i else watch(PROJECTS["GOF"], None, GROUP, replace(ctx2, model=down)))
         g = groups_of(shared2)[0]
@@ -139,20 +139,20 @@ class SyncTest(unittest.TestCase):
         # Nor does a key the gateway no longer takes: once it is fixed, the chunk is read as if nothing happened.
         shared3, lark3, _m3, ctx3 = setup()
         lark3.messages.append(message(NOW - DAY, {"text": "「搞钱」不能写"}))
-        refusing = FakeModel(lambda _r, _n: GatewayRefused("AI 网关不接受这个 key（HTTP 401），请联系管理员"))
+        refusing = FakeModel(lambda _r, _n: GatewayRefused("The AI gateway does not accept the key (HTTP 401): ask the administrator"))
         for i in range(4):
             (sync_all(replace(ctx3, model=refusing)) if i else watch(PROJECTS["GOF"], None, GROUP, replace(ctx3, model=refusing)))
         g = groups_of(shared3)[0]
         self.assertNotIn("stuck", g)
         self.assertNotIn("skipped", g)
-        self.assertEqual(g["lastError"], "AI 网关不接受这个 key（HTTP 401），请联系管理员")
+        self.assertEqual(g["lastError"], "The AI gateway does not accept the key (HTTP 401): ask the administrator")
 
     def test_a_skipped_stretch_is_dated_by_its_own_new_messages(self) -> None:
         shared, lark, model, ctx = setup()
         lark.messages.append(message(NOW - 3 * DAY, {"text": "「上头」不能写"}))
         watch(PROJECTS["GOF"], None, GROUP, ctx)
         lark.messages.append(message(NOW + 60_000, {"text": "这张也被拒了"}))
-        model.answer = lambda _r, _n: Blocked("AI 网关拒绝了这次请求（HTTP 400）：invalid argument")
+        model.answer = lambda _r, _n: Blocked("The AI gateway refused the request (HTTP 400): invalid argument")
         for _ in range(3):
             sync_all(replace(ctx, now=lambda: NOW + 3_600_000))
         self.assertEqual([(s["from"], s["to"]) for s in groups_of(shared)[0]["skipped"]], [("2026-11-02 16:01", "2026-11-02 16:01")])
@@ -162,13 +162,13 @@ class SyncTest(unittest.TestCase):
         result = message(NOW - DAY, {"text": "审片结果：……"}, sender="cli_bot")
         lark.messages += [result, message(NOW - DAY + 60_000, {"text": "这个判错了，「赚米」可以写"}, parent_id=result["message_id"])]
         watch(PROJECTS["GOF"], None, GROUP, ctx)
-        self.assertRegex(text_of(model.calls[0]), r"#1 .*王审核（回复机器人的消息）: 这个判错了")
+        self.assertRegex(text_of(model.calls[0]), r"#1 .*王审核 \(reply to the bot\): 这个判错了")
         lark.messages += [message(NOW + 60_000, {"text": "已经更新"}, sender="cli_bot"), message(NOW + 120_000, {"file_key": "x"}, type="sticker")]
         sync_all(replace(ctx, now=lambda: NOW + 3_600_000))
         self.assertEqual(len(model.calls), 1)
         self.assertEqual(groups_of(shared)[0]["cursor"], NOW + 120_000, "read past them")
 
-    def test_the_daily_sync_reads_the_group_read_longest_ago_first_and_a_group_the_time_ran_out_on_keeps_its_place(self) -> None:
+    def test_the_periodic_sync_reads_the_group_read_longest_ago_first_and_a_group_the_time_ran_out_on_keeps_its_place(self) -> None:
         shared, lark, model, ctx = setup()
         lark.messages.append(message(NOW - DAY, {"text": "「上头」不能写"}))
         watch(PROJECTS["GOF"], None, GROUP, ctx)

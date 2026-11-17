@@ -1,4 +1,4 @@
-"""A review group's messages as the model reads them (port of transcript.ts).
+"""A review group's messages as the model reads them.
 
 One numbered line per message (time, sender, what it says, which message it answers), pictures attached after the transcript with
 the number of their message. The bot's own messages are left out (its review results are not rulings), and so are system notices,
@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .jsutil import day, js_number, js_str, stamp  # noqa: F401 - day and stamp are part of this module's surface, as in the original
+from .jsutil import js_number, js_str, stamp
 
 Entry = dict[str, Any]
 FeishuMessage = dict[str, Any]
@@ -71,7 +71,7 @@ def _post_text(body: Any, mention: Callable[[str], str]) -> tuple[str, list[str]
                 pictures.append(js_str(el["image_key"]))
             return ""
         if tag == "media":
-            return "[视频]"
+            return "[video]"
         return ""
 
     paragraphs = ["".join(element(el) for el in (line if isinstance(line, list) else [])) for line in (_get(post, "content") or [])]
@@ -109,9 +109,9 @@ def content_of(message: FeishuMessage) -> tuple[str, list[str]]:
 
     def mention(key: str) -> str:
         if key == "@_all":
-            return "所有人"
+            return "everyone"
         found = next((m for m in message.get("mentions") or [] if m.get("key") == key), None)
-        return found.get("name") if found and found.get("name") is not None else "某人"
+        return found.get("name") if found and found.get("name") is not None else "someone"
 
     kind = message.get("msg_type")
     if kind == "text":
@@ -122,15 +122,15 @@ def content_of(message: FeishuMessage) -> tuple[str, list[str]]:
         key = _get(body, "image_key")
         return "", [js_str(key)] if key else []
     if kind == "file":
-        return f"[文件：{js_str(_get(body, 'file_name'))}]", []
+        return f"[file: {js_str(_get(body, 'file_name'))}]", []
     if kind == "media":
-        return f"[视频：{js_str(_get(body, 'file_name'))}]", []
+        return f"[video: {js_str(_get(body, 'file_name'))}]", []
     if kind == "audio":
-        return "[语音]", []
+        return "[voice message]", []
     if kind == "interactive":
         return _card_text(body), []
     if kind == "merge_forward":
-        return "[转发了一段聊天记录：]", []
+        return "[forwarded a chat:]", []
     return "", []
 
 
@@ -147,7 +147,7 @@ def entry_of(message: FeishuMessage, ctx: EntryContext, forwarded: bool = False)
     if sender.get("sender_type") == "user" and sender.get("id"):
         by = ctx.name(sender["id"])
     else:
-        by = "机器人" if sender.get("sender_type") == "app" else "成员"
+        by = "bot" if sender.get("sender_type") == "app" else "member"
     at = js_number(message.get("create_time"))
     entry: Entry = {"id": message["message_id"], "at": int(at) if math.isfinite(at) and at else 0, "by": by,
                     "text": clip(text.strip(), MAX_TEXT), "pictures": pictures}
@@ -202,7 +202,7 @@ _SPACES = re.compile(r"\s+")
 
 
 def render_chunk(entries: list[Entry], earlier: dict[str, str], bot: set[str] | None = None, attached: set[str] | None = None) -> str:
-    """The transcript of one chunk: `#n [time] sender（回复 #k）: text`, the pictures of message n labelled [图片 #n-1] …; `earlier`
+    """The transcript of one chunk: `#n [time] sender (reply to #k): text`, the pictures of message n labelled [picture #n-1] …; `earlier`
     holds the text of messages before the chunk, for replies to them, and `bot` the bot's own messages, which are not shown but may be
     replied to. `attached`, when given, holds the labels (`n-j`) of the pictures that go with the transcript; the others are marked as
     not attached."""
@@ -216,15 +216,15 @@ def render_chunk(entries: list[Entry], earlier: dict[str, str], bot: set[str] | 
             k = number.get(entry["reply"])
             before = earlier.get(entry["reply"])
             if k and k < n:
-                reply = f"（回复 #{k}）"
+                reply = f" (reply to #{k})"
             elif before:
-                reply = f"（回复：「{clip(_SPACES.sub(' ', before), 40)}」）"
+                reply = f" (reply to: “{clip(_SPACES.sub(' ', before), 40)}”)"
             elif entry["reply"] in bot:
-                reply = "（回复机器人的消息）"
+                reply = " (reply to the bot)"
             else:
-                reply = "（回复更早的消息）"
-        pictures = "".join(f" [图片 #{n}-{j + 1}]" if attached is None or f"{n}-{j + 1}" in attached else " [图片（没能附上）]"
+                reply = " (reply to an older message)"
+        pictures = "".join(f" [picture #{n}-{j + 1}]" if attached is None or f"{n}-{j + 1}" in attached else " [picture not attached]"
                            for j in range(len(entry["pictures"])))
         lines.append(f"{'    ↳ ' if entry.get('forwarded') else ''}#{n} [{stamp(entry['at'])}] {entry['by']}"
-                     f"{'（之前的消息）' if entry.get('earlier') else ''}{reply}: {entry['text']}{pictures}")
+                     f"{' (earlier)' if entry.get('earlier') else ''}{reply}: {entry['text']}{pictures}")
     return "\n".join(lines)

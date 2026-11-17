@@ -1,4 +1,4 @@
-"""The game projects the skill reviews for (port of projects.ts).
+"""The game projects the skill reviews for.
 
 Each has a fixed spec, the Markdown in references/<project>-rules.md (written from the project's review standard), and a dynamic spec
 built from its review groups' chat (rules.py). A fixed spec that is not written yet is a placeholder: its file starts with PLACEHOLDER,
@@ -25,7 +25,7 @@ class Project:
 
 PROJECTS: dict[str, Project] = {
     "GOF": Project(
-        id="GOF", name="GOF（无尽冬日）", spec="gof-rules.md",
+        id="GOF", name="GOF (无尽冬日, Whiteout Survival China)", spec="gof-rules.md",
         destination="submitted to Chinese ad platforms (Ocean Engine / Douyin, Tencent and others) for approval. Their reviewers reject material for a single wrong word, frame or second",
     ),
     "GOT": Project(
@@ -41,7 +41,7 @@ def project_of(value: object) -> Project:
     pid = value.strip().upper() if isinstance(value, str) else ""
     project = PROJECTS.get(pid)
     if not project:
-        raise Blocked(f"不认识的项目：{'' if value is None else value}（只有 GOF 和 GOT）")
+        raise Blocked(f"Unknown project: {'' if value is None else value} (only GOF and GOT)")
     return project
 
 
@@ -62,7 +62,7 @@ def fixed_spec(root: str, project: Project) -> FixedSpec:
         with open(file, encoding="utf-8", newline="") as handle:
             raw = handle.read()
     except OSError:
-        raise Blocked(f"技能文件不完整：缺少 {project.id} 的固定规范（references/{project.spec}），请联系管理员") from None
+        raise Blocked(f"The skill is incomplete: {project.id}'s fixed spec (references/{project.spec}) is missing; ask the administrator") from None
     if raw.startswith("\ufeff"):
         raw = raw[1:]
     placeholder = raw.lstrip().startswith(PLACEHOLDER)

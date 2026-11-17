@@ -1,4 +1,4 @@
-"""The Feishu side: bridge failures, the probe, a whole append against a fake Feishu, reading documents, context, dropdowns (gof-feishu.test.ts)."""
+"""The Feishu side: bridge failures, the probe, a whole append against a fake Feishu, reading documents, context, dropdowns."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tests.helpers import fixture, make_zip, py_script, temp_dir, write_file
 
@@ -20,12 +21,12 @@ from gof.cli import main
 from gof.context import context
 from gof.feishu import (Bridge, OccupiedRefusal, SCOPES, add_option, execute, plan_with_api, probe, read_rules, reconcile,
                         recompute_api_plan, recompute_plan)
-from gof.agent_feishu import BRIDGE_VERSION, MISSING, FeishuServe, locate_feishu
+from gof.agent_feishu import BRIDGE_VERSION, MISSING, SIBLING, FeishuServe, locate_feishu
 from gof.rules import acceptance, dropdowns
 from gof.seal import seal
 from gof.snapshot import Snapshot
 from gof.util import Blocked, NODE, WriteSent, read_json
-from gof.zipread import ZipReader
+from gof.unzip import ZipReader
 
 
 def tmp() -> str:
@@ -60,29 +61,29 @@ class BridgeTests(unittest.TestCase):
     def test_failures(self) -> None:
         """Bridge failures map to the refusals the workflow expects, and keep the reason the bridge gave."""
         cases = [
-            (failure("occupied"), "非空", OccupiedRefusal),
-            (failure("unknown_result"), "结果未知", Blocked),
+            (failure("occupied"), "non-empty", OccupiedRefusal),
+            (failure("unknown_result"), "write result unknown", Blocked),
             (failure("auth_required", "飞书登录已过期，请重新授权"), "auth_required.*重新授权", Blocked),
             (failure("scope_missing", "缺少权限：x"), "缺少权限", Blocked),
-            (failure("api", "导出任务仍未完成（ticket=T123）；稍后只读查询该任务"), r"飞书接口调用失败（api）：导出任务仍未完成（ticket=T123）", Blocked),
+            (failure("api", "导出任务仍未完成（ticket=T123）；稍后只读查询该任务"), r"Feishu API call failed \(api\): 导出任务仍未完成（ticket=T123）", Blocked),
         ]
         for result, pattern, kind in cases:
             bridge, _ = bridge_with(lambda n, p, r=result: r)
             self.fails(lambda: bridge.call("api-get", {"path": "/open-apis/x"}), pattern, kind)
         bridge, _ = bridge_with(lambda n, p: {"ok": False, "error": {"kind": "api", "code": 1310213, "message": "飞书接口返回错误（HTTP 403）：forbidden"}})
-        self.fails(lambda: bridge.call("api-get", {}), r"错误码 1310213）：飞书接口返回错误（HTTP 403）：forbidden$")
+        self.fails(lambda: bridge.call("api-get", {}), r"code 1310213\): 飞书接口返回错误（HTTP 403）：forbidden$")
 
     def test_no_answer(self) -> None:
         """A write that got no answer is an unknown result, a read that got none is a plain failure."""
         bridge, _ = bridge_with(lambda n, p: failure("network", "无法连接飞书"))
-        self.fails(lambda: bridge.call("sheets-cells-set", {}, write=True), "结果未知")
-        self.fails(lambda: bridge.call("api-get", {}), "飞书接口调用失败")
+        self.fails(lambda: bridge.call("sheets-cells-set", {}, write=True), "write result unknown")
+        self.fails(lambda: bridge.call("api-get", {}), "Feishu API call failed")
 
     def test_partial(self) -> None:
         """A reply that reports partial success or truncation is refused."""
         for data in ({"errors": [{"code": 1}]}, {"status": "partial_success"}, {"nested": {"has_more": True}}, {"ok": False}, {"failed_count": 2}):
             bridge, _ = bridge_with(lambda n, p, d=data: reply(d))
-            self.fails(lambda: bridge.call("api-get", {}), "接口")
+            self.fails(lambda: bridge.call("api-get", {}), "the answer")
         bridge, _ = bridge_with(lambda n, p: reply({"items": [{"ok": True, "has_more": False, "errors": []}]}))
         self.assertEqual(bridge.call("api-get", {}), {"items": [{"ok": True, "has_more": False, "errors": []}]})
 
@@ -90,10 +91,10 @@ class BridgeTests(unittest.TestCase):
         """Reads stay under /open-apis/ without query strings, and a write without the no-overwrite flag never leaves."""
         bridge, calls = bridge_with(lambda n, p: reply({}))
         for bad in ("/other", "/open-apis/a/../b", "/open-apis/a?x=1", "https://x/open-apis/a"):
-            self.fails(lambda: bridge.api_read(bad), "非法 API 路径")
+            self.fails(lambda: bridge.api_read(bad), "invalid API path")
         for writes in ([], [{"sheet_id": "s", "range": "A1:A1", "cells": [[{}]]}], [{"allow_overwrite": True}], "x"):
-            self.fails(lambda: bridge.cells_set("shtABCDEFGH", writes), "不可覆盖")
-        self.fails(lambda: bridge.cells_set("../x", [{"allow_overwrite": False}]), "非法表格 token")
+            self.fails(lambda: bridge.cells_set("shtABCDEFGH", writes), "allow_overwrite:false is missing")
+        self.fails(lambda: bridge.cells_set("../x", [{"allow_overwrite": False}]), "invalid spreadsheet token")
         self.assertEqual(len(calls), 0)
         bridge.cells_set("shtABCDEFGH", [{"sheet_id": "s", "range": "A1:A1", "cells": [[{"value": 1}]], "allow_overwrite": False}])
         self.assertEqual(calls[0]["name"], "sheets-cells-set")
@@ -113,21 +114,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual([c["name"] for c in calls], ["info", "auth-status", "auth-check-scopes"])
         self.assertEqual(calls[2]["payload"]["required"], SCOPES)
         self.assertNotIn("token", js.canonical(result).lower())
-        for overrides, pattern in (({"info": reply({"bridge": "other/9", "app_configured": True})}, "版本"),
-                                   ({"info": reply({"bridge": BRIDGE_VERSION, "app_configured": False})}, "未配置飞书应用"),
-                                   ({"auth-status": reply({"logged_in": False})}, "尚未授权"),
-                                   ({"auth-check-scopes": reply({"complete": False, "granted": [], "missing": ["x"]})}, "缺少本流程必要权限")):
+        for overrides, pattern in (({"info": reply({"bridge": "other/9", "app_configured": True})}, "bridge version"),
+                                   ({"info": reply({"bridge": BRIDGE_VERSION, "app_configured": False})}, "no Feishu app configured"),
+                                   ({"auth-status": reply({"logged_in": False})}, "not logged in"),
+                                   ({"auth-check-scopes": reply({"complete": False, "granted": [], "missing": ["x"]})}, "lacks permissions this skill needs")):
             self.fails(bridge_with(handler(overrides))[0].doctor, pattern)
 
     def test_serve_protocol(self) -> None:
-        """The Feishu module's `serve` line protocol: requests by id, replies by id, this user's environment."""
+        """The feishu skill's `serve` line protocol: requests by id, replies by id, this user's environment."""
         fake = py_script(tmp(), "feishu.py", "import json, os, sys\n"
                          "assert sys.argv[1:] == ['serve']\n"
                          "for line in sys.stdin:\n"
                          "    request = json.loads(line)\n"
                          "    name = request['command']\n"
                          "    if name == 'info':\n"
-                         "        data = {'bridge': 'feishu-sdk-bridge/1', 'app_configured': True, 'storage': 'host', 'browser_profile': os.path.join(os.environ['LARK_AGENT_USER_DIR'], 'feishu', 'browser-profile')}\n"
+                         "        data = {'bridge': 'feishu-sdk-bridge/1', 'app_configured': True, 'storage': 'host', 'browser_profile': os.path.join(os.environ['AGENT_USER_DIR'], 'feishu', 'browser-profile')}\n"
                          "        answer = {'ok': True, 'data': data}\n"
                          "    elif name == 'auth-status':\n"
                          "        answer = {'ok': True, 'data': {'logged_in': False}}\n"
@@ -135,30 +136,30 @@ class BridgeTests(unittest.TestCase):
                          "        answer = {'ok': False, 'error': {'kind': 'invalid_request', 'message': '路径不在白名单内'}}\n"
                          "    print(json.dumps({'id': request['id'], 'reply': answer}), flush=True)\n")
         user = tmp()
-        serve = FeishuServe({**os.environ, "LARK_AGENT_USER_DIR": user, "LARK_AGENT_FEISHU": fake})
+        serve = FeishuServe({**os.environ, "AGENT_USER_DIR": user, "FEISHU_CLI": fake})
         try:
             bridge = Bridge(serve.call)
             info = bridge.call("info")
             self.assertEqual([info["bridge"], info["storage"], info["browser_profile"]], [BRIDGE_VERSION, "host", os.path.join(user, "feishu", "browser-profile")])
             self.assertIs(bridge.call("auth-status")["logged_in"], False)
-            self.fails(bridge.doctor, "尚未授权")
+            self.fails(bridge.doctor, "not logged in")
             self.fails(lambda: bridge.call("api-get", {"path": "/open-apis/im/v1/messages"}), "invalid_request")
         finally:
             serve.close()
 
-    @unittest.skipUnless(os.environ.get("GOF_TEST_REAL_FEISHU") == "1", "set GOF_TEST_REAL_FEISHU=1 to run against lark-agent's own feishu-sdk/feishu.py")
+    @unittest.skipUnless(os.environ.get("GOF_TEST_REAL_FEISHU") == "1", "set GOF_TEST_REAL_FEISHU=1 to run against the sibling feishu skill's feishu.py")
     def test_real_agent_feishu(self) -> None:
-        """lark-agent's Feishu module (the real one, in this project) answers for this user and enforces its own allowlist."""
+        """The real feishu skill (the sibling folder) answers for this user and enforces its own allowlist."""
         user = tmp()
-        real = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "feishu-sdk", "feishu.py")
-        env = {**os.environ, "LARK_AGENT_FEISHU": real}
-        serve = FeishuServe({**env, "LARK_AGENT_USER_DIR": user, "FEISHU_APP_ID": "cli_x", "FEISHU_APP_SECRET": "secret-000000"})
+        real = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "feishu", "scripts", "feishu.py")
+        env = {**os.environ, "FEISHU_CLI": real}
+        serve = FeishuServe({**env, "AGENT_USER_DIR": user, "FEISHU_APP_ID": "cli_x", "FEISHU_APP_SECRET": "secret-000000"})
         try:
             bridge = Bridge(serve.call)
             info = bridge.call("info")
             self.assertEqual([info["bridge"], info["storage"], info["browser_profile"]], [BRIDGE_VERSION, "host", os.path.join(user, "feishu", "browser-profile")])
             self.assertIs(bridge.call("auth-status")["logged_in"], False)
-            self.fails(bridge.doctor, "尚未授权")
+            self.fails(bridge.doctor, "not logged in")
             self.fails(lambda: bridge.call("api-get", {"path": "/open-apis/im/v1/messages"}), "invalid_request")
         finally:
             serve.close()
@@ -167,27 +168,28 @@ class BridgeTests(unittest.TestCase):
         """A bridge process that ends before it reads a request fails the call: the command does not crash on the broken pipe."""
         # A feishu.py that does not serve (an old or broken copy): it ends at once and never reads its input.
         fake = py_script(tmp(), "feishu.py", "import sys\nsys.exit(2)\n")
-        serve = FeishuServe({**os.environ, "LARK_AGENT_FEISHU": fake})
+        serve = FeishuServe({**os.environ, "FEISHU_CLI": fake})
         # Far more than a pipe holds, so it is still being written when the process ends.
-        self.assertRaisesRegex(ConnectionError, "飞书模块进程已结束", serve.call, "sheets-cells-set", {"writes": "x" * (4 << 20)})
+        self.assertRaisesRegex(ConnectionError, "the feishu skill's process ended", serve.call, "sheets-cells-set", {"writes": "x" * (4 << 20)})
         serve.close()
         # As the bridge sees it: no answer, which a write takes as an unknown result.
-        bridge = Bridge(FeishuServe({**os.environ, "LARK_AGENT_FEISHU": fake}).call)
-        self.fails(lambda: bridge.call("sheets-cells-set", {}, write=True), "结果未知")
+        bridge = Bridge(FeishuServe({**os.environ, "FEISHU_CLI": fake}).call)
+        self.fails(lambda: bridge.call("sheets-cells-set", {}, write=True), "write result unknown")
 
     def test_not_found(self) -> None:
-        """A Feishu module that cannot be found is said as such, not as a failed bridge call."""
-        serve = FeishuServe({**os.environ, "LARK_AGENT_FEISHU": os.path.join(tmp(), "nowhere", "feishu.py")})
+        """A feishu skill that cannot be found is said as such, not as a failed bridge call."""
+        serve = FeishuServe({**os.environ, "FEISHU_CLI": os.path.join(tmp(), "nowhere", "feishu.py")})
         bridge = Bridge(serve.call)
-        self.fails(bridge.doctor, r"^LARK_AGENT_FEISHU 不是 feishu\.py 的绝对路径$")
-        self.fails(lambda: bridge.cells_set("shtABCDEFGH", [{"sheet_id": "s", "range": "A1:A1", "cells": [[{"value": 1}]], "allow_overwrite": False}]), "^LARK_AGENT_FEISHU")
-        self.assertEqual(bridge.check_login(), {"status": "blocked", "reason": "LARK_AGENT_FEISHU 不是 feishu.py 的绝对路径"})
-        # Run outside lark-agent (nothing names the module): the message says so.
-        with self.assertRaises(Blocked) as caught:
+        self.fails(bridge.doctor, r"^FEISHU_CLI is not the absolute path of feishu\.py$")
+        self.fails(lambda: bridge.cells_set("shtABCDEFGH", [{"sheet_id": "s", "range": "A1:A1", "cells": [[{"value": 1}]], "allow_overwrite": False}]), "^FEISHU_CLI")
+        self.assertEqual(bridge.check_login(), {"status": "blocked", "reason": "FEISHU_CLI is not the absolute path of feishu.py"})
+        # Nothing names the module: the sibling feishu skill is used, and without one the message says what is missing.
+        self.assertEqual(locate_feishu({}), SIBLING)
+        with mock.patch("gof.agent_feishu.SIBLING", os.path.join(tmp(), "nowhere", "feishu.py")), self.assertRaises(Blocked) as caught:
             locate_feishu({})
         self.assertEqual(caught.exception.message, MISSING)
-        entry = write_file(os.path.join(tmp(), "feishu-sdk", "feishu.py"), "")
-        self.assertEqual(locate_feishu({"LARK_AGENT_FEISHU": entry}), entry)
+        entry = write_file(os.path.join(tmp(), "feishu", "feishu.py"), "")
+        self.assertEqual(locate_feishu({"FEISHU_CLI": entry}), entry)
 
     def test_dropdown_keeps_rule(self) -> None:
         """A dropdown keeps the options of the rule it follows and adds only what the request asks for."""
@@ -221,12 +223,12 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(read({"sheetId": "s1", "dataValidations": []}), [])
         # The real reply for a sheet without dropdowns leaves `dataValidations` out entirely.
         self.assertEqual(read({"sheetId": "s1", "revision": 7, "spreadsheetToken": "tok"}), [])
-        error = self.fails(lambda: read({"sheetId": "s1", "secret": "hunter2"}), "sheetId 一致；字段 sheetId:string,secret:string")
+        error = self.fails(lambda: read({"sheetId": "s1", "secret": "hunter2"}), "same sheetId; fields sheetId:string,secret:string")
         self.assertNotIn("hunter2", str(error))
-        self.fails(lambda: read({"dataValidations": []}), "sheetId 缺失；字段 dataValidations:array")
-        self.fails(lambda: read({"sheetId": "other", "dataValidations": []}), "sheetId 与请求不同")
+        self.fails(lambda: read({"dataValidations": []}), "no sheetId; fields dataValidations:array")
+        self.fails(lambda: read({"sheetId": "other", "dataValidations": []}), "another sheetId")
         self.fails(lambda: read({"sheetId": "s1", "dataValidations": None}), "dataValidations:null")
-        self.fails(lambda: read([]), "sheetId 缺失")
+        self.fails(lambda: read([]), "no sheetId")
 
 
 def production_node() -> dict:
@@ -413,7 +415,7 @@ class AppendTests(unittest.TestCase):
         self.assertRaises(Blocked, acceptance, write_file(os.path.join(directory, "edited.json"), json.dumps({**data, "passed": []}, ensure_ascii=False)), BRIDGE_VERSION)
         # An existing receipt is never overwritten, and nothing is sent.
         other, calls = bridge_with(server.handle)
-        self.fails(lambda: probe(other, receipt), "不能覆盖")
+        self.fails(lambda: probe(other, receipt), "not overwritten")
         self.assertEqual(len(calls), 0)
 
     def test_probe_fails(self) -> None:
@@ -422,7 +424,7 @@ class AppendTests(unittest.TestCase):
         server.enforce = False
         server.production = lambda name, payload: reply(production_node())
         receipt = os.path.join(tmp(), "receipt.json")
-        self.fails(lambda: probe(bridge_with(server.handle)[0], receipt), "防覆盖探测失败")
+        self.fails(lambda: probe(bridge_with(server.handle)[0], receipt), "the overwrite probe failed")
         self.assertFalse(os.path.exists(receipt))
 
     def test_leftover_attempt(self) -> None:
@@ -448,7 +450,7 @@ class AppendTests(unittest.TestCase):
         self.assertTrue(os.path.exists(result["report"]))
         self.assertNotIn("bearer", js.canonical(state).lower())
         # Nothing is ever sent twice.
-        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "已有接口写入尝试")
+        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "was attempted already")
         self.assertEqual(reconcile(t["bridge"], t["dir"])["status"], "complete")
         self.assertTrue(t["fake"].appended)
 
@@ -456,15 +458,15 @@ class AppendTests(unittest.TestCase):
         """A write whose result is unknown blocks the batch instead of retrying."""
         t = approved_batch(self)
         t["fake"].fail_write = failure("unknown_result")
-        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "结果未知")
+        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "write result unknown")
         self.assertTrue(status(t["dir"])["blocked"])
         t["fake"].fail_write = None
-        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "已有接口写入尝试")
+        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "was attempted already")
 
     def test_changed_revision(self) -> None:
         """An append is refused when the spreadsheet changed since the approved plan."""
         t = approved_batch(self)
-        self.fails(lambda: execute(changing_bridge(t["bridge"], 43), t["dir"], t["receipt"]), "表格版本变化")
+        self.fails(lambda: execute(changing_bridge(t["bridge"], 43), t["dir"], t["receipt"]), "revision changed")
         self.assertEqual(len(status(t["dir"])["events"]), 0)
         # A refusal before anything was sent leaves no attempt directory behind, so the same batch can try again.
         self.assertEqual([n for n in os.listdir(t["dir"]) if n.startswith("api-attempt-")], [])
@@ -487,7 +489,7 @@ class AppendTests(unittest.TestCase):
         self.assertEqual(execute(other["bridge"], other["dir"], other["receipt"])["status"], "append_verified")
         written = approved_batch(self)
         written["fake"].colleague_rules = lambda rules: [{**r, "conditionValues": [*r["conditionValues"], "新玩法"]} if i == 0 else r for i, r in enumerate(rules)]
-        self.fails(lambda: execute(written["bridge"], written["dir"], written["receipt"]), "写入已发出.*历史下拉规则", WriteSent)
+        self.fails(lambda: execute(written["bridge"], written["dir"], written["receipt"]), "the write was sent.*existing dropdown rules", WriteSent)
 
     def test_stray_export_rule(self) -> None:
         """A dropdown the XLSX export lists with options the API's rule lacks does not fail a correct append: the new rows are judged by the rules read back through the API."""
@@ -517,7 +519,7 @@ class AppendTests(unittest.TestCase):
             fake.colleague_rules = lambda rules: [{**r, "conditionValues": ["卖点"]} if r["ranges"][0] == "s3!E6:E8" else r for r in rules]
 
         lost = approved_batch(self, lose)
-        self.fails(lambda: execute(lost["bridge"], lost["dir"], lost["receipt"]), "写入已发出.*新增下拉规则缺失/冲突", WriteSent)
+        self.fails(lambda: execute(lost["bridge"], lost["dir"], lost["receipt"]), "the write was sent.*dropdown rule is missing or conflicting", WriteSent)
 
     def test_two_at_once(self) -> None:
         """Two appends of one batch at once send one write: the first is verified, the second is refused before it sends anything."""
@@ -546,10 +548,10 @@ class AppendTests(unittest.TestCase):
 
     def test_touching_rows(self) -> None:
         """What touches the appended rows still fails the append, and every refusal after the send says the write went out."""
-        for after, issue in (("applied-occupied-optional.xlsx", "J6"), ("applied-bad-value.xlsx", "D6"), ("applied-protected.xlsx", "保护")):
+        for after, issue in (("applied-occupied-optional.xlsx", "J6"), ("applied-bad-value.xlsx", "D6"), ("applied-protected.xlsx", "protection")):
             t = approved_batch(self)
             t["fake"].after = fixture(after)
-            error = self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "写入已发出.*reconcile.*追加未完整通过验收", WriteSent)
+            error = self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "the write was sent.*reconcile.*did not verify completely", WriteSent)
             self.assertEqual(error.batch, t["dir"])
             self.assertTrue(status(t["dir"])["blocked"], after)
             readback = reconcile(t["bridge"], t["dir"])
@@ -560,26 +562,26 @@ class AppendTests(unittest.TestCase):
         """Reconcile of a write that landed nowhere gives its verdict even though the new rows have no dropdowns."""
         t = approved_batch(self)
         t["fake"].fail_write = failure("unknown_result")
-        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "写入已发出", WriteSent)
+        self.fails(lambda: execute(t["bridge"], t["dir"], t["receipt"]), "the write was sent", WriteSent)
         readback = reconcile(t["bridge"], t["dir"])
         self.assertEqual(readback["status"], "not_applied")
-        self.assertRegex(readback["rule_issue"], "新增下拉规则")
+        self.assertRegex(readback["rule_issue"], "dropdown rule")
 
     def test_landed_unverified(self) -> None:
         """A request whose earlier write landed but was never verified cannot be planned and appended again; one that landed nowhere can."""
         landed = approved_batch(self)
         landed["fake"].land_then_fail = failure("unknown_result")
-        self.fails(lambda: execute(landed["bridge"], landed["dir"], landed["receipt"]), "写入已发出", WriteSent)
+        self.fails(lambda: execute(landed["bridge"], landed["dir"], landed["receipt"]), "the write was sent", WriteSent)
         request = read_json(os.path.join(fixture("requests"), "basic.json"))
         # The sheet as it is now: the rows of the lost answer are in it, so a new plan would put them in again after themselves.
         now = Snapshot(fixture("applied-complete.xlsx"))
         again = plan_with_api(landed["bridge"], now, request)
         self.assertNotEqual(again["batch_plan"]["first_number"], landed["approved"]["batch_plan"]["first_number"])
-        self.assertRaisesRegex(Blocked, "已有一批写入发出、尚未核对", prepare, again["batch_plan"], now, output_root=os.path.dirname(landed["dir"]), api_plan=again["api_plan"])
+        self.assertRaisesRegex(Blocked, "an earlier batch of this request was sent and never verified", prepare, again["batch_plan"], now, output_root=os.path.dirname(landed["dir"]), api_plan=again["api_plan"])
 
         nowhere = approved_batch(self)
         nowhere["fake"].fail_write = failure("unknown_result")
-        self.fails(lambda: execute(nowhere["bridge"], nowhere["dir"], nowhere["receipt"]), "写入已发出", WriteSent)
+        self.fails(lambda: execute(nowhere["bridge"], nowhere["dir"], nowhere["receipt"]), "the write was sent", WriteSent)
         retry = recompute_api_plan(nowhere["bridge"], nowhere["base"], nowhere["approved"])
         # Same sheet as approved (nothing landed): a batch of its own beside the first, which keeps its record.
         fresh = prepare(nowhere["approved"]["batch_plan"], nowhere["base"], output_root=os.path.dirname(nowhere["dir"]), api_plan=retry)
@@ -597,7 +599,7 @@ class AppendTests(unittest.TestCase):
         forged = {"confirmed": True, "unpublished": True, "url": "https://creative.centurygames.cn/requirement/1/edit-outer", "screenshot": shot}
         self.assertRaisesRegex(Blocked, "transport=cls_api", record, t["dir"], "draft_saved", "01", forged)
         self.assertRaisesRegex(Blocked, "transport=cls_api", record, t["dir"], "draft_saved", "01", {**forged, "transport": "ui"})
-        self.assertRaisesRegex(Blocked, "不属于某个组|追加验证", record, t["dir"], "append_verified", "01", {})
+        self.assertRaisesRegex(Blocked, "belongs to no group|append_verified", record, t["dir"], "append_verified", "01", {})
 
     def test_command_line_refusal(self) -> None:
         """The command line reports a refusal as blocked JSON with exit code 2."""
@@ -627,14 +629,14 @@ class AppendTests(unittest.TestCase):
         self.assertEqual(js.canonical(same), js.canonical(t["approved"]))
         # The approved dropdown additions (or anybody's edit elsewhere) give the workbook a new revision.
         later = changing_bridge(t["bridge"], 43)
-        self.fails(lambda: recompute_api_plan(later, t["base"], t["approved"]), "版本/规则与获批计划变化")
+        self.fails(lambda: recompute_api_plan(later, t["base"], t["approved"]), "revision or rules differ from the approved plan")
         fresh = recompute_plan(later, t["base"], t["approved"])
         self.assertEqual(fresh["api_plan"]["revision"], 43)
         self.assertEqual(js.canonical(fresh["batch_plan"]), js.canonical(t["approved"]["batch_plan"]))
         moved = Snapshot(fixture("applied-complete.xlsx"))
-        self.fails(lambda: recompute_plan(t["bridge"], moved, t["approved"]), "素材编号或名称与获批计划不同")
-        self.fails(lambda: recompute_plan(t["bridge"], t["base"], {**t["approved"], "batch_plan": {**t["approved"]["batch_plan"], "range": "A7:I9"}}), "获批计划被修改过")
-        self.fails(lambda: recompute_plan(t["bridge"], t["base"], {"batch_plan": t["approved"]["batch_plan"]}), "获批计划不完整")
+        self.fails(lambda: recompute_plan(t["bridge"], moved, t["approved"]), "numbers or names differ from the approved plan")
+        self.fails(lambda: recompute_plan(t["bridge"], t["base"], {**t["approved"], "batch_plan": {**t["approved"]["batch_plan"], "range": "A7:I9"}}), "the approved plan was modified")
+        self.fails(lambda: recompute_plan(t["bridge"], t["base"], {"batch_plan": t["approved"]["batch_plan"]}), "the approved plan is incomplete")
 
     def test_plan_output(self) -> None:
         """plan --output saves the whole plan and prints only what the user is shown, with the dropdown options to add."""
@@ -652,7 +654,7 @@ class AppendTests(unittest.TestCase):
                                                "items": [{"quantity": 2, "first": "GOFCN1011_玩法_卖点_视频_新爆点", "last": "GOFCN1012_玩法_卖点_视频_新爆点"}]})
         self.assertEqual(result["new_options"], [{"field": "supplier", "option": "供应商丙"}])
         again = main(args, t["bridge"])
-        self.assertEqual([again["code"], again["result"]["reason"]], [2, "计划文件已存在，不覆盖"])
+        self.assertEqual([again["code"], again["result"]["reason"]], [2, "the plan file exists already and is not overwritten"])
 
     def test_plan_without_ticket(self) -> None:
         """A plan of rows without a CLS ticket (finished materials) shows no requirement name, script link or group message."""
@@ -733,8 +735,8 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(linked["columns"], ["A", "B", "C", "D"])
         self.assertEqual(linked["header"], ["序号", "创意形式\n（制作形式）", "脚本", ""])
         self.assertEqual([r["row"] for r in linked["rows"]], [2, 4])
-        self.assertEqual(linked["rows"][0]["cells"], ["1", "AI剧情", f"{'x' * 300}…", "[附件:1.mp4]"])
-        self.assertEqual(linked["rows"][1]["cells"], ["2", "设定3.0", "短@张三", "[图片]"])
+        self.assertEqual(linked["rows"][0]["cells"], ["1", "AI剧情", f"{'x' * 300}…", "[attachment:1.mp4]"])
+        self.assertEqual(linked["rows"][1]["cells"], ["2", "设定3.0", "短@张三", "[image]"])
         self.assertEqual([linked["row_count"], linked["clipped_cells"], docs.ranges[0]], [2, 1, "t1!A1:D4"])
         newest = read_brief(bridge, "https://centurygames.feishu.cn/wiki/wikiSHEET")
         self.assertEqual(newest["sheet"], {"sheet_id": "t2", "title": "2026.10.16", "chosen_by": "last"})
@@ -742,8 +744,8 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual([asked["sheet"]["chosen_by"], len(asked["rows"][0]["cells"][2]), asked.get("clipped_cells")], ["asked", 400, None])
         direct = read_brief(bridge, "https://centurygames.feishu.cn/sheets/shtREQ?sheet=t2")
         self.assertEqual([direct["title"], direct["sheet"]["chosen_by"], direct.get("path")], ["杨燃对接文档", "link", None])
-        self.assertRaisesRegex(Blocked, "链接指向的工作表不存在或已隐藏", read_brief, bridge, "https://centurygames.feishu.cn/wiki/wikiSHEET?sheet=tx")
-        self.assertRaisesRegex(Blocked, "没有工作表“没有”", read_brief, bridge, "https://centurygames.feishu.cn/wiki/wikiSHEET", "没有")
+        self.assertRaisesRegex(Blocked, "the tab the link points to does not exist or is hidden", read_brief, bridge, "https://centurygames.feishu.cn/wiki/wikiSHEET?sheet=tx")
+        self.assertRaisesRegex(Blocked, "has no tab \"没有\"", read_brief, bridge, "https://centurygames.feishu.cn/wiki/wikiSHEET", "没有")
 
     def test_docx(self) -> None:
         """A requirement doc is read as its text with its title; other kinds of document and other hosts are refused."""
@@ -752,9 +754,9 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual([doc["kind"], doc["title"], doc["chars"]], ["docx", "丁杰代言人需求表", 36])
         self.assertRegex(doc["text"], "产出44条素材")
         self.assertEqual(read_brief(bridge, "https://centurygames.feishu.cn/docx/doxREQ")["title"], "丁杰代言人需求表")
-        self.assertRaisesRegex(Blocked, r"暂不支持读取这种飞书文档（mindnote）", read_brief, bridge, "https://centurygames.feishu.cn/wiki/wikiMIND")
-        self.assertRaisesRegex(Blocked, "不是公司飞书文档链接", read_brief, bridge, "https://evil.example.com/docx/doxREQ")
-        self.assertRaisesRegex(Blocked, "只用于表格", read_brief, bridge, "https://centurygames.feishu.cn/docx/doxREQ", "t1")
+        self.assertRaisesRegex(Blocked, r"this kind of Feishu document \(mindnote\) cannot be read", read_brief, bridge, "https://centurygames.feishu.cn/wiki/wikiMIND")
+        self.assertRaisesRegex(Blocked, "not a company Feishu document link", read_brief, bridge, "https://evil.example.com/docx/doxREQ")
+        self.assertRaisesRegex(Blocked, "is only for spreadsheets", read_brief, bridge, "https://centurygames.feishu.cn/docx/doxREQ", "t1")
 
     def test_dropdown_add(self) -> None:
         """dropdown-add finds the column of each of the five fields by its header and adds to the whole column."""
@@ -790,10 +792,10 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(columns, ["D", "E", "F", "H", "I", "F", "I"])
         self.assertEqual([[s["column"], s["first_row"], s["last_row"], s["option"], s["color"]] for s in sent[:2]],
                          [["D", 2, 5001, "新选项", "#bacefd"], ["D", 5002, 7000, "新选项", "#bacefd"]])
-        self.assertRaisesRegex(Blocked, "--field 必须是", add_option, bridge, "client", "x", "26年1月-GOFCN")
-        self.assertRaisesRegex(Blocked, "找不到工作表", add_option, bridge, "supplier", "x", "没有的表")
+        self.assertRaisesRegex(Blocked, "--field is primary", add_option, bridge, "client", "x", "26年1月-GOFCN")
+        self.assertRaisesRegex(Blocked, "no tab named", add_option, bridge, "supplier", "x", "没有的表")
         header.append("供应商备注")
-        self.assertRaisesRegex(Blocked, "找不到唯一的供应商列", add_option, bridge, "supplier", "x", "26年1月-GOFCN")
+        self.assertRaisesRegex(Blocked, "has no single 供应商 column", add_option, bridge, "supplier", "x", "26年1月-GOFCN")
 
 
 if __name__ == "__main__":

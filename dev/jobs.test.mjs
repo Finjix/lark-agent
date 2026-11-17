@@ -57,8 +57,8 @@ test('jobs declared later are scheduled, and ones no longer declared or changed 
 test('a run is a process in the folder of its skill, with what skills get and no user; a run still going is not started twice',async()=>{
   const saved={...process.env};
   try{
-    process.env.LARK_AGENT_USER_DIR='D:\\someone';
-    const {dir,job}=await scriptJob(`import fs from 'node:fs';await new Promise(r=>setTimeout(r,300));fs.appendFileSync('runs.txt',[process.cwd(),process.env.LARK_AGENT_SHARED_DIR,process.env.LARK_AGENT_USER_DIR??'-',process.env.PYTHONUTF8].join('|')+'\\n');console.log('done');`);
+    process.env.AGENT_USER_DIR='D:\\someone';
+    const {dir,job}=await scriptJob(`import fs from 'node:fs';await new Promise(r=>setTimeout(r,300));fs.appendFileSync('runs.txt',[process.cwd(),process.env.AGENT_SHARED_DIR,process.env.AGENT_USER_DIR??'-',process.env.PYTHONUTF8].join('|')+'\\n');console.log('done');`);
     const jobs=new Jobs(0);
     const first=jobs.run(job),second=jobs.run(job);
     assert.equal(jobs.status()[0].running,true);

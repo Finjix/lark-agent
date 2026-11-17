@@ -1,4 +1,4 @@
-"""Writing into the user's requirement document: outline, insert, fill, and the picture's checks (gof-doc.test.ts)."""
+"""Writing into the user's requirement document: outline, insert, fill, and the picture's checks."""
 
 from __future__ import annotations
 
@@ -189,22 +189,22 @@ class DocTests(unittest.TestCase):
     def test_nothing_written(self) -> None:
         """An edit whose place is gone, or that cannot be checked, writes nothing."""
         h = Harness()
-        self.assertRaisesRegex(Blocked, "找不到它；重新读大纲再定位置", edit_doc, h.bridge, URL_, {"insert": {"at": {"before": 0, "expect": "别的标题"}, "blocks": [{"text": "x"}]}})
-        self.assertRaisesRegex(Blocked, "每行同样多个", edit_doc, h.bridge, URL_, {"insert": {"at": {"before": 1, "expect": "命名 | 方向"}, "blocks": [{"table": [["a", "b"], ["c"]]}]}})
-        self.assertRaisesRegex(Blocked, "类型“image”不支持", edit_doc, h.bridge, URL_, {"insert": {"at": "start", "blocks": [{"image": "x"}]}})
-        self.assertRaisesRegex(Blocked, "只能有一个类型", edit_doc, h.bridge, URL_, {"insert": {"at": "start", "blocks": [{"text": "x", "bold": True}]}})
+        self.assertRaisesRegex(Blocked, "that text is nowhere else; read the outline again", edit_doc, h.bridge, URL_, {"insert": {"at": {"before": 0, "expect": "别的标题"}, "blocks": [{"text": "x"}]}})
+        self.assertRaisesRegex(Blocked, "each with the same number of text cells", edit_doc, h.bridge, URL_, {"insert": {"at": {"before": 1, "expect": "命名 | 方向"}, "blocks": [{"table": [["a", "b"], ["c"]]}]}})
+        self.assertRaisesRegex(Blocked, "the kind \"image\" is not supported", edit_doc, h.bridge, URL_, {"insert": {"at": "start", "blocks": [{"image": "x"}]}})
+        self.assertRaisesRegex(Blocked, "must have exactly one kind", edit_doc, h.bridge, URL_, {"insert": {"at": "start", "blocks": [{"text": "x", "bold": True}]}})
         self.assertRaisesRegex(Blocked, "insert.*fill", edit_doc, h.bridge, URL_, {"replace": {}})
         self.assertEqual(len(h.writes()), 0)
         # A login from before document editing: the user authorizes once more; the check itself still runs.
         old = Harness(scopes=[])
         self.assertEqual(edit_doc(old.bridge, URL_, ENTRY, True)["status"], "edit_ready")
-        self.assertRaisesRegex(Blocked, "重新扫码授权一次", edit_doc, old.bridge, URL_, ENTRY)
+        self.assertRaisesRegex(Blocked, "lacks the permission to edit documents", edit_doc, old.bridge, URL_, ENTRY)
         self.assertEqual(len(old.writes()), 0)
 
     def test_refusals(self) -> None:
         """Feishu refusing the edit is said plainly, and a write whose answer is lost is read back by running it again."""
         denied = Harness(insert=lambda p: fail("api", "飞书接口返回错误（HTTP 403）：forbidden", 1770032))
-        self.assertRaisesRegex(Blocked, "没有这份文档的编辑权限", edit_doc, denied.bridge, URL_, ENTRY)
+        self.assertRaisesRegex(Blocked, "no edit access to this document", edit_doc, denied.bridge, URL_, ENTRY)
         lost = [True]
         holder: dict[str, Harness] = {}
 
@@ -216,7 +216,7 @@ class DocTests(unittest.TestCase):
             return ok(answer)
 
         holder["flaky"] = Harness(insert=flaky_insert)
-        self.assertRaisesRegex(Blocked, "再运行一次同样的 doc-edit", edit_doc, holder["flaky"].bridge, URL_, ENTRY)
+        self.assertRaisesRegex(Blocked, "run the same doc-edit again", edit_doc, holder["flaky"].bridge, URL_, ENTRY)
         self.assertEqual(edit_doc(holder["flaky"].bridge, URL_, ENTRY)["status"], "already_present")
         # A read-back that does not show what was planned is reported, not retried.
 
@@ -225,7 +225,7 @@ class DocTests(unittest.TestCase):
             return ok(holder["odd"].doc.insert({**p, "descendants": changed}))
 
         holder["odd"] = Harness(insert=odd_insert)
-        self.assertRaisesRegex(Blocked, "回读与计划不符", edit_doc, holder["odd"].bridge, URL_, ENTRY)
+        self.assertRaisesRegex(Blocked, "the read-back differs from the plan", edit_doc, holder["odd"].bridge, URL_, ENTRY)
 
     def test_fill_table(self) -> None:
         """Table cells are filled only where empty, never under a merge, and filling again changes nothing."""
@@ -234,9 +234,9 @@ class DocTests(unittest.TestCase):
         def fill(cells: list[dict]) -> dict:
             return {"fill": {"table": 1, "expect": "命名 | 方向", "cells": cells}}
 
-        self.assertRaisesRegex(Blocked, "已有内容“GOFCN2_b”，不覆盖", edit_doc, h.bridge, URL_, fill([{"row": 2, "col": 0, "text": "x"}]))
-        self.assertRaisesRegex(Blocked, "被合并在别的单元格下", edit_doc, h.bridge, URL_, fill([{"row": 2, "col": 1, "text": "x"}]))
-        self.assertRaisesRegex(Blocked, "不在 3×2 的表格里", edit_doc, h.bridge, URL_, fill([{"row": 3, "col": 0, "text": "x"}]))
+        self.assertRaisesRegex(Blocked, "holds \"GOFCN2_b\" already and is not overwritten", edit_doc, h.bridge, URL_, fill([{"row": 2, "col": 0, "text": "x"}]))
+        self.assertRaisesRegex(Blocked, "is merged under another cell", edit_doc, h.bridge, URL_, fill([{"row": 2, "col": 1, "text": "x"}]))
+        self.assertRaisesRegex(Blocked, "is outside the 3x2 table", edit_doc, h.bridge, URL_, fill([{"row": 3, "col": 0, "text": "x"}]))
         self.assertEqual(len(h.writes()), 0)
         done = edit_doc(h.bridge, URL_, fill([{"row": 1, "col": 1, "text": "巨手"}, {"row": 0, "col": 0, "text": "命名"}]))
         self.assertEqual([done["status"], done["to_write"], done["already"]], ["doc_updated", 1, 1])
@@ -247,15 +247,15 @@ class DocTests(unittest.TestCase):
     def test_fill_sheet(self) -> None:
         """A sheet gets text in empty cells only, written so that Feishu refuses an occupied one; the progress sheet is not edited here."""
         h = Harness()
-        self.assertRaisesRegex(Blocked, "A2 已有内容“GOFCN9_x”，不覆盖", edit_doc, h.bridge, SHEET_URL, {"fill": {"cells": [{"cell": "A2", "text": "GOFCN1_y"}]}})
-        self.assertRaisesRegex(Blocked, "不能以 = 开头", edit_doc, h.bridge, SHEET_URL, {"fill": {"cells": [{"cell": "B2", "text": "=SUM(1)"}]}})
+        self.assertRaisesRegex(Blocked, "cell A2 holds \"GOFCN9_x\" already and is not overwritten", edit_doc, h.bridge, SHEET_URL, {"fill": {"cells": [{"cell": "A2", "text": "GOFCN1_y"}]}})
+        self.assertRaisesRegex(Blocked, "cannot start with =", edit_doc, h.bridge, SHEET_URL, {"fill": {"cells": [{"cell": "B2", "text": "=SUM(1)"}]}})
         done = edit_doc(h.bridge, SHEET_URL, {"fill": {"cells": [{"cell": "b3", "text": "GOFCN67867_巨手"}, {"cell": "A2", "text": "GOFCN9_x"}]}})
         self.assertEqual([done["status"], done["sheet"], done["to_write"], h.sheet["B3"]], ["doc_updated", "1027", 1, "GOFCN67867_巨手"])
         self.assertEqual(done["focus"], {"sheet_id": "t1", "range": "A2:B3"})
         self.assertTrue(all(w["allow_overwrite"] is False for w in h.writes()[0]["payload"]["writes"]))
-        self.assertRaisesRegex(Blocked, "创意进度表只能用 gof feishu append", edit_doc, h.bridge, f"https://centurygames.feishu.cn/wiki/{NODE}",
+        self.assertRaisesRegex(Blocked, "the progress sheet is written only by gof feishu append", edit_doc, h.bridge, f"https://centurygames.feishu.cn/wiki/{NODE}",
                                {"fill": {"sheet": "x", "cells": [{"cell": "A1", "text": "x"}]}})
-        self.assertRaisesRegex(Blocked, "这是表格", edit_doc, h.bridge, SHEET_URL, {"insert": {"at": "start", "blocks": [{"text": "x"}]}})
+        self.assertRaisesRegex(Blocked, "this is a spreadsheet", edit_doc, h.bridge, SHEET_URL, {"insert": {"at": "start", "blocks": [{"text": "x"}]}})
 
     def test_command_line(self) -> None:
         """The command line reads an outline and runs an edit file."""
@@ -274,10 +274,10 @@ class DocTests(unittest.TestCase):
                 raise RuntimeError("no browser in this test")
 
         online = NoBrowser()
-        self.assertRaisesRegex(Blocked, "不是公司飞书文档链接", doc_picture, online, "https://example.com/docx/abc", {}, "x.png")
+        self.assertRaisesRegex(Blocked, "not a company Feishu document link", doc_picture, online, "https://example.com/docx/abc", {}, "x.png")
         self.assertRaisesRegex(Blocked, "gof feishu screenshot --batch", doc_picture, online, f"https://centurygames.feishu.cn/wiki/{NODE}", {}, "x.png")
         self.assertRaisesRegex(Blocked, "focus.block", doc_picture, online, URL_, {"block": "a/b"}, "x.png")
-        self.assertRaisesRegex(Blocked, "A9 或 A9:B12", doc_picture, online, SHEET_URL, {"range": "A9:"}, "x.png")
+        self.assertRaisesRegex(Blocked, "like A9 or A9:B12", doc_picture, online, SHEET_URL, {"range": "A9:"}, "x.png")
         self.assertRaisesRegex(RuntimeError, "no browser in this test", doc_picture, online, URL_, {"block": "Real000000001"}, "x.png")
 
 

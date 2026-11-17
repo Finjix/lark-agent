@@ -1,4 +1,4 @@
-"""Unpacks the zip a user sends instead of a folder (unzip.ts).
+"""Zip files: the .xlsx exports, read in memory (ZipReader), and the zip a user sends instead of a folder, unpacked to disk.
 
 Feishu does not let a bot download a folder. Material zips are large, so the entries are streamed from the file to disk, never held in
 memory; zip64 (what big archives use), stored and deflated entries, and the name encodings zips are made with in practice (UTF-8, or the
@@ -43,7 +43,7 @@ def _read_at(handle, position: int, length: int) -> bytes:
 
 def _big(data: bytes, at: int) -> int:
     value = struct.unpack_from("<Q", data, at)[0]
-    need(value <= MAX_SAFE, "压缩包过大")
+    need(value <= MAX_SAFE, "the zip is too large")
     return value
 
 
@@ -59,35 +59,33 @@ def _decode_name(raw: bytes, flags: int, unicode: Optional[str]) -> str:
         return raw.decode("gb18030", "replace")
 
 
-def list_zip(file: str) -> list[ZipEntry]:
-    """The entries of a zip, from its central directory."""
-    with open(file, "rb") as handle:
-        size = os.fstat(handle.fileno()).st_size
-        tail_length = min(size, 65_557)
-        tail = _read_at(handle, size - tail_length, tail_length)
-        eocd = -1
-        i = len(tail) - 22
-        while i >= 0:
-            if struct.unpack_from("<I", tail, i)[0] == 0x06054B50:
-                eocd = i
-                break
-            i -= 1
-        need(eocd >= 0, "不是有效的 zip 压缩包")
-        count = struct.unpack_from("<H", tail, eocd + 10)[0]
-        dir_size = struct.unpack_from("<I", tail, eocd + 12)[0]
-        dir_start = struct.unpack_from("<I", tail, eocd + 16)[0]
-        if count == 0xFFFF or dir_size == 0xFFFFFFFF or dir_start == 0xFFFFFFFF:
-            # zip64: the locator just before the end record points at the zip64 end record.
-            need(eocd >= 20 and struct.unpack_from("<I", tail, eocd - 20)[0] == 0x07064B50, "zip64 压缩包结构损坏")
-            record = _read_at(handle, _big(tail, eocd - 20 + 8), 56)
-            need(len(record) == 56 and struct.unpack_from("<I", record, 0)[0] == 0x06064B50, "zip64 压缩包结构损坏")
-            count, dir_size, dir_start = _big(record, 32), _big(record, 40), _big(record, 48)
-        need(dir_size <= MAX_DIRECTORY and dir_start + dir_size <= size, "压缩包目录损坏或过大")
-        directory = _read_at(handle, dir_start, dir_size)
+def _central_directory(read_at: Callable[[int, int], bytes], size: int) -> list[ZipEntry]:
+    """The entries of a zip from its central directory; `read_at(position, length)` reads the archive (a file, or bytes in memory)."""
+    tail_length = min(size, 65_557)
+    tail = read_at(size - tail_length, tail_length)
+    eocd = -1
+    i = len(tail) - 22
+    while i >= 0:
+        if struct.unpack_from("<I", tail, i)[0] == 0x06054B50:
+            eocd = i
+            break
+        i -= 1
+    need(eocd >= 0, "not a valid zip file")
+    count = struct.unpack_from("<H", tail, eocd + 10)[0]
+    dir_size = struct.unpack_from("<I", tail, eocd + 12)[0]
+    dir_start = struct.unpack_from("<I", tail, eocd + 16)[0]
+    if count == 0xFFFF or dir_size == 0xFFFFFFFF or dir_start == 0xFFFFFFFF:
+        # zip64: the locator just before the end record points at the zip64 end record.
+        need(eocd >= 20 and struct.unpack_from("<I", tail, eocd - 20)[0] == 0x07064B50, "damaged zip64 structure")
+        record = read_at(_big(tail, eocd - 20 + 8), 56)
+        need(len(record) == 56 and struct.unpack_from("<I", record, 0)[0] == 0x06064B50, "damaged zip64 structure")
+        count, dir_size, dir_start = _big(record, 32), _big(record, 40), _big(record, 48)
+    need(dir_size <= MAX_DIRECTORY and dir_start + dir_size <= size, "the zip's directory is damaged or too large")
+    directory = read_at(dir_start, dir_size)
     entries: list[ZipEntry] = []
     pos = 0
     for _ in range(count):
-        need(pos + 46 <= len(directory) and struct.unpack_from("<I", directory, pos)[0] == 0x02014B50, "压缩包目录损坏")
+        need(pos + 46 <= len(directory) and struct.unpack_from("<I", directory, pos)[0] == 0x02014B50, "the zip's directory is damaged")
         flags, method = struct.unpack_from("<HH", directory, pos + 8)
         crc, csize, usize = struct.unpack_from("<III", directory, pos + 16)
         name_length, extra_length, comment_length = struct.unpack_from("<HHH", directory, pos + 28)
@@ -119,14 +117,82 @@ def list_zip(file: str) -> list[ZipEntry]:
     return entries
 
 
+def list_zip(file: str) -> list[ZipEntry]:
+    """The entries of a zip file, from its central directory."""
+    with open(file, "rb") as handle:
+        return _central_directory(lambda position, length: _read_at(handle, position, length), os.fstat(handle.fileno()).st_size)
+
+
+def _data_start(read_at: Callable[[int, int], bytes], entry: ZipEntry) -> int:
+    """Where an entry's data begins, after its local header."""
+    local = read_at(entry.offset, 30)
+    need(len(local) == 30 and struct.unpack_from("<I", local, 0)[0] == 0x04034B50, f"damaged zip entry: {entry.name}")
+    return entry.offset + 30 + struct.unpack_from("<H", local, 26)[0] + struct.unpack_from("<H", local, 28)[0]
+
+
+def _check_readable(entry: ZipEntry) -> None:
+    need((entry.flags & 1) == 0, f"a file in the zip is password-protected and cannot be read: {entry.name}")
+    need(entry.method in (0, 8), f"a file in the zip uses an unsupported compression method: {entry.name}")
+
+
+class ZipReader:
+    """
+    A zip held in memory (an .xlsx): an entry is read whole and checked against its declared size and CRC-32, and what all reads inflate
+    to is capped against zip bombs.
+    """
+
+    MAX_ENTRY = 512 * 1024 * 1024
+    MAX_TOTAL = 1024 * 1024 * 1024
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._inflated = 0
+        self._entries: dict[str, ZipEntry] = {}
+        for entry in _central_directory(self._slice, len(data)):
+            need(entry.name not in self._entries, f"duplicate zip entry: {entry.name}")
+            self._entries[entry.name] = entry
+
+    def _slice(self, position: int, length: int) -> bytes:
+        return self._data[position:position + length]
+
+    def has(self, name: str) -> bool:
+        return name in self._entries
+
+    def names(self) -> list[str]:
+        return list(self._entries)
+
+    def read(self, name: str) -> bytes:
+        entry = self._entries.get(name)
+        if entry is None:
+            raise Blocked(f"the zip has no entry {name}")
+        _check_readable(entry)
+        need(entry.usize <= self.MAX_ENTRY, f"zip entry too large: {name}")
+        begin = _data_start(self._slice, entry)
+        need(begin + entry.csize <= len(self._data), f"damaged zip entry: {name}")
+        raw = self._data[begin:begin + entry.csize]
+        if entry.method == 0:
+            out = bytes(raw)
+        else:
+            try:
+                out = zlib.decompressobj(-15).decompress(raw, self.MAX_ENTRY + 1)
+            except zlib.error:
+                raise Blocked(f"a zip entry cannot be inflated: {name}") from None
+        need(len(out) == entry.usize and (zlib.crc32(out) & 0xFFFFFFFF) == (entry.crc & 0xFFFFFFFF),
+             f"a zip entry is damaged (size or checksum differs): {name}")
+        self._inflated += len(out)
+        need(self._inflated <= self.MAX_TOTAL, "the zip inflates to too much")
+        return out
+
+    def text(self, name: str) -> str:
+        text = self.read(name).decode("utf-8", "replace")
+        return text[1:] if text.startswith("\ufeff") else text
+
+
 def extract_entry(file: str, entry: ZipEntry, target: str) -> None:
     """Streams one entry into a new file and checks its size and CRC-32."""
-    need((entry.flags & 1) == 0, f"压缩包里的文件加了密码，无法读取：{entry.name}")
-    need(entry.method in (0, 8), f"压缩包里的文件用了不支持的压缩方式：{entry.name}")
+    _check_readable(entry)
     with open(file, "rb") as handle:
-        local = _read_at(handle, entry.offset, 30)
-        need(len(local) == 30 and struct.unpack_from("<I", local, 0)[0] == 0x04034B50, f"压缩包条目损坏：{entry.name}")
-        start = entry.offset + 30 + struct.unpack_from("<H", local, 26)[0] + struct.unpack_from("<H", local, 28)[0]
+        start = _data_start(lambda position, length: _read_at(handle, position, length), entry)
     size = 0
     crc = 0
     # Only a file this call made is removed on failure: a target that was there already (another entry's) is left alone.
@@ -146,14 +212,14 @@ def extract_entry(file: str, entry: ZipEntry, target: str) -> None:
                     data = inflater.decompress(chunk) if inflater else chunk
                     size += len(data)
                     if size > entry.usize:
-                        raise Blocked(f"压缩包条目比记录的大：{entry.name}")
+                        raise Blocked(f"a zip entry is larger than recorded: {entry.name}")
                     crc = zlib.crc32(data, crc)
                     out.write(data)
                 if inflater:
                     data = inflater.flush()
                     size += len(data)
                     if size > entry.usize:
-                        raise Blocked(f"压缩包条目比记录的大：{entry.name}")
+                        raise Blocked(f"a zip entry is larger than recorded: {entry.name}")
                     crc = zlib.crc32(data, crc)
                     out.write(data)
     except Blocked:
@@ -163,10 +229,10 @@ def extract_entry(file: str, entry: ZipEntry, target: str) -> None:
     except (OSError, zlib.error):
         if made:
             _remove(target)
-        raise Blocked(f"压缩包里的文件解压失败：{entry.name}") from None
+        raise Blocked(f"a file in the zip could not be unpacked: {entry.name}") from None
     if size != entry.usize or (crc & 0xFFFFFFFF) != (entry.crc & 0xFFFFFFFF):
         _remove(target)
-        raise Blocked(f"压缩包里的文件已损坏（大小或校验不符）：{entry.name}")
+        raise Blocked(f"a file in the zip is damaged (size or checksum differs): {entry.name}")
 
 
 def _remove(target: str) -> None:
@@ -230,7 +296,7 @@ def unpack_zip(file: str, root: str, keep: Callable[[str], Optional[str]],
     for e in entries:
         bad = e.name.startswith("/") or bool(re.match(r"[a-zA-Z]:", e.name)) or any(p == ".." for p in parts(e))
         if bad:
-            skipped.append({"file": label(e.name), "reason": "路径不安全，没有解压"})
+            skipped.append({"file": label(e.name), "reason": "unsafe path, not unpacked"})
         else:
             safe.append(e)
     # A zip of one folder holds everything under that folder's name: that level is the folder itself.
@@ -243,7 +309,7 @@ def unpack_zip(file: str, root: str, keep: Callable[[str], Optional[str]],
     for entry in safe:
         rest = parts(entry)[top:]
         if len(rest) > 1:
-            skipped.append({"file": label(entry.name), "reason": "压缩包里的子文件夹不读取（文件夹不可嵌套）"})
+            skipped.append({"file": label(entry.name), "reason": "a folder inside the zip is not read (folders do not nest)"})
             continue
         # The file is read under the name it is stored by (zips made on a Mac may hold ? * : and the like): that name is checked, kept apart
         # from the others and reported when it differs.
@@ -255,19 +321,19 @@ def unpack_zip(file: str, root: str, keep: Callable[[str], Optional[str]],
             continue
         other = names.get(name.lower())
         if other is not None:
-            skipped.append({"file": label(entry.name), "reason": "压缩包里有同名文件，只取第一个" if other.lower() == given.lower()
-                            else f"和“{other}”换掉 Windows 文件名不能有的字符后同名（{name}），只取第一个"})
+            skipped.append({"file": label(entry.name), "reason": "the zip holds another file of this name: only the first is taken" if other.lower() == given.lower()
+                            else f"the same name as \"{other}\" once the characters a Windows file name cannot hold are replaced ({name}): only the first is taken"})
             continue
         if entry.usize > limits["entry"]:
-            skipped.append({"file": label(entry.name), "reason": "单个文件超过 5 GB"})
+            skipped.append({"file": label(entry.name), "reason": "larger than 5 GB"})
             continue
         names[name.lower()] = given
         total += entry.usize
         if name != given:
             renamed.append({"file": label(entry.name), "as": name})
         chosen.append((entry, name))
-    need(len(chosen) <= limits["files"], f"压缩包里的素材超过 {limits['files']} 个，请分批")
-    need(total <= limits["bytes"], "压缩包解压后超过 20 GB，请分批")
+    need(len(chosen) <= limits["files"], f"the zip holds more than {limits['files']} materials: split it")
+    need(total <= limits["bytes"], "the zip unpacks to more than 20 GB: split it")
     for entry, name in chosen:
         extract_entry(file, entry, os.path.join(directory, name))
     with open(done, "w", encoding="utf-8", newline="") as handle:

@@ -42,7 +42,9 @@ test('whatever the agent leaves in the workspace is delivered even when the repl
 test('hidden folders are not sent unless the reply links them',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'lark-shots-'));await fs.mkdir(path.join(dir,'.screenshots'));await fs.mkdir(path.join(dir,'input'));await fs.writeFile(path.join(dir,'input','sent-by-user.pdf'),'u');
   await fs.writeFile(path.join(dir,'.screenshots','look.png'),'p');await fs.writeFile(path.join(dir,'report.txt'),'r');
-  assert.deepEqual((await outputFiles(dir)).map(f=>path.basename(f)),['report.txt'],'neither the hidden folder nor what the user attached');await fs.rm(dir,{recursive:true});
+  // The long reply of an earlier task, written into the workspace while this one ran, is that task's.
+  await fs.writeFile(path.join(dir,'lark-result-earlier.md'),'long');
+  assert.deepEqual((await outputFiles(dir)).map(f=>path.basename(f)),['report.txt'],'neither the hidden folder, what the user attached, nor the long reply of another task');await fs.rm(dir,{recursive:true});
 });
 
 test('a task owns only the files that appeared in its folder while it ran',async()=>{

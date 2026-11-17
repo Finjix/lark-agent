@@ -1,4 +1,4 @@
-"""Plans the rows to append: the next material numbers, the naming formula, the dropdown options to extend (plan.ts)."""
+"""Plans the rows to append: the next material numbers, the naming formula, the dropdown options to extend."""
 
 from __future__ import annotations
 
@@ -91,16 +91,16 @@ def make_plan(snapshot: Snapshot, request_input: Any, current: Optional[str] = N
     sheet, tables, ignored = choose_sheet(snapshot, request, current)
     ws = snapshot.sheet(sheet)
     cols = tables[sheet]
-    need(not ws.protected_sheet, "导出工作表受保护，请核对实际编辑权限")
-    warnings = [f"较早的 GOFCN 工作表“{name}”表头不可用，未参与编号避让" for name in ignored]
+    need(not ws.protected_sheet, "the exported tab is protected: check the real edit permission")
+    warnings = [f"the header of the older GOFCN tab \"{name}\" is unusable: its numbers were not taken into account" for name in ignored]
     identifiers = collect_ids(snapshot, tables, warnings)
     start_number = max(identifiers.keys()) + 1
     start_row = snapshot.last[sheet] + 1
     total = sum(g["quantity"] for g in request["groups"])
     end_row = start_row + total - 1
-    need(end_row <= 1048576, "追加超出工作表行数")
+    need(end_row <= 1048576, "the append goes beyond the tab's last row")
     optional_used = [k for k in OPTIONAL_FIELDS if any(g[k] != "" for g in request["groups"])]
-    need(all(k in cols for k in optional_used), "本批可选字段在工作表中没有对应列")
+    need(all(k in cols for k in optional_used), "an optional field of this batch has no column in the tab")
     used = [*REQUIRED_HEADERS, *optional_used]
     left = min(cols[k] for k in used)
     right = max(cols[k] for k in used)
@@ -108,13 +108,13 @@ def make_plan(snapshot: Snapshot, request_input: Any, current: Optional[str] = N
     for text in ws.merges:
         merged = CellRange(text)
         need(merged.max_row < area.min_row or merged.min_row > area.max_row or merged.max_col < area.min_col or merged.min_col > area.max_col,
-             "追加范围与合并单元格相交")
+             "the append range crosses merged cells")
     # The API writes a column in one go: a column of some rows with a value and some without would be a write with holes.
     forms = [item["creative_form"] != "" for g in request["groups"] for item in items_of(g)]
     need(all(forms) or not any(forms),
-         "这一批有的行写了创意形式、有的没写（追加时一列一次写完，不能留空）：都不写创意形式、把它放在提炼词前面（素材名称不变），或分两次追加")
+         "some rows of this request have a creative_form and some do not (a column is written in one go, without gaps): leave creative_form out for all and put it in front of the keyword (the name stays the same), or append in two requests")
     suppliers = [supplier_cell(g) != "" for g in request["groups"]]
-    need(all(suppliers) or not any(suppliers), "这一批有的需求写了设计师供应商、有的没写（追加时一列一次写完，不能留空；供应商就是审核人本人时那格留空）：分两次追加")
+    need(all(suppliers) or not any(suppliers), "some groups of this request fill the 设计师供应商 cell and some do not (a column is written in one go, without gaps; the cell stays empty when the supplier is the reviewer): append in two requests")
     without_form = not any(forms)
     naming = naming_pattern(row_formula(snapshot, sheet, cols, start_row, without_form), start_row, cols)
     rows: list[dict] = []
@@ -146,11 +146,11 @@ def make_plan(snapshot: Snapshot, request_input: Any, current: Optional[str] = N
                 # empty in a new row: preflight refuses a row with anything in it.
                 outside = {coord: None for coord in formula_refs(formula) if int(re.search(r"[0-9]+$", coord).group(0)) == r}
                 name = concatenate(formula, {**outside, **values})
-                need(name.startswith(f"GOFCN{number}_"), "命名公式未产生正确 GOFCN 编号")
+                need(name.startswith(f"GOFCN{number}_"), "the naming formula does not give the right GOFCN number")
                 material_name = item.get("material_name", js.UNDEFINED)
                 need(material_name is js.UNDEFINED or name == f"GOFCN{number}_{material_name}",
-                     f"按进度表的命名（{naming}），这一行会叫“{name}”，不是要求的“GOFCN{number}_{js.to_str(material_name)}”：核对一级标签、二级标签、创意形式和提炼词")
-                need(not re.search(r"[\\/]", name), f"素材名称“{name}”含 / 或 \\（素材名称也是 CLS 里的创意名称，那里不能有）")
+                     f"by the sheet's naming ({naming}) this row would be named \"{name}\", not the requested \"GOFCN{number}_{js.to_str(material_name)}\": check primary_tag, secondary_tag, creative_form and keyword")
+                need(not re.search(r"[\\/]", name), f"the 素材名称 \"{name}\" contains / or \\ (it is also the creative's name in CLS, which cannot have them)")
                 values[name_coord] = formula
                 rows.append({"row": r, "number": number, "name": name, "values": values, "group": ident})
                 names.append(name)
@@ -172,7 +172,7 @@ def make_plan(snapshot: Snapshot, request_input: Any, current: Optional[str] = N
         if not wanted or field not in cols:
             continue
         existing = options_for(ws, cols[field], start_row - 1)
-        need(all("," not in v and '"' not in v for v in wanted), "下拉标签含逗号/引号，需人工核对规则")
+        need(all("," not in v and '"' not in v for v in wanted), "a dropdown value contains a comma or a quote: the rule has to be checked by hand")
         combined = [*existing, *[v for v in wanted if v not in existing]]
         letter = column_letter(cols[field])
         dropdowns.append({"field": field, "range": f"{letter}{start_row}:{letter}{end_row}", "options": combined,

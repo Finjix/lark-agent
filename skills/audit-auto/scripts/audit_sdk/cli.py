@@ -1,16 +1,19 @@
-"""audit.py, the skill's one command line (port of cli.ts).
+"""audit.py, the skill's one command line.
 
 Progress goes to stderr while it works; the result is one line of JSON on stdout, and the exit code is 0, or 2 when it was refused
 ({"status":"blocked","reason":…}) or failed.
 
   review --project GOF|GOT --file <path> [--file <path>]… [--note <text>]   review videos / images (zips are unpacked)
-  rules watch --project GOF|GOT [--since YYYY-MM-DD]                         listen to this turn's group, reading its history now
-  rules unwatch                                                              stop listening to this turn's group
-  rules sync [--here]                                                        read what is new in every group (or this one); the daily job
-  rules status                                                               the groups listened to, rules per project
-  rules show --project GOF|GOT [--output <file.md>]                          the dynamic spec as Markdown: a file for the user, or in the answer
+  rules watch --project GOF|GOT [--chat <chat_id>] [--since YYYY-MM-DD]      listen to a review group, reading its history now
+  rules unwatch [--chat <chat_id>]                                           stop listening to a group
+  rules sync [--here | --chat <chat_id>]                                     read what is new in every group (or one); the periodic job
+  rules status [--chat <chat_id>]                                            the groups listened to, rules per project
+  rules show --project GOF|GOT [--output <file.md>]                          the dynamic spec as Markdown: a file, or in the answer
   rules remove --project GOF|GOT --id D<n> [--id D<n>]…                      take rules out of the dynamic spec
+  prune                                                                      delete expendable per-user data (housekeeping)
   doctor | info                                                              is everything in place / what is configured
+
+The chat of `--chat` defaults to the host's AGENT_CHAT_ID.
 """
 
 from __future__ import annotations
@@ -27,19 +30,23 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Mapping
 
-from .config import feishu_app, gateway, scratch_root, shared_dir, skill_root, skill_version, turn_of
+from .config import Turn, feishu_app, gateway, reviews_dir, scratch_root, shared_dir, skill_root, skill_version, turn_of, user_dir
 from .errors import Blocked, message_of, need, redact
-from .gemini import JsonRequest, Model, gateway_model
+from .gemini import GatewayModel, JsonRequest, Model
 from .jsutil import SHANGHAI, iso_now_name
-from .lark import Lark, LarkError, bot_lark, explain_lark
+from .lark import BotLark, Lark, LarkError, explain_lark
 from .media import find_ffmpeg
 from .projects import PROJECTS, fixed_spec, project_of
+from .prune import DAY, Pruned, prune, prune_tree
 from .review import ReviewContext, review
 from .rules import Busy, RulesContext, load_book, remove_rules, show, status, sync_all, unwatch, watch
 
 Result = dict[str, Any]
 #: Context.ffmpeg when the caller says nothing: look for one.
 FIND = object()
+#: Review results kept for follow-up questions (older ones also go when `prune` finds them stale).
+KEPT_REVIEWS = 30
+_CHAT_ID = re.compile(r"oc_[A-Za-z0-9_-]+")
 
 
 @dataclass
@@ -55,9 +62,8 @@ class Context:
 
 
 def _parse(args: list[str], options: dict[str, tuple[str, bool]]) -> dict[str, Any]:
-    """Options as node:util parseArgs takes them in strict mode, without positionals: `options` maps a name to (type, multiple).
-    A string option takes the next argument whatever it starts with: a value that starts with "-" (a note like "-B 面从 5 秒开始") is
-    still the value."""
+    """Long options only, no positionals: `options` maps a name to (type, multiple). A string option takes the next argument
+    whatever it starts with: a value that starts with "-" (a note like "-B 面从 5 秒开始") is still the value."""
     values: dict[str, Any] = {}
     i = 0
     while i < len(args):
@@ -94,11 +100,11 @@ def _parse(args: list[str], options: dict[str, tuple[str, bool]]) -> dict[str, A
 
 
 def _model_of(ctx: Context) -> Model:
-    return ctx.model if ctx.model is not None else gateway_model(gateway(ctx.env))
+    return ctx.model if ctx.model is not None else GatewayModel(gateway(ctx.env))
 
 
 def _lark_of(ctx: Context) -> Lark:
-    return ctx.lark if ctx.lark is not None else bot_lark(feishu_app(ctx.env))
+    return ctx.lark if ctx.lark is not None else BotLark(feishu_app(ctx.env))
 
 
 def _log_of(ctx: Context) -> Callable[[str], None]:
@@ -112,85 +118,88 @@ def _log_of(ctx: Context) -> Callable[[str], None]:
     return log
 
 
-def _home(ctx: Context) -> str:
-    return ctx.home or os.path.expanduser("~")
-
-
 def _ffmpeg(ctx: Context) -> str | None:
     return find_ffmpeg(ctx.env) if ctx.ffmpeg is FIND else ctx.ffmpeg
 
 
+def _shared(ctx: Context) -> str:
+    return shared_dir(ctx.env, ctx.home)
+
+
 def _rules_context(ctx: Context) -> RulesContext:
-    return RulesContext(lark=_lark_of(ctx), model=_model_of(ctx), root=skill_root(ctx.env), shared=shared_dir(ctx.env, _home(ctx)),
-                        log=_log_of(ctx), now=ctx.now)
+    return RulesContext(lark=_lark_of(ctx), model=_model_of(ctx), root=skill_root(ctx.env), shared=_shared(ctx), log=_log_of(ctx), now=ctx.now)
+
+
+def _turn(ctx: Context, values: dict[str, Any]) -> Turn:
+    """The chat a command is about: --chat when given, else the host's AGENT_CHAT_ID (with the type the host declared for it)."""
+    turn = turn_of(ctx.env)
+    if values.get("chat") is None:
+        return turn
+    chat = str(values["chat"]).strip()
+    need(_CHAT_ID.fullmatch(chat), f"--chat takes a Feishu chat id (oc_…) of a group the bot is a member of, not {chat!r}")
+    return Turn(chat=chat, chat_type=turn.chat_type if chat == turn.chat else None, user=turn.user)
 
 
 def _since_of(value: Any) -> int | None:
     if value is None:
         return None
     text = str(value).strip()
-    need(re.fullmatch(r"\d{4}-\d{2}-\d{2}", text), "--since 要写成 YYYY-MM-DD，比如 2026-09-01")
+    need(re.fullmatch(r"\d{4}-\d{2}-\d{2}", text), "--since must be written YYYY-MM-DD, e.g. 2026-09-01")
     try:
         # A day the month does not have (2026-02-30) is refused, not taken for one in the next month.
         at = datetime(int(text[:4]), int(text[5:7]), int(text[8:10]), tzinfo=SHANGHAI)
     except ValueError:
-        raise Blocked(f"--since 不是有效的日期：{text}") from None
+        raise Blocked(f"--since is not a valid date: {text}") from None
     return int(at.timestamp() * 1000)
 
 
-def _keep_result(ctx: Context, payload: Result, markdown: str) -> str | None:
-    """Where the results of a user's reviews are kept for follow-up questions (never the workspace); the newest 30 stay."""
-    user = (ctx.env.get("LARK_AGENT_USER_DIR") or "").strip()
-    directory = os.path.join(os.path.abspath(user), "audit-auto", "reviews") if user else os.path.join(_home(ctx), ".audit-auto", "reviews")
+def _keep_result(directory: str, name: str, payload: Result, markdown: str) -> str | None:
+    """Keeps a review's result for follow-up questions (never in the working directory); the newest KEPT_REVIEWS stay."""
     try:
         os.makedirs(directory, exist_ok=True)
-        name = f"{iso_now_name()}-{os.getpid()}"
         with open(os.path.join(directory, f"{name}.json"), "w", encoding="utf-8", newline="") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, indent=2))
         with open(os.path.join(directory, f"{name}.md"), "w", encoding="utf-8", newline="") as handle:
             handle.write(markdown)
-        kept = sorted(f for f in os.listdir(directory) if f.endswith(".json"))
-        for old in kept[:max(0, len(kept) - 30)]:
+        kept = sorted(f[:-5] for f in os.listdir(directory) if f.endswith(".json"))
+        for old in kept[:max(0, len(kept) - KEPT_REVIEWS)]:
             for ext in (".json", ".md"):
                 try:
-                    os.remove(os.path.join(directory, old[:-5] + ext))
+                    os.remove(os.path.join(directory, old + ext))
                 except OSError:
                     pass
+            shutil.rmtree(os.path.join(directory, f"{old}-images"), ignore_errors=True)
         return os.path.join(directory, f"{name}.md")
     except OSError:
         return None
 
 
 def _scratch_folder(ctx: Context) -> str:
-    """A scratch folder of this run, gone when it ends; ones left by runs that died are swept after a day."""
-    root = scratch_root(ctx.env)
+    """A scratch folder of this run, removed when it ends; what runs that died left there is swept after a day."""
+    root = scratch_root(ctx.env, ctx.home)
     os.makedirs(root, exist_ok=True)
-    for old in os.listdir(root):
-        at = os.path.join(root, old)
-        try:
-            if time.time() - os.stat(at).st_mtime > 24 * 60 * 60:
-                shutil.rmtree(at, ignore_errors=True) if os.path.isdir(at) else os.remove(at)
-        except OSError:
-            pass  # in use
+    prune_tree(root, time.time() - DAY, Pruned())
     return tempfile.mkdtemp(prefix="run-", dir=root)
 
 
 def _review_command(args: list[str], ctx: Context) -> Result:
     values = _parse(args, {"project": ("string", False), "file": ("string", True), "note": ("string", False)})
-    need(values.get("project"), "缺少 --project（GOF 或 GOT）：先问用户这是哪个项目的素材")
+    need(values.get("project"), "--project is missing (GOF or GOT): ask the user which project the material is for")
     project = project_of(values["project"])
     files: list[str] = values.get("file") or []
-    need(files, "缺少 --file：要审的视频或图片")
+    need(files, "--file is missing: the videos or images to review")
+    root = skill_root(ctx.env)
+    reviews = reviews_dir(ctx.env, ctx.home)
+    name = f"{iso_now_name()}-{os.getpid()}"
     scratch = _scratch_folder(ctx)
     try:
         note = values.get("note")
         outcome = review(project, [os.path.abspath(f) for f in files], note.strip() if isinstance(note, str) and note.strip() else None,
-                         ReviewContext(model=_model_of(ctx), root=skill_root(ctx.env), shared=shared_dir(ctx.env, _home(ctx)), scratch=scratch,
-                                       ffmpeg=_ffmpeg(ctx), log=_log_of(ctx),
-                                       images_dir=os.path.abspath(os.path.join("input", f"zip-images-{iso_now_name()}"))))
+                         ReviewContext(model=_model_of(ctx), root=root, shared=_shared(ctx), scratch=scratch, ffmpeg=_ffmpeg(ctx),
+                                       log=_log_of(ctx), images_dir=os.path.join(reviews, f"{name}-images")))
         details: Result = {"project": project.id, "rules": outcome.rules, "files": outcome.results, "skipped": outcome.skipped,
                            "images": outcome.images}
-        kept = _keep_result(ctx, details, outcome.markdown)
+        kept = _keep_result(reviews, name, details, outcome.markdown)
         reviewed = sum(1 for r in outcome.results if r["status"] == "reviewed")
         listed = []
         for r in outcome.results:
@@ -202,7 +211,7 @@ def _review_command(args: list[str], ctx: Context) -> Result:
             if r.get("findings"):
                 item["issues"] = len(r["findings"]["issues"])
             listed.append(item)
-        # A host may shorten a long output by leaving out its middle: what the skill needs to find the whole result goes first, the
+        # A host may shorten a long output by leaving out its middle: what is needed to find the whole result goes first, the
         # Markdown last.
         result: Result = {"status": "done" if reviewed or outcome.images else "failed"}
         if kept:
@@ -211,56 +220,52 @@ def _review_command(args: list[str], ctx: Context) -> Result:
         if outcome.skipped:
             result["skipped"] = outcome.skipped
         if outcome.images:
-            # Not reviewed here: the agent looks at each one itself, against the spec files named below.
+            # Not reviewed here: the agent looks at each one itself, against the specs named below.
             result["images"] = outcome.images
-            result["spec"] = {"fixed": fixed_spec(skill_root(ctx.env), project).file, "dynamic": f"audit rules show --project {project.id}"}
+            result["spec"] = {"fixed": fixed_spec(root, project).file, "dynamic": f"audit rules show --project {project.id}"}
         result["markdown"] = outcome.markdown
         return result
     finally:
-        # A file still held open (Windows) is left to the sweep after a day: the review itself is done.
+        # A file still held open (Windows) is left to the sweep: the review itself is done.
         shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _rules_command(action: str | None, args: list[str], ctx: Context) -> Result:
-    turn = turn_of(ctx.env)
-
-    def shared() -> str:
-        return shared_dir(ctx.env, _home(ctx))
-
     if action == "watch":
-        values = _parse(args, {"project": ("string", False), "since": ("string", False)})
-        need(values.get("project"), "缺少 --project：先问用户这个群是 GOF 还是 GOT 的审核群")
-        return watch(project_of(values["project"]), _since_of(values.get("since")), turn, _rules_context(ctx))
+        values = _parse(args, {"project": ("string", False), "since": ("string", False), "chat": ("string", False)})
+        need(values.get("project"), "--project is missing: ask the user whether the group reviews GOF or GOT material")
+        return watch(project_of(values["project"]), _since_of(values.get("since")), _turn(ctx, values), _rules_context(ctx))
     if action == "unwatch":
-        _parse(args, {})
-        return unwatch(turn, shared())
+        return unwatch(_turn(ctx, _parse(args, {"chat": ("string", False)})), _shared(ctx))
     if action == "sync":
-        values = _parse(args, {"here": ("boolean", False)})
-        need(not values.get("here") or turn.chat, "不知道这条消息来自哪个群：请在要更新的群里 @机器人 再说一次")
+        values = _parse(args, {"here": ("boolean", False), "chat": ("string", False)})
+        turn = _turn(ctx, values)
+        one = bool(values.get("here") or values.get("chat"))
+        need(not one or turn.chat, "--here needs the chat: pass --chat <chat_id> (oc_…), or ask in the group to update")
+        # A user waits for a reading in progress; the periodic job (no chat) gives way at once.
         try:
-            return sync_all(_rules_context(ctx), chat=turn.chat if values.get("here") else None, wait_ms=5 * 60_000 if turn.chat else 0)
+            return sync_all(_rules_context(ctx), chat=turn.chat if one else None, wait_ms=5 * 60_000 if turn.chat else 0)
         except Busy as error:
-            # The daily job finding a user's watch (or the previous run) still at work: nothing is lost, the next run reads on from there.
+            # The job finding a user's watch (or the previous run) still at work: nothing is lost, the next run reads on from there.
             if not turn.chat:
                 return {"status": "busy", "reason": error.message}
             raise
     if action == "status":
-        _parse(args, {})
-        return status(shared(), turn)
+        return status(_shared(ctx), _turn(ctx, _parse(args, {"chat": ("string", False)})))
     if action == "show":
         values = _parse(args, {"project": ("string", False), "output": ("string", False)})
-        need(values.get("project"), "缺少 --project（GOF 或 GOT）")
+        need(values.get("project"), "--project is missing (GOF or GOT)")
         output = values.get("output")
-        return show(shared(), project_of(values["project"]), output if isinstance(output, str) and output else None)
+        return show(_shared(ctx), project_of(values["project"]), output if isinstance(output, str) and output else None)
     if action == "remove":
         values = _parse(args, {"project": ("string", False), "id": ("string", True)})
-        need(values.get("project"), "缺少 --project（GOF 或 GOT）")
-        return remove_rules(project_of(values["project"]), values.get("id") or [], turn, shared(), ctx.now)
-    raise Blocked("rules 需要 watch、unwatch、sync、status、show 或 remove")
+        need(values.get("project"), "--project is missing (GOF or GOT)")
+        return remove_rules(project_of(values["project"]), values.get("id") or [], turn_of(ctx.env), _shared(ctx), ctx.now)
+    raise Blocked("rules needs one of: watch, unwatch, sync, status, show, remove")
 
 
 def _info(ctx: Context) -> Result:
-    root, shared = skill_root(ctx.env), shared_dir(ctx.env, _home(ctx))
+    root, shared = skill_root(ctx.env), _shared(ctx)
     model: str | None = None
     key = False
     try:
@@ -271,7 +276,7 @@ def _info(ctx: Context) -> Result:
         pass  # reported by doctor
     return {
         "status": "ok", "skill": "audit-auto", "version": skill_version(root), "python": platform.python_version(), "model": model,
-        "gateway_key": key, "shared": shared,
+        "gateway_key": key, "shared": shared, "user": user_dir(ctx.env, ctx.home),
         "projects": [{"id": p.id, "fixed_spec": not fixed_spec(root, p).placeholder, "dynamic_rules": len(load_book(shared, p.id)["rules"])}
                      for p in PROJECTS.values()],
     }
@@ -290,13 +295,13 @@ def _doctor(ctx: Context) -> Result:
 
     def fixed_specs() -> str:
         root = skill_root(ctx.env)
-        return "，".join(f"{p.id}: {'占位（只用动态规范）' if fixed_spec(root, p).placeholder else '有'}" for p in PROJECTS.values())
+        return ", ".join(f"{p.id}: {'placeholder (dynamic spec only)' if fixed_spec(root, p).placeholder else 'yes'}" for p in PROJECTS.values())
 
     def ai_gateway() -> str:
         model = _model_of(ctx)
         reply = model.json(JsonRequest(system='Answer with this JSON: {"ok": true}', parts=[{"text": "ping"}], max_output_tokens=2048))
-        need(isinstance(reply.data, dict) and reply.data.get("ok") is True, "AI 网关的回答不对")
-        return f"{model.name}，{reply.ms} ms"
+        need(isinstance(reply.data, dict) and reply.data.get("ok") is True, "The AI gateway answered, but not as asked")
+        return f"{model.name}, {reply.ms} ms"
 
     def feishu() -> str:
         lark = _lark_of(ctx)
@@ -304,19 +309,20 @@ def _doctor(ctx: Context) -> Result:
         return lark.app_id
 
     def shared_folder() -> str:
-        shared = shared_dir(ctx.env, _home(ctx))
+        shared = _shared(ctx)
         os.makedirs(shared, exist_ok=True)
-        need(os.access(shared, os.W_OK), f"共享目录不可写：{shared}")
+        need(os.access(shared, os.W_OK), f"The shared folder is not writable: {shared}")
         return shared
 
     def ffmpeg() -> str:
-        return "有（超过 256 MB 的视频先转成 720p 24fps 再发）" if _ffmpeg(ctx) else "没有（视频按原文件发，最大 256 MB）"
+        return ("found (videos over 256 MB are re-encoded to 720p 24 fps first)" if _ffmpeg(ctx)
+                else "not found (videos are sent as they are, at most 256 MB)")
 
     def groups() -> str:
-        s = status(shared_dir(ctx.env, _home(ctx)), turn_of({}))
-        failing = [g for g in s["groups"] if g.get("error")]
-        need(not failing, f"有 {len(failing)} 个群上次没读成：{failing[0]['error'] if failing else ''}")
-        return f"在监听 {len(s['groups'])} 个群"
+        listed = status(_shared(ctx), Turn())["groups"]
+        failing = [g for g in listed if g.get("error")]
+        need(not failing, f"{len(failing)} group(s) could not be read last time: {failing[0]['error'] if failing else ''}")
+        return f"listening to {len(listed)} group(s)"
 
     check("fixed_specs", fixed_specs)
     check("ai_gateway", ai_gateway)
@@ -333,13 +339,10 @@ def _run(args: list[str], ctx: Context) -> Result:
         return _review_command(rest, ctx)
     if command == "rules":
         return _rules_command(rest[0] if rest else None, rest[1:], ctx)
-    if command == "info":
+    if command in ("prune", "info", "doctor"):
         _parse(rest, {})
-        return _info(ctx)
-    if command == "doctor":
-        _parse(rest, {})
-        return _doctor(ctx)
-    raise Blocked("用法：review | rules <watch|unwatch|sync|status|show|remove> | doctor | info")
+        return prune(ctx.env, ctx.home) if command == "prune" else _info(ctx) if command == "info" else _doctor(ctx)
+    raise Blocked("Usage: review | rules <watch|unwatch|sync|status|show|remove> | prune | doctor | info")
 
 
 def main(args: list[str], ctx: Context | None = None) -> tuple[Result, int]:
@@ -351,5 +354,5 @@ def main(args: list[str], ctx: Context | None = None) -> tuple[Result, int]:
     except Blocked as error:
         return {"status": "blocked", "reason": error.message}, 2
     except Exception as error:  # noqa: BLE001 - anything else is a refusal too, told without credentials
-        reason = explain_lark(error) if isinstance(error, LarkError) else f"出错了：{redact(message_of(error))[:300]}"
+        reason = explain_lark(error) if isinstance(error, LarkError) else f"Something went wrong: {redact(message_of(error))[:300]}"
         return {"status": "blocked", "reason": reason}, 2

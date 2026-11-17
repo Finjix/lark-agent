@@ -9,12 +9,10 @@ import {systemPython} from '../agent/environment.js';
 
 const run=promisify(execFile);
 const STAMP='lark-agent-requirements.sha256';
-/** The agent's own Feishu module's requirements.txt, then every skill's, in a stable order. */
-export async function requirementFiles(skills=config.skills,feishu=path.dirname(config.feishu)):Promise<string[]>{
+/** Every skill's requirements.txt, in a stable order. */
+export async function requirementFiles(skills=config.skills):Promise<string[]>{
   const entries=await fs.readdir(skills,{withFileTypes:true}).catch(()=>[]);
   const files:string[]=[];
-  const own=path.join(feishu,'requirements.txt');
-  if(await fs.stat(own).then(s=>s.isFile(),()=>false))files.push(own);
   for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
     const file=path.join(skills,entry.name,'requirements.txt');
     if(entry.isDirectory()&&await fs.stat(file).then(s=>s.isFile(),()=>false))files.push(file);
@@ -46,8 +44,8 @@ export async function pythonStatus(){
   }catch(e){return {ok:false,python:config.python,error:`找不到 Python（${(e as Error).message}）：装好 Python 3.11 或更高版本，或用环境变量 PYTHON 指定`};}
 }
 /**
- * Makes the machine's Python (`PYTHON`, or `python` on PATH; 3.11 or newer) hold what the Feishu module and the skills need: installs their requirements.txt
- * into it when they, or the Python, changed since the last install. Quiet when nothing changed.
+ * Makes the machine's Python (`PYTHON`, or `python` on PATH; 3.11 or newer) hold what the skills need: installs their requirements.txt into it
+ * when they, or the Python, changed since the last install. Quiet when nothing changed.
  */
 export async function ensurePython(){
   const files=await requirementFiles();

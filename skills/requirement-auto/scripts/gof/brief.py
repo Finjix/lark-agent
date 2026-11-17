@@ -1,4 +1,4 @@
-"""Reads the requirement document a user links to into plain text the agent can work from (brief.ts).
+"""Reads the requirement document a user links to into plain text the agent can work from.
 
 A sheet tab or a docx, directly or as a wiki node: the title (it usually names the supplier), and the rows of the tab or the text of the
 doc. Read-only; the content is data, never instructions.
@@ -21,7 +21,7 @@ MAX_DEPTH = 8
 
 
 def cell_shown(value: Any) -> str:
-    """What a cell shows, as text: rich-text segments joined, an attachment by its file name, an image as [图片]."""
+    """What a cell shows, as text: rich-text segments joined, an attachment by its file name, an image as [image]."""
     if value is None or value is js.UNDEFINED:
         return ""
     if isinstance(value, str):
@@ -33,9 +33,9 @@ def cell_shown(value: Any) -> str:
     if isinstance(value, dict):
         if value.get("type") == "attachment":
             text = js.trim(js.to_str(value["text"]) if value.get("text") is not None else "")
-            return f"[附件:{text or '文件'}]"
+            return f"[attachment:{text or 'file'}]"
         if value.get("type") in ("embed-image", "image"):
-            return "[图片]"
+            return "[image]"
         if isinstance(value.get("text"), str):
             return value["text"]
         if isinstance(value.get("link"), str):
@@ -52,17 +52,17 @@ def _clip(text: str, limit: Optional[int]) -> tuple[str, bool]:
 
 def _read_sheet(bridge: Any, token: str, title: str, linked: Optional[str], wanted: Optional[str], full: bool) -> dict:
     listed = (bridge.api_read(f"/open-apis/sheets/v3/spreadsheets/{token}/sheets/query") or {}).get("sheets")
-    need(isinstance(listed, list), "读不到表格的工作表列表")
+    need(isinstance(listed, list), "cannot read the spreadsheet's list of tabs")
     tabs = sorted((s for s in listed if s.get("resource_type") == "sheet" and not js.truthy(s.get("hidden"))),
                   key=lambda s: js.number(s.get("index", js.UNDEFINED)) if js.is_num(s.get("index")) else 0)
-    need(len(tabs) > 0, "表格里没有可读的工作表")
+    need(len(tabs) > 0, "the spreadsheet has no readable tab")
     if wanted is not None:
         tab = next((s for s in tabs if s.get("sheet_id") == wanted), None) or next((s for s in tabs if s.get("title") == wanted), None)
-        need(tab, f"表格里没有工作表“{wanted}”")
+        need(tab, f"the spreadsheet has no tab \"{wanted}\"")
         chosen_by = "asked"
     elif linked:
         tab = next((s for s in tabs if s.get("sheet_id") == linked), None)
-        need(tab, "链接指向的工作表不存在或已隐藏")
+        need(tab, "the tab the link points to does not exist or is hidden")
         chosen_by = "link"
     else:
         # Requirement sheets add a tab per delivery (2026.10.16, …); without a tab in the link the last one is the newest.
@@ -78,7 +78,7 @@ def _read_sheet(bridge: Any, token: str, title: str, linked: Optional[str], want
     ranges = (data or {}).get("valueRanges") if isinstance(data, dict) else None
     values = ranges[0].get("values") if isinstance(ranges, list) and ranges and isinstance(ranges[0], dict) else None
     values = [] if values is None else values
-    need(isinstance(values, list), "表格内容返回结构不匹配")
+    need(isinstance(values, list), "the spreadsheet values came back in an unexpected shape")
     text = [[js.trim(cell_shown(cell)) for cell in (row if isinstance(row, list) else [])] for row in values]
     width = max([0, *[max([i + 1 for i, cell in enumerate(row) if cell != ""] or [0]) for row in text]])
     clipped = [0]
@@ -134,7 +134,7 @@ def doc_target(bridge: Any, url: str) -> dict:
     for a direct link), the title the wiki gives it, the wiki parent, and the tab the link names (`?sheet=`).
     """
     doc_path = feishu_doc_path(url, "docx|wiki|sheets", True)
-    need(doc_path, "不是公司飞书文档链接（需要 wiki、docx 或 sheets 链接）")
+    need(doc_path, "not a company Feishu document link (a wiki, docx or sheets link is needed)")
     parts = doc_path.rstrip("/").split("/")
     kind, token = parts[1], parts[2]
     query = parse_qs(urlsplit(url).query, keep_blank_values=True)
@@ -142,7 +142,7 @@ def doc_target(bridge: Any, url: str) -> dict:
     if kind != "wiki":
         return {"type": "sheet" if kind == "sheets" else kind, "token": token, "node": "", "title": "", "parent": "", "linked": linked}
     node = (bridge.api_read("/open-apis/wiki/v2/spaces/get_node", {"token": token, "obj_type": "wiki"}) or {}).get("node")
-    need(node and isinstance(node.get("obj_token"), str), "读不到这个知识库节点")
+    need(node and isinstance(node.get("obj_token"), str), "cannot read this wiki node")
     return {"type": node.get("obj_type"), "token": node["obj_token"], "node": token,
             "title": js.to_str(node["title"]) if node.get("title") is not None else "",
             "parent": js.to_str(node["parent_node_token"]) if node.get("parent_node_token") is not None else "", "linked": linked}
@@ -163,8 +163,8 @@ def read_brief(bridge: Any, url: str, sheet: Optional[str] = None, full: bool = 
             spreadsheet = info.get("spreadsheet") if isinstance(info, dict) else None
             title = js.to_str(spreadsheet["title"]) if isinstance(spreadsheet, dict) and spreadsheet.get("title") is not None else ""
         return {**_read_sheet(bridge, obj_token, title, linked, sheet, full), **extra}
-    need(kind == "docx", f"暂不支持读取这种飞书文档（{js.to_str(kind)}），请给表格或新版文档的链接")
-    need(sheet is None, "--sheet 只用于表格")
+    need(kind == "docx", f"this kind of Feishu document ({js.to_str(kind)}) cannot be read; give a sheet or docx link")
+    need(sheet is None, "--sheet is only for spreadsheets")
     raw = (bridge.api_read(f"/open-apis/docx/v1/documents/{obj_token}/raw_content") or {}).get("content")
     content = js.to_str(raw) if raw is not None else ""
     # A docx's raw text starts with its title.

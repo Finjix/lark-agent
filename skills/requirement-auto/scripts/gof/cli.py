@@ -1,4 +1,5 @@
-"""The one entry point of the skill's scripts (cli.ts): `gof.py batch …`, `gof.py feishu …`, `gof.py cls …`, `gof.py creative …`, `gof.py login check`.
+"""The one entry point of the skill's scripts: `gof.py batch …`, `gof.py feishu …`, `gof.py cls …`, `gof.py creative …`, `gof.py login check`,
+`gof.py prune`.
 
 Every command prints one line of canonical JSON on stdout; a refusal is {"status":"blocked","reason":…} and exit code 2.
 """
@@ -75,12 +76,12 @@ def _str(v: Any) -> Optional[str]:
 
 
 def _must(v: Any, flag: str) -> str:
-    need(isinstance(v, str) and v != "", f"缺少 --{flag}")
+    need(isinstance(v, str) and v != "", f"--{flag} is missing")
     return v
 
 
 def _int_of(v: Any, flag: str) -> int:
-    need(isinstance(v, str) and re.fullmatch(r"[1-9][0-9]*", v), f"--{flag} 需要正整数")
+    need(isinstance(v, str) and re.fullmatch(r"[1-9][0-9]*", v), f"--{flag} must be a positive whole number")
     return int(v)
 
 
@@ -104,22 +105,22 @@ def _batch_command(command: str, args: list[str]) -> dict:
     if command == "plan":
         values, _ = _parse(args, {"snapshot": "string", "observed-url": "string", "request": "string", "current-sheet": "string"})
         snap = _open_snapshot(values)
-        need(snap, "缺少 --snapshot")
+        need(snap, "--snapshot is missing")
         return make_plan(snap, read_json(_must(values.get("request"), "request")), _str(values.get("current-sheet")))
     if command == "prepare":
-        values, _ = _parse(args, {"snapshot": "string", "observed-url": "string", "plan": "string", "output-root": "string", "workspace": "string"})
+        values, _ = _parse(args, {"snapshot": "string", "observed-url": "string", "plan": "string", "output-root": "string"})
         snap = _open_snapshot(values)
-        need(snap, "缺少 --snapshot")
-        return batch.prepare(read_json(_must(values.get("plan"), "plan")), snap, workspace=_str(values.get("workspace")), output_root=_str(values.get("output-root")))
+        need(snap, "--snapshot is missing")
+        return batch.prepare(read_json(_must(values.get("plan"), "plan")), snap, output_root=_str(values.get("output-root")))
     if command == "preflight":
         values, _ = _parse(args, common)
         snap = _open_snapshot(values)
-        need(snap, "缺少 --snapshot")
+        need(snap, "--snapshot is missing")
         return batch.preflight(_must(values.get("batch"), "batch"), snap)
     if command == "verify":
         values, _ = _parse(args, {**common, "validation-evidence": "string"})
         snap = _open_snapshot(values)
-        need(snap, "缺少 --snapshot")
+        need(snap, "--snapshot is missing")
         evidence = _str(values.get("validation-evidence"))
         return batch.verify(_must(values.get("batch"), "batch"), snap, read_json(evidence) if evidence else None)
     if command == "record":
@@ -147,7 +148,7 @@ def _batch_command(command: str, args: list[str]) -> dict:
         return batch.message(_must(_parse(args, {"batch": "string"})[0].get("batch"), "batch"))
     if command == "cls-check":
         values, _ = _parse(args, {"batch": "string", "group": "string", "action": "string", "ui": "string", "observations": "string"})
-        need(("ui" in values) != ("observations" in values), "需要且只能给出 --ui 或 --observations 之一")
+        need(("ui" in values) != ("observations" in values), "give exactly one of --ui or --observations")
         return batch.cls_check(_must(values.get("batch"), "batch"), _must(values.get("group"), "group"), _must(values.get("action"), "action"),
                                read_json(_must(values.get("ui") if "ui" in values else values.get("observations"), "observations")))
     if command == "report":
@@ -158,10 +159,10 @@ def _batch_command(command: str, args: list[str]) -> dict:
         if not output:
             return result
         file = os.path.abspath(output)
-        need(is_inside(directory, file), "报告必须位于本批目录")
+        need(is_inside(directory, file), "the report must be inside the batch directory")
         write_json_new(file, result)
         return {"status": "report_saved", "report": file}
-    raise Blocked(f"未知的 batch 子命令：{command}")
+    raise Blocked(f"unknown batch command: {command}")
 
 
 def _feishu_command(command: str, args: list[str], bridge: Any, via: Any) -> dict:
@@ -187,9 +188,9 @@ def _feishu_command(command: str, args: list[str], bridge: Any, via: Any) -> dic
     if command == "document":
         values, _ = _parse(args, {"url": "string", "sheet": "string", "full": "boolean", "outline": "boolean", "block": "string"})
         if values.get("outline") or "block" in values:
-            need("sheet" not in values, "--outline 只用于新版文档（docx）；表格直接读，行号和列字母就是位置")
+            need("sheet" not in values, "--outline is for docx only; a spreadsheet is read as it is, its row numbers and column letters being the places")
             block = _str(values.get("block"))
-            need(block is None or re.fullmatch(r"[0-9]+", block), "--block 需要顶层块的序号（从 0 数）")
+            need(block is None or re.fullmatch(r"[0-9]+", block), "--block takes the index of a top-level block (from 0)")
             return outline(bridge, _must(values.get("url"), "url"), full=values.get("full") is True, block=int(block) if block is not None else None)
         return read_brief(bridge, _must(values.get("url"), "url"), sheet=_str(values.get("sheet")), full=values.get("full") is True)
     if command == "doc-screenshot":
@@ -220,7 +221,7 @@ def _feishu_command(command: str, args: list[str], bridge: Any, via: Any) -> dic
         snap = Snapshot(_must(values.get("snapshot"), "snapshot"))
         output = _str(values.get("output"))
         file = None if output is None else os.path.abspath(output)
-        need(file is None or not os.path.exists(file), "计划文件已存在，不覆盖")
+        need(file is None or not os.path.exists(file), "the plan file exists already and is not overwritten")
         result = feishu.plan_with_api(bridge, snap, read_json(_must(values.get("request"), "request")))
         if file is None:
             return result
@@ -229,12 +230,12 @@ def _feishu_command(command: str, args: list[str], bridge: Any, via: Any) -> dic
     if command == "prepare":
         from .batch import prepare
 
-        values, _ = _parse(args, {"plan": "string", "snapshot": "string", "output-root": "string", "workspace": "string"})
+        values, _ = _parse(args, {"plan": "string", "snapshot": "string", "output-root": "string"})
         snap = Snapshot(_must(values.get("snapshot"), "snapshot"))
         approved = read_json(_must(values.get("plan"), "plan"))
         fresh = feishu.recompute_plan(bridge, snap, approved)
-        return prepare(fresh["batch_plan"], snap, workspace=_str(values.get("workspace")), api_plan=fresh["api_plan"], output_root=_str(values.get("output-root")))
-    raise Blocked(f"未知的 feishu 子命令：{command}")
+        return prepare(fresh["batch_plan"], snap, api_plan=fresh["api_plan"], output_root=_str(values.get("output-root")))
+    raise Blocked(f"unknown feishu command: {command}")
 
 
 CLS_ONLINE = ["login", "session", "catalog", "observe", "run", "read-draft", "verify", "screenshot"]
@@ -248,7 +249,7 @@ def _cls_online_command(command: str, args: list[str], via: Any) -> dict:
     if command == "login":
         values, _ = _parse(args, {"qr": "string"})
         qr = _str(values.get("qr"))
-        need(qr, "cls login 需要 --qr <png文件>：登录用二维码，由用户用飞书手机端扫码，不弹出浏览器窗口")
+        need(qr, "cls login needs --qr <file.png>: the sign-in QR code the user scans with the Feishu mobile app (no browser window opens)")
         return online.login_with_qr(via, qr)
     if command == "session":
         _parse(args, {})
@@ -271,7 +272,7 @@ def _cls_online_command(command: str, args: list[str], via: Any) -> dict:
         values, _ = _parse(args, {"batch": "string", "operation": "string", "draft": "string", "output": "string"})
         return online.verify_draft(via, _must(values.get("batch"), "batch"), _must(values.get("operation"), "operation"), _int_of(values.get("draft"), "draft"),
                                    _must(values.get("output"), "output"))
-    raise Blocked(f"未知的 cls 子命令：{command}")
+    raise Blocked(f"unknown cls command: {command}")
 
 
 def _cls_command(args: list[str]) -> dict:
@@ -281,13 +282,13 @@ def _cls_command(args: list[str]) -> dict:
                               "observations": "string", "output": "string"})
     catalog = read_json(_must(values.get("catalog"), "catalog"))
     if values.get("preview"):
-        need(values.get("request") and not any(values.get(k) for k in ("batch", "group", "action", "output", "observations")), "preview 只接受 request/catalog")
+        need(values.get("request") and not any(values.get(k) for k in ("batch", "group", "action", "output", "observations")), "--preview takes only --request and --catalog")
         return cls_preview(read_json(values["request"]), catalog)
-    need(all(values.get(k) for k in ("batch", "group", "action", "observations", "output")), "需本批、组、动作、观察和新输出路径")
-    need(values["action"] in ("save_draft", "import_scripts"), "只允许草稿创建和脚本导入")
+    need(all(values.get(k) for k in ("batch", "group", "action", "observations", "output")), "needs --batch, --group, --action, --observations and a new --output")
+    need(values["action"] in ("save_draft", "import_scripts"), "only save_draft and import_scripts are allowed")
     directory = os.path.abspath(values["batch"])
     output = os.path.abspath(values["output"])
-    need(is_inside(directory, output) and not os.path.exists(output), "操作文件须新建于本批目录内")
+    need(is_inside(directory, output) and not os.path.exists(output), "the operation file must be a new file inside the batch directory")
     op = operation(directory, values["group"], values["action"], catalog, read_json(values["observations"]))
     write_json_new(output, op)
     return {"status": "operation_ready", "operation": output, "operation_id": op["operation_id"], "native_defaults": op["native_defaults"]}
@@ -302,21 +303,21 @@ def _creative_command(command: str, args: list[str], bridge: Any, via: Any) -> d
         values, _ = _parse(args, {"find": "string", "creator": "string", "producers": "string"})
         producers_text = _str(values.get("producers"))
         producers = [js.trim(t) for t in re.split(r"[,，、]+", producers_text) if js.trim(t)] if producers_text is not None else None
-        need(producers is None or len(producers) > 0, "--producers 需要至少一个名字（逗号分开）")
+        need(producers is None or len(producers) > 0, "--producers needs at least one name (comma-separated)")
         creator = _str(values.get("creator"))
         return creative.upload_options(via, find=_str(values.get("find")) or None, creator=js.trim(creator) if creator and js.trim(creator) else None,
                                        producers=producers)
     if command == "files":
         values, positionals = _parse(args, {"check": "boolean", "progress": "string"}, True)
-        need(len(positionals) > 0, "creative files 需要文件、文件夹或 zip 的路径")
-        need(values.get("check") or "progress" not in values, "--progress 只和 --check 一起用")
+        need(len(positionals) > 0, "creative files needs paths of files, folders or zips")
+        need(values.get("check") or "progress" not in values, "--progress only goes with --check")
         progress = _str(values.get("progress"))
         return creative.list_files(positionals, None, {"bridge": bridge, "progress": progress if progress is not None else True} if values.get("check") else None)
     if command == "rows":
         values, _ = _parse(args, {"numbers": "string", "find": "string", "progress": "string"})
         numbers = parse_numbers(values["numbers"]) if _str(values.get("numbers")) else []
         texts = [js.trim(t) for t in re.split(r"[,，、]+", _str(values.get("find")) or "") if js.trim(t)]
-        need(len(texts) <= 20 and all(len(t) <= 50 for t in texts), "--find 最多 20 段文字（逗号分开），每段 50 字以内")
+        need(len(texts) <= 20 and all(len(t) <= 50 for t in texts), "--find takes at most 20 texts (comma-separated) of up to 50 characters each")
         progress = _str(values.get("progress"))
         return creative.find_rows(bridge, numbers, texts, progress if progress else True)
     if command == "plan":
@@ -329,13 +330,41 @@ def _creative_command(command: str, args: list[str], bridge: Any, via: Any) -> d
     if command == "screenshot":
         values, _ = _parse(args, {"output": "string", "rows": "string"})
         return creative.list_picture(via, _must(values.get("output"), "output"), None if "rows" not in values else _int_of(values["rows"], "rows"))
-    raise Blocked(f"未知的 creative 子命令：{command}")
+    raise Blocked(f"unknown creative command: {command}")
+
+
+def _feishu_login_todo(feishu: dict) -> str:
+    """What to do about a missing Feishu login: the feishu skill's QR login, asking for the scopes the check found missing."""
+    from .agent_feishu import locate_feishu
+
+    try:
+        entry = f'python "{locate_feishu().replace(os.sep, "/")}"'
+    except Blocked:
+        entry = "python <feishu skill>/scripts/feishu.py"
+    missing = feishu.get("missing_scopes") if isinstance(feishu.get("missing_scopes"), list) else []
+    extra = "".join(f" --extra-scope {scope}" for scope in missing if isinstance(scope, str) and re.fullmatch(r"[A-Za-z0-9:._-]+", scope))
+    return (f"Feishu: log the user in with the feishu skill (see its SKILL.md): {entry} login qr --output <new file>.png{extra} saves a sign-in QR "
+            f"image; send it to the user only, to scan with the Feishu mobile app, and once they have confirmed run {entry} login finish. That one "
+            "scan also covers CLS. Ask for nothing else until Feishu is ok")
+
+
+def _prune(args: list[str]) -> dict:
+    """
+    Housekeeping for a host: removes this user's batches and temporary files nobody has touched for the retention period (never the CLS
+    login under cls/), and says how much went.
+    """
+    from .paths import resolve_data_paths
+    from .retention import prune_expired
+
+    _parse(args, {})
+    pruned = prune_expired(resolve_data_paths())
+    return {"status": "ok", "files": pruned.files, "bytes": pruned.bytes}
 
 
 def _login_check(bridge: Any, via: Any) -> dict:
     """
     The two logins, checked for real: Feishu by asking Feishu, CLS by looking in the browser that holds its session. Each task starts with
-    this, and so does each stage that follows a wait (see SKILL.md), so that a login that has lapsed is found before any work depends on it.
+    this, and so does each stage that follows a wait, so that a login that has lapsed is found before any work depends on it.
     It changes nothing and takes nothing from the user; what to do about a failure is the caller's business.
 
     Feishu comes first and the user is asked for one login at a time: while the Feishu login is missing, CLS is not looked at (no browser is
@@ -348,8 +377,7 @@ def _login_check(bridge: Any, via: Any) -> dict:
         return {
             "status": "login_required", "feishu": feishu,
             "cls": {"status": "not_checked", "reason": "Feishu login comes first; CLS is checked after it"},
-            "todo": ["Feishu: log the user in with your feishu_login tool (its QR image goes to the user only, to scan with the Feishu phone app), "
-                     "then feishu_login_finish once they have confirmed. That one scan also covers CLS. Ask for nothing else until Feishu is ok"],
+            "todo": [_feishu_login_todo(feishu)],
         }
     cls = check(via)
     sides = [feishu["status"], cls["status"]]
@@ -364,7 +392,8 @@ def _login_check(bridge: Any, via: Any) -> dict:
         state = "unknown"
     result: dict[str, Any] = {"status": state, "feishu": feishu, "cls": cls}
     if state == "login_required":
-        result["todo"] = ["CLS: run gof cls login --qr cls-login.png and send the QR image to the user only, to scan with the Feishu phone app"]
+        result["todo"] = ["CLS: run gof cls login --qr <new file>.png and send the QR image to the user only, to scan with the Feishu mobile app; "
+                          "once they have confirmed, run gof cls session"]
     return result
 
 
@@ -404,8 +433,10 @@ def main(argv: list[str], bridge: Any = None, via: Any = None) -> dict:
             result = _cls_online_command(command, rest, via) if command in CLS_ONLINE else _cls_command(argv[1:])
         elif group == "creative":
             result = _creative_command(command, rest, bridge, via)
+        elif group == "prune":
+            result = _prune(argv[1:])
         else:
-            raise Blocked("用法：gof.py <batch|feishu|cls|creative|login> <命令> [参数]")
+            raise Blocked("usage: gof.py <batch|feishu|cls|creative|login|prune> <command> [options]")
         status = result.get("status") if isinstance(result, dict) else None
         blocked = (status in ("conflict", "not_applied") or (status == "partial" and group != "creative")
                    or (group == "feishu" and status == "blocked") or (group == "login" and status != "ok")

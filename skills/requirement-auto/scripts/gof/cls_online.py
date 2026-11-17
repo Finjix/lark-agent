@@ -1,4 +1,4 @@
-"""The commands that go online: `gof cls login | session | catalog | observe | run | read-draft | verify` (cls-online.ts).
+"""The commands that go online: `gof cls login | session | catalog | observe | run | read-draft | verify`.
 
 Each one gets a session by itself (the login kept in this user's browser profile), does its work over HTTP with the token it saw, and
 forgets the token when it ends. The batch rules are unchanged: a write needs its recorded attempt first, and the result of a write is only
@@ -102,7 +102,7 @@ def login_with_qr(online: Online, file: str) -> dict:
     """
     from .cls_session import unreachable_reason
 
-    need(re.search(r"\.png\Z", file, re.IGNORECASE), "二维码文件需要是 .png")
+    need(re.search(r"\.png\Z", file, re.IGNORECASE), "the QR file must be a .png")
     quiet = online.capture(12_000)
     if quiet["state"] == "ok":
         return {"status": "logged_in", "account": _account(quiet["account"])}
@@ -111,17 +111,17 @@ def login_with_qr(online: Online, file: str) -> dict:
     # A code scanned while CLS cannot be reached would not log anybody in.
     if quiet["state"] == "unreachable":
         raise Blocked(unreachable_reason(quiet["reason"]))
-    need(online.login_qr is not None, "这个环境不能用二维码登录")
+    need(online.login_qr is not None, "this environment cannot log in with a QR code")
     outcome = online.login_qr(os.path.abspath(file))  # type: ignore[misc]
     if outcome["state"] == "not_login_page":
         return {"status": "no_qr", "where": outcome["where"],
-                "message": "页面没有停在登录二维码上（可能已经登录，或正在跳转）；先运行 gof cls session 看一眼，仍未登录再重新运行本命令"}
+                "message": "the page did not stop on a sign-in QR code (already logged in, or still redirecting): run gof cls session first, and run this command again only if it is still not logged in"}
     expected = online.expected_account()
     result: dict[str, Any] = {"status": "qr_ready", "qr_file": outcome["file"]}
     if expected:
         result["expected_account"] = expected["name"]
-    hint = f"（账号应为“{expected['name']}”）" if expected else ""
-    result["message"] = f"二维码已生成。把它发给用户，请其用飞书手机端扫码并在手机上确认{hint}；二维码几分钟后失效，失效就重新运行本命令。用户说已确认后运行 gof cls session"
+    hint = f" (the account must be \"{expected['name']}\")" if expected else ""
+    result["message"] = f"QR code saved. Send it to the user to scan with the Feishu mobile app and confirm on the phone{hint}; it expires in a few minutes (then run this command again). Once the user says they confirmed, run gof cls session"
     return result
 
 
@@ -154,7 +154,7 @@ def catalog(online: Online, output: str) -> dict:
     from .cls import catalog_choices
 
     file = os.path.abspath(output)
-    need(not os.path.exists(file), "目录文件已存在，不覆盖")
+    need(not os.path.exists(file), "the catalog file exists already and is not overwritten")
     session = online.session()
     result = _adapter_for(session).read_catalog()
     reject_secrets(result)
@@ -170,16 +170,16 @@ def observe(online: Online, action: str, output: str, draft_id: Optional[int] = 
     the import endpoint only adds scripts to the draft (publishing is a different, forbidden call) and the read-back after the import fails
     if the draft is no longer unpublished.
     """
-    need(action in ("save_draft", "import_scripts"), "只允许草稿创建和脚本导入")
+    need(action in ("save_draft", "import_scripts"), "only save_draft and import_scripts are allowed")
     file = os.path.abspath(output)
-    need(not os.path.exists(file), "观察文件已存在，不覆盖")
+    need(not os.path.exists(file), "the observations file exists already and is not overwritten")
     session = online.session()
     api = _adapter_for(session)
     current = api.read_catalog()
     if action == "save_draft":
         observations = {"logged_in": True, "can_create": current["can_create"], "unpublished": True, "save_result": "none", "required_complete": True}
     else:
-        need(js.is_safe_int(draft_id) and draft_id > 0, "导入需要 --draft 草稿 ID")
+        need(js.is_safe_int(draft_id) and draft_id > 0, "import_scripts needs --draft <draft ID>")
         parent = api.read_draft(draft_id)
         observations = {
             "logged_in": True, "can_create": current["can_create"], "unpublished": parent.get("status") == -2, "draft_saved": True, "save_result": "ok",
@@ -196,10 +196,10 @@ def _load_operation(batch_dir: str, operation_file: str) -> tuple[str, dict, dic
 
     batch_path, manifest = load_batch(batch_dir)
     operation_path = os.path.abspath(operation_file)
-    need(is_inside(batch_path, operation_path), "操作文件必须位于本批目录")
+    need(is_inside(batch_path, operation_path), "the operation file must be inside the batch directory")
     op = read_json(operation_path)
     check_seal(op, "operation_id")
-    need(op.get("plan_id") == manifest["plan"]["plan_id"], "操作文件不属于本批")
+    need(op.get("plan_id") == manifest["plan"]["plan_id"], "the operation file is not of this batch")
     return batch_path, manifest, op, operation_path
 
 
@@ -212,27 +212,27 @@ def run(online: Online, batch_dir: str, operation_file: str, output: str) -> dic
 
     batch_path, _, op, _ = _load_operation(batch_dir, operation_file)
     receipt_path = os.path.abspath(output)
-    need(is_inside(batch_path, receipt_path) and not os.path.exists(receipt_path), "接口记录须新建于本批目录内")
+    need(is_inside(batch_path, receipt_path) and not os.path.exists(receipt_path), "the receipt must be a new file inside the batch directory")
     os.makedirs(os.path.dirname(receipt_path), exist_ok=True)  # before the write: a failure to save the receipt must not come after it
     attempts = [e for e in events(batch_path) if e.get("group") == op.get("group") and e["step"] == "cls_api_attempt"
                 and e["evidence"].get("operation_id") == op.get("operation_id")]
-    need(len(attempts) == 1, "先用 batch record --step cls_api_attempt 记录本次尝试")
+    need(len(attempts) == 1, "record this attempt first with batch record --step cls_api_attempt")
     marker = os.path.join(batch_path, f"cls-sent-{js.to_str(op.get('operation_id'))[:16]}.json")
     session = online.session()
-    need(session["account"]["id"] == op.get("account_id"), "当前登录的 CLS 账号与操作文件不是同一个")
+    need(session["account"]["id"] == op.get("account_id"), "the CLS account logged in now is not the one of the operation file")
 
     def before_write(operation: dict) -> None:
         try:
             write_json_new(marker, {"operation_id": operation["operation_id"], "action": operation["action"], "at": js.iso()})
         except Exception:
-            raise ClsError("本操作已经发出过写请求；先用 read-draft 回读核对，不重发", "unknown") from None
+            raise ClsError("this operation's write was sent already: read the draft back with read-draft; it is never sent again", "unknown") from None
 
     api = _adapter_for(session, before_write)
     receipt = api.create_draft(op) if op.get("action") == "save_draft" else api.import_scripts(op)
     try:
         write_json_new(receipt_path, receipt)
     except Exception as error:
-        lost = ClsError(f"写请求已成功，但接口记录没能保存：{error}；先用 cls read-draft / cls verify 回读核对，不重发", "unknown")
+        lost = ClsError(f"the write succeeded but its receipt could not be saved: {error}; read back with cls read-draft / cls verify; it is never sent again", "unknown")
         lost.draft_id = receipt["parent"]["id"]
         lost.operation_id = op.get("operation_id")
         raise lost from None
@@ -243,7 +243,7 @@ def run(online: Online, batch_dir: str, operation_file: str, output: str) -> dic
 
 
 def read_draft(online: Online, draft_id: int) -> dict:
-    need(js.is_safe_int(draft_id) and draft_id > 0, "需要 --id 草稿 ID")
+    need(js.is_safe_int(draft_id) and draft_id > 0, "--id <draft ID> is needed")
     return {"status": "draft", "draft": _adapter_for(online.session()).read_draft(draft_id)}
 
 
@@ -251,10 +251,10 @@ def verify_draft(online: Online, batch_dir: str, operation_file: str, draft_id: 
     """A read-only receipt for a draft that is already there, for recovering after a write whose outcome was not known."""
     batch_path, _, op, _ = _load_operation(batch_dir, operation_file)
     receipt_path = os.path.abspath(output)
-    need(is_inside(batch_path, receipt_path) and not os.path.exists(receipt_path), "接口记录须新建于本批目录内")
-    need(js.is_safe_int(draft_id) and draft_id > 0, "需要 --draft 草稿 ID")
+    need(is_inside(batch_path, receipt_path) and not os.path.exists(receipt_path), "the receipt must be a new file inside the batch directory")
+    need(js.is_safe_int(draft_id) and draft_id > 0, "--draft <draft ID> is needed")
     session = online.session()
-    need(session["account"]["id"] == op.get("account_id"), "当前登录的 CLS 账号与操作文件不是同一个")
+    need(session["account"]["id"] == op.get("account_id"), "the CLS account logged in now is not the one of the operation file")
     receipt = _adapter_for(session).verify(op, draft_id)
     write_json_new(receipt_path, receipt)
     return {"status": "receipt_saved", "receipt": receipt_path, "action": op["action"], "draft_id": receipt["parent"]["id"],

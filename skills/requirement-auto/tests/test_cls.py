@@ -1,5 +1,4 @@
-"""CLS: operations and receipts, the online commands, the login guards, `login check` and the profile lock
-(gof-cls.test.ts, cls-online.test.ts, cls-guard.test.ts, login-check.test.ts, browser-lock.test.ts)."""
+"""CLS: operations and receipts, the online commands, the login guards, `login check` and the profile lock."""
 
 from __future__ import annotations
 
@@ -151,8 +150,8 @@ class OperationTests(unittest.TestCase):
             raise FetchError("no network")
 
         adapter = ClsAdapter("https://creative.centurygames.cn", "Bearer test", fetch=no_network)
-        self.assertRaisesRegex(ClsError, "操作文件摘要错误", adapter.create_draft, {**op, "operation_id": "0" * 64})
-        self.assertRaisesRegex(ClsError, "CLS 读取失败", adapter.create_draft, op)
+        self.assertRaisesRegex(ClsError, "the operation file's digest is wrong", adapter.create_draft, {**op, "operation_id": "0" * 64})
+        self.assertRaisesRegex(ClsError, "CLS request failed", adapter.create_draft, op)
 
     def test_gateway_page(self) -> None:
         """A write answered 2xx without a business code (a gateway page) is an unknown result, not a refusal."""
@@ -170,7 +169,7 @@ class OperationTests(unittest.TestCase):
                 adapter.create_draft(op)
             self.assertEqual(caught.exception.kind, "unknown")
             self.assertEqual(caught.exception.operation_id, op["operation_id"])
-            self.assertRegex(caught.exception.message, r"写入结果未知（HTTP 200，响应没有业务码）")
+            self.assertRegex(caught.exception.message, r"write result unknown \(HTTP 200, the answer has no business code\)")
         finally:
             cls.close()
 
@@ -191,10 +190,10 @@ class OperationTests(unittest.TestCase):
         """The CLS requirement name is the first and last material number of the group, and is never taken from the request."""
         self.assertEqual(requirement_name(["GOFCN67294_a", "GOFCN67295_a", "GOFCN67299_a"]), "GOFCN67294-GOFCN67299")
         self.assertEqual(requirement_name(["GOFCN67294_a"]), "GOFCN67294")
-        self.assertEqual(reason(lambda: requirement_name(["无编号"])), "素材名称缺少 GOFCN 编号，无法生成需求名称")
+        self.assertEqual(reason(lambda: requirement_name(["无编号"])), "a 素材名称 has no GOFCN number: no requirement name can be made")
         given = copy.deepcopy(REQUEST)
         given["groups"][0]["cls"]["requirement_name"] = "手填"
-        self.assertEqual(reason(lambda: cls_preview(given, CATALOG)), "CLS 需求名称由该组素材编号生成（GOFCN首号-GOFCN末号），不接受输入")
+        self.assertEqual(reason(lambda: cls_preview(given, CATALOG)), "cls.requirement_name is not accepted: it is made from the group's numbers (GOFCN<first>-GOFCN<last>)")
 
     def test_short_names(self) -> None:
         """CLS names are found from the short names the progress sheet uses, and exactly one may match."""
@@ -224,11 +223,11 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(names("", "张三")["supplier"], "待定供应商")
         # The exact name wins over a longer one that contains it.
         self.assertEqual(names("供应商甲", "张三")["creator"], "张三")
-        self.assertEqual(reason(lambda: names("供应商甲", "李达")), "创意人 不存在或匹配不唯一，需在计划前澄清")
-        self.assertEqual(reason(lambda: names("廿十一", "张三")), "供应商 不存在或匹配不唯一，需在计划前澄清")
+        self.assertEqual(reason(lambda: names("供应商甲", "李达")), "CLS creator: 2 matches; settle it before the plan")
+        self.assertEqual(reason(lambda: names("廿十一", "张三")), "CLS supplier: nothing matches; settle it before the plan")
         # When the spelling differs, the request names the CLS user exactly; then nothing else is tried.
         self.assertEqual(names("廿十一", "李达", {"supplier": "长沙廿拾一文化传媒有限公司", "creator": "李达甲"})["creator"], "李达甲")
-        self.assertEqual(reason(lambda: names("丁杰", "张三", {"supplier": "丁杰"})), "供应商 不存在或匹配不唯一，需在计划前澄清")
+        self.assertEqual(reason(lambda: names("丁杰", "张三", {"supplier": "丁杰"})), "CLS supplier: nothing matches; settle it before the plan")
         r = copy.deepcopy(REQUEST)
         r["groups"][0]["cls"]["supplier"] = "长沙廿拾一文化传媒有限公司"
         payload = cls_preview(r, wide)["groups"][0]["payload"]
@@ -317,7 +316,7 @@ class OnlineTests(unittest.TestCase):
             # The picture of the draft is taken from the batch's own record: the draft the scripts went into.
             self.assertEqual(draft_of(directory, "01"), {"group": "01", "id": 5001, "url": "https://creative.centurygames.cn/requirement/5001/edit-outer"})
             self.assertEqual(draft_of(directory, None), draft_of(directory, "01"))
-            self.assertRaisesRegex(Blocked, "没有分组 99", draft_of, directory, "99")
+            self.assertRaisesRegex(Blocked, "has no group 99", draft_of, directory, "99")
 
             # Only Authorization was sent, only to the allowed paths, and nothing was ever published or deleted.
             self.assertTrue(all(r["authorization"] == "Bearer good" for r in cls.requests))
@@ -341,12 +340,12 @@ class OnlineTests(unittest.TestCase):
             self.ok(["cls", "run", "--batch", directory, "--operation", save, "--output", os.path.join(directory, "r1.json")], via)
             again = main(["cls", "run", "--batch", directory, "--operation", save, "--output", os.path.join(directory, "r2.json")], None, via)
             self.assertEqual(again["code"], 2)
-            self.assertRegex(again["result"]["reason"], "已经发出过写请求")
+            self.assertRegex(again["result"]["reason"], "write was sent already")
             self.assertEqual(len([r for r in cls.requests if r["method"] == "POST"]), 1)
             # A different account than the one the operation was built for is refused before anything is sent.
             other = session_of(cls.origin, account={"id": 99, "name": "别人"})
             wrong = main(["cls", "run", "--batch", directory, "--operation", save, "--output", os.path.join(directory, "r3.json")], None, other)
-            self.assertRegex(wrong["result"]["reason"], "不是同一个")
+            self.assertRegex(wrong["result"]["reason"], "is not the one of the operation file")
         finally:
             cls.close()
 
@@ -366,7 +365,7 @@ class OnlineTests(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(directory, "r1.json")))
             cls.post_mode = "normal"
             retry = main(["cls", "run", "--batch", directory, "--operation", save, "--output", os.path.join(directory, "r2.json")], None, via)
-            self.assertRegex(retry["result"]["reason"], "已经发出过写请求")
+            self.assertRegex(retry["result"]["reason"], "write was sent already")
             self.assertEqual(len([r for r in cls.requests if r["method"] == "POST"]), 1, "the second run never reached the server")
         finally:
             cls.close()
@@ -396,7 +395,7 @@ class OnlineTests(unittest.TestCase):
         """Without a login every online command stops with the instruction to log in, and nothing is sent."""
         cls = FakeCls(CATALOG)
         try:
-            logged_out = ScriptedOnline(session=Blocked("CLS 未登录或登录已过期：先运行 gof cls login --qr <png文件> 生成登录二维码，交给用户用飞书手机端扫码"))
+            logged_out = ScriptedOnline(session=Blocked("CLS is not logged in or the login has expired: run gof cls login --qr <file.png> and give the QR image to the user to scan with the Feishu mobile app"))
             for args in (["cls", "session"], ["cls", "read-draft", "--id", "1"], ["cls", "catalog", "--output", os.path.join(temp_dir("cls-none-"), "c.json")]):
                 answer = main(args, None, logged_out)
                 self.assertEqual(answer["code"], 2)
@@ -417,7 +416,7 @@ class OnlineTests(unittest.TestCase):
         png = os.path.join(temp_dir("cls-qr-"), "q.png")
         answer = main(["cls", "login", "--qr", png], None, online)
         self.assertEqual([answer["code"], answer["result"]["status"], len(made), os.path.exists(png)], [2, "blocked", 0, False])
-        self.assertRegex(answer["result"]["reason"], "HTTP 502.*不说明登录失效")
+        self.assertRegex(answer["result"]["reason"], "HTTP 502.*the login has not lapsed")
 
     def test_qr_already_logged_in(self) -> None:
         """cls login --qr: a login that is already there is picked up by one hidden look, and no token is ever printed."""
@@ -455,10 +454,10 @@ def scripted(*answers: dict) -> ScriptedOnline:
 
 
 def fake_feishu_info(directory: str) -> str:
-    """A stand-in for lark-agent's feishu.py that answers `bridge info` with the user's browser profile."""
+    """A stand-in for the feishu skill's feishu.py that answers `bridge info` with the user's browser profile."""
     return py_script(directory, "feishu.py", "import json, os, sys\n"
                      "sys.stdin.read()\n"
-                     "user = os.environ.get('LARK_AGENT_USER_DIR', '')\n"
+                     "user = os.environ.get('AGENT_USER_DIR', '')\n"
                      "print(json.dumps({'ok': True, 'data': {'bridge': 'feishu-sdk-bridge/1', 'browser_profile': os.path.join(user, 'feishu', 'browser-profile')}}))\n")
 
 
@@ -467,11 +466,11 @@ PNG = bytes.fromhex("89504e470d0a1a0a")
 
 class GuardTests(unittest.TestCase):
     def test_profiles_per_user(self) -> None:
-        """Each user has their own CLS profile and account file under their own directory; the browser is the Feishu module's."""
+        """Each user has their own CLS profile and account file under their own directory; the browser is the feishu skill's."""
         fake = fake_feishu_info(temp_dir("ra-feishu-"))
         a, b = temp_dir("ra-cls-a-"), temp_dir("ra-cls-b-")
-        env_a = {**os.environ, "LARK_AGENT_USER_DIR": a, "LARK_AGENT_FEISHU": fake}
-        env_b = {**os.environ, "LARK_AGENT_USER_DIR": b, "LARK_AGENT_FEISHU": fake}
+        env_a = {**os.environ, "AGENT_USER_DIR": a, "FEISHU_CLI": fake}
+        env_b = {**os.environ, "AGENT_USER_DIR": b, "FEISHU_CLI": fake}
         self.assertEqual(cls_profile_dir(env_a), os.path.join(a, "feishu", "browser-profile"))
         self.assertEqual(cls_profile_dir(env_b), os.path.join(b, "feishu", "browser-profile"))
         self.assertEqual(cls_account_file(env_a), os.path.join(a, "requirement-auto", "cls", "account.json"))
@@ -482,11 +481,11 @@ class GuardTests(unittest.TestCase):
 
     def test_host_without_directory(self) -> None:
         """A host that names the user but not the directory is refused instead of sharing one folder."""
-        self.assertRaisesRegex(Blocked, "LARK_AGENT_USER_DIR", resolve_data_paths, {"LARK_AGENT_USER_OPEN_ID": "ou_alice"}, temp_dir("ra-home-"))
-        self.assertRaisesRegex(Blocked, "LARK_AGENT_USER_DIR", cls_account_file, {"LARK_AGENT_USER_DIR": "", "LARK_AGENT_USER_OPEN_ID": "ou_alice"})
+        self.assertRaisesRegex(Blocked, "AGENT_USER_DIR", resolve_data_paths, {"AGENT_USER_OPEN_ID": "ou_alice"}, temp_dir("ra-home-"))
+        self.assertRaisesRegex(Blocked, "AGENT_USER_DIR", cls_account_file, {"AGENT_USER_DIR": "", "AGENT_USER_OPEN_ID": "ou_alice"})
         # The single-machine modes are unchanged.
         self.assertEqual(resolve_data_paths({}, temp_dir("ra-home-")).mode, "standalone")
-        self.assertEqual(resolve_data_paths({"LARK_AGENT_USER_OPEN_ID": "ou_alice", "LARK_AGENT_USER_DIR": temp_dir("ra-u-")}).mode, "host")
+        self.assertEqual(resolve_data_paths({"AGENT_USER_OPEN_ID": "ou_alice", "AGENT_USER_DIR": temp_dir("ra-u-")}).mode, "host")
 
     def test_pin(self) -> None:
         """The first CLS account is pinned, the same one passes, another is refused without naming it."""
@@ -497,7 +496,7 @@ class GuardTests(unittest.TestCase):
         check_pin(file, {"id": 7, "name": "张三（改名）"})  # the same account under a new display name
         with self.assertRaises(Blocked) as caught:
             check_pin(file, BOB)
-        self.assertTrue("张三" in caught.exception.message and "李四" not in caught.exception.message and "管理员" in caught.exception.message)
+        self.assertTrue("张三" in caught.exception.message and "李四" not in caught.exception.message and "administrator" in caught.exception.message)
         self.assertEqual(read_pin(file)["id"], 7, "a refused login does not replace the pin")
         with open(file, encoding="utf-8") as handle:
             self.assertNotRegex(handle.read().lower(), "authorization|token|secret", "the pin holds id and name only")
@@ -510,7 +509,7 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(read_pin(file), {"id": 1565, "name": "钟丰骏", "pinned_at": "2026-10-20T08:00:00.000Z"}, "renamed, pinned as before")
         check_pin(file, {"id": 1565, "name": ""})
         self.assertEqual(read_pin(file)["name"], "钟丰骏", "a login that gives no name changes nothing")
-        self.assertRaisesRegex(Blocked, "已绑定为“钟丰骏”", check_pin, file, BOB)
+        self.assertRaisesRegex(Blocked, "bound to the account \"钟丰骏\"", check_pin, file, BOB)
         self.assertEqual(os.listdir(os.path.dirname(file)), ["account.json"], "nothing is left beside the pin")
 
     def test_pin_through_commands(self) -> None:
@@ -522,7 +521,7 @@ class GuardTests(unittest.TestCase):
         self.assertEqual([first["code"], first["result"]["status"], read_pin(pin_file)["id"]], [0, "logged_in", 7])
         wrong = main(["cls", "login", "--qr", png], None, guard_online(scripted(ok_capture(BOB)), pin_file))
         self.assertEqual(wrong["code"], 2)
-        self.assertRegex(wrong["result"]["reason"], "已绑定为“张三”")
+        self.assertRegex(wrong["result"]["reason"], "bound to the account \"张三\"")
         self.assertEqual(main(["cls", "session"], None, guard_online(scripted(ok_capture(BOB)), pin_file))["code"], 2)
         self.assertEqual(main(["cls", "session"], None, guard_online(scripted(ok_capture(ALICE)), pin_file))["code"], 0)
         text = json.dumps([first, wrong], ensure_ascii=False)
@@ -565,7 +564,7 @@ class GuardTests(unittest.TestCase):
         check_pin(os.path.join(directory, "account.json"), ALICE)
         made = main(["cls", "login", "--qr", png], None, guarded())
         self.assertEqual([made["code"], made["result"]["status"], made["result"]["qr_file"], made["result"]["expected_account"]], [0, "qr_ready", os.path.abspath(png), "张三"])
-        self.assertRegex(made["result"]["message"], "扫码")
+        self.assertRegex(made["result"]["message"], "to scan")
         self.assertTrue(os.path.exists(png) and os.path.exists(record_file))
         self.assertNotIn("secret-token", json.dumps(made), "no token anywhere in what is printed")
 
@@ -642,7 +641,7 @@ class ClsSaying(ScriptedOnline):
     def capture(self, wait_ms: int) -> dict:
         self.looked += 1
         if self._state == "pin":
-            raise Blocked("这个用户的 CLS 账号已绑定为“张三”，这次登录的是另一个账号，已拒绝。")
+            raise Blocked("this user's CLS login is bound to the account \"张三\" and another account logged in, so it is refused.")
         return {"state": self._state, "authorization": "secret-token-1", "account": {"id": 7, "name": "张三"}, **self._extra}
 
 
@@ -657,7 +656,7 @@ class LoginCheckTests(unittest.TestCase):
         feishu_gone = main(["login", "check"], bridge_saying(fail("auth_required", "飞书登录已失效")), not_looked)
         self.assertEqual([feishu_gone["code"], feishu_gone["result"]["status"], feishu_gone["result"]["feishu"]["status"]], [2, "login_required", "login_required"])
         self.assertEqual(len(feishu_gone["result"]["todo"]), 1)
-        self.assertRegex(feishu_gone["result"]["todo"][0], "feishu_login")
+        self.assertRegex(feishu_gone["result"]["todo"][0], "feishu skill.*login qr")
         self.assertEqual(feishu_gone["result"]["cls"]["status"], "not_checked", "CLS waits for Feishu")
         self.assertEqual(not_looked.looked, 0, "no browser is started while Feishu is not logged in")
         cls_gone = main(["login", "check"], bridge_saying(GOOD_FEISHU), ClsSaying("login_required"))
@@ -666,7 +665,7 @@ class LoginCheckTests(unittest.TestCase):
         neither_cls = ClsSaying("login_required")
         neither = main(["login", "check"], bridge_saying(fail("auth_required")), neither_cls)
         self.assertEqual(len(neither["result"]["todo"]), 1, "one login at a time: Feishu first")
-        self.assertRegex(neither["result"]["todo"][0], "feishu_login")
+        self.assertRegex(neither["result"]["todo"][0], "feishu skill.*login qr")
         self.assertEqual(neither_cls.looked, 0)
         missing = main(["login", "check"], bridge_saying({"ok": True, "data": {"logged_in": True, "name": "李小明", "missing_scopes": ["wiki:wiki:readonly"]}}), ClsSaying("ok"))
         self.assertEqual([missing["result"]["status"], missing["result"]["feishu"]["status"], missing["result"]["feishu"]["missing_scopes"]],
@@ -677,7 +676,7 @@ class LoginCheckTests(unittest.TestCase):
         """A problem that logging in again cannot fix is "blocked", and not being able to reach Feishu is not a lapsed login."""
         wrong = main(["login", "check"], bridge_saying(GOOD_FEISHU), ClsSaying("pin"))
         self.assertEqual([wrong["code"], wrong["result"]["status"], wrong["result"]["cls"]["status"]], [2, "blocked", "blocked"])
-        self.assertRegex(wrong["result"]["cls"]["reason"], "已绑定")
+        self.assertRegex(wrong["result"]["cls"]["reason"], "bound to the account")
         self.assertNotIn("todo", wrong["result"], "a wrong account is not fixed by asking for another scan")
         refused = main(["login", "check"], bridge_saying(GOOD_FEISHU), ClsSaying("consent_refused", reason="飞书授权页请求的不是 dsc_admin，没有点击"))
         self.assertEqual([refused["result"]["status"], refused["result"]["cls"]["status"]], ["blocked", "blocked"])
@@ -694,7 +693,7 @@ class LoginCheckTests(unittest.TestCase):
         """CLS out of reach is "unknown" and asks nobody to scan, as Feishu out of reach is."""
         cls = main(["login", "check"], bridge_saying(GOOD_FEISHU), ClsSaying("unreachable", reason="连接失败"))
         self.assertEqual([cls["code"], cls["result"]["status"], cls["result"]["cls"]["status"], cls["result"].get("todo")], [2, "unknown", "unknown", None])
-        self.assertRegex(cls["result"]["cls"]["reason"], "连接失败.*不说明登录失效")
+        self.assertRegex(cls["result"]["cls"]["reason"], "连接失败.*the login has not lapsed")
 
     def test_no_token(self) -> None:
         """login check never prints a token."""
@@ -743,7 +742,7 @@ class LockTests(unittest.TestCase):
         """A profile is used by one command at a time: another process holding it is waited for, and given up on with a clear reason."""
         profile_dir = os.path.join(temp_dir("ra-lock-"), "browser-profile")
         write_file(lock_of(profile_dir), json.dumps({"pid": os.getpid(), "at": js.now_ms()}))
-        self.assertRaisesRegex(Blocked, "另一个命令使用", lock_profile, profile_dir, 300)
+        self.assertRaisesRegex(Blocked, "in use by another command", lock_profile, profile_dir, 300)
         threading.Timer(0.3, lambda: os.remove(lock_of(profile_dir))).start()
         release = lock_profile(profile_dir, 5_000)
         self.assertTrue(os.path.exists(lock_of(profile_dir)), "held now by this process")
@@ -779,7 +778,7 @@ class LockTests(unittest.TestCase):
         try:
             profile_dir = os.path.join(temp_dir("ra-lock-"), "browser-profile")
             port_file = write_file(os.path.join(profile_dir, "DevToolsActivePort"), f"{server.port}\n/devtools/browser/abc")
-            self.assertRaisesRegex(Blocked, "调试接口没有响应", open_browser, os.path.join(profile_dir, "no-such-browser.exe"), profile_dir)
+            self.assertRaisesRegex(Blocked, "DevTools port does not answer", open_browser, os.path.join(profile_dir, "no-such-browser.exe"), profile_dir)
             self.assertTrue(os.path.exists(port_file), "the running browser can still be found")
             self.assertFalse(os.path.exists(lock_of(profile_dir)), "and the refusal let go of the lock")
         finally:
@@ -795,7 +794,7 @@ class LockTests(unittest.TestCase):
         port = probe.getsockname()[1]
         probe.close()
         write_file(os.path.join(profile_dir, "DevToolsActivePort"), f"{port}\n/devtools/browser/abc")
-        self.assertRaisesRegex(Blocked, "浏览器没有启动成功", open_browser, os.path.join(profile_dir, "no-such-browser.exe"), profile_dir)
+        self.assertRaisesRegex(Blocked, "the browser did not start", open_browser, os.path.join(profile_dir, "no-such-browser.exe"), profile_dir)
         self.assertFalse(os.path.exists(lock_of(profile_dir)))
 
     def test_stale_renewal(self) -> None:
@@ -825,7 +824,7 @@ class LockTests(unittest.TestCase):
         try:
             profile_dir = os.path.join(temp_dir("ra-lock-"), "browser-profile")
             write_file(os.path.join(profile_dir, "DevToolsActivePort"), f"{server.port}\n/devtools/browser/abc")
-            self.assertRaisesRegex(Blocked, "浏览器没有启动成功", open_browser, os.path.join(profile_dir, "no-such-browser.exe"), profile_dir)
+            self.assertRaisesRegex(Blocked, "the browser did not start", open_browser, os.path.join(profile_dir, "no-such-browser.exe"), profile_dir)
             self.assertFalse(os.path.exists(lock_of(profile_dir)))
         finally:
             server.close()

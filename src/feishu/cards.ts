@@ -69,7 +69,7 @@ export function cardElements(task:Task,content:string){
   return fit(elements);
 }
 export function cardJson(task:Task,content:string,streaming=!terminal(task.status),now=Date.now()){
-  const title=`番薯搬砖中...... ${elapsedSeconds(task,now)}s`;
+  const title=`小薯思考中 - ${elapsedSeconds(task,now)}s`;
   return {schema:'2.0',config:{update_multi:true,streaming_mode:streaming,summary:{content:working(task)?title:messageSummary(content)}},
     ...(working(task)?{header:{title:{tag:'plain_text',content:title},template:'green'}}:{}),
     body:{elements:cardElements(task,content)}};

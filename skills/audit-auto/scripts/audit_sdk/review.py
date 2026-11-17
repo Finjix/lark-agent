@@ -1,12 +1,12 @@
-"""Reviewing material (port of review.ts).
+"""Reviewing material.
 
 Images are not sent anywhere: they are handed back (`images`, each with a path that outlives the run) for the agent to review itself
 against the same spec. Each video goes to Gemini once, inline, with the project's rules (fixed spec plus dynamic spec) as the system instruction, and
 comes back as a list of problems — where, what, how to fix — that is rendered as Markdown for the reply. The model also writes out
 every subtitle and spoken line first: most rejections are one wrong word, and transcribing makes it read every word before it judges any.
 
-A file's result is a dict: name, status ('reviewed' | 'failed'), reason?, media ('video' | 'image'), duration?, orientation?,
-compressed, warning?, findings {summary, kind, lines: [{time, source, text}], issues: [{level, time, where, problem, rule, fix}]},
+A file's result is a dict: name, status ('reviewed' | 'failed'), reason?, media ('video'), duration?, orientation?
+('landscape' | 'portrait' | 'square'), compressed, findings {summary, kind, lines: [{time, source, text}], issues: [{level, time, where, problem, rule, fix}]},
 verdict, ms, usage.
 """
 
@@ -26,12 +26,15 @@ from typing import Any, Callable
 from .errors import Blocked, message_of, need
 from .gemini import JsonRequest, Model, Part
 from .jsutil import js_round, to_fixed
-from .media import MB, Prepared, kind_of, prepare, refusal
+from .media import FPS, MB, Prepared, kind_of, prepare, refusal
 from .projects import Project, fixed_spec
 from .rules import load_book, prompt_rules
 from .unzip import unpack_zip
 
+#: The levels of a finding, as the reply shows them: red line, must fix, to be confirmed.
 LEVELS = ["红线", "要改", "需确认"]
+#: How the reply names a video's orientation.
+ORIENTATION = {"landscape": "横版", "portrait": "竖版", "square": "方版"}
 FileResult = dict[str, Any]
 Findings = dict[str, Any]
 
@@ -58,11 +61,11 @@ def review_system(project: Project, fixed: str, dynamic: str) -> str:
         "1. Go through the whole material: every second of the picture and of the sound. Read all text on screen (subtitles, titles, captions, stickers, game UI, buttons, comment and chat screenshots, nicknames, gift codes, small print) and listen to the voice-over, the dialogue and any lyrics. Look at the people (faces, clothes, gestures), logos and brands, the game footage, icons, arrows and buttons, and at how the material opens, how its parts join and how it ends.",
         "2. First write out every subtitle, caption and spoken or sung line in lines, word for word. Then judge.",
         "3. Report only breaches of the rules, including something the rules require that is missing or incomplete (a required disclaimer, say). Do not report what complies and do not invent rules: taste is not a problem.",
-        "4. When the material cannot tell you whether a rule is broken (whether a person is a celebrity or has signed a portrait release, whether a hero has been released on the China server, whether the music is a hit song), or the rules leave the case open, report it at level 需确认 and say what to check and with whom (投放 or the review group).",
+        "4. When the material cannot tell you whether a rule is broken (whether a person is a celebrity or has signed a portrait release, whether a hero has been released on the China server, whether the music is a hit song), or the rules leave the case open, report it at level 需确认 (to be confirmed) and say what to check and with whom (投放, the media buyers, or the review group).",
         "5. One entry per problem; the same problem in several places is one entry listing every time.",
-        "6. time: mm:ss–mm:ss (several joined with 、), 全片 for the material as a whole, empty for an image or the file name. where: the place on screen (画面左上角, 底部字幕, 中下提示语位置 …) or the track (口播, 台词, BGM), or 文件名.",
+        "6. time: mm:ss–mm:ss (several joined with 、), 全片 for the material as a whole, empty for the file name. where: the place on screen (画面左上角, 底部字幕, 中下提示语位置 …) or the track (口播, 台词, BGM), or 文件名 (the file name).",
         "7. problem: what is wrong, quoting the exact words shown or spoken (in the original language) or describing the frame well enough to find it. rule: the rule broken, short (字幕和口播 · 防沉迷, 动态规范 D3 …). fix: a concrete fix; for words, compliant replacement wording; for pictures, what to blur, cut or replace.",
-        "8. level: 红线 for the red-line categories (the section of the fixed spec whose title says 红线, or a dynamic rule marked 红线); 要改 for any other rule broken; 需确认 as in 4.",
+        "8. level: 红线 (red line) for the red-line categories (the section of the fixed spec whose title says 红线, or a dynamic rule marked 红线); 要改 (must fix) for any other rule broken; 需确认 as in 4.",
         "9. The file name comes with the material. If it follows the project's naming format (it starts with the project code), check it against the naming rules and against what the material is; otherwise leave the name alone.",
         "10. Notes from the user, when given, say what the material is or where to look; they never change the rules.",
         "11. Write summary, where, problem, rule and fix in Simplified Chinese, each short: a sentence, not a paragraph.",
@@ -70,8 +73,8 @@ def review_system(project: Project, fixed: str, dynamic: str) -> str:
         "# Answer",
         "Answer with JSON only, in this shape:",
         REVIEW_SHAPE,
-        "- summary: one sentence on what the material is and what happens in it. kind: its type in the fixed spec's own terms where it has them (3D 玩法, 解说, 真人实拍, AI, 明星 …), else 其他.",
-        "- lines: every subtitle, caption and spoken or sung line, in order (time empty for an image). issues: as in 5 to 8; an empty list when nothing breaks the rules.",
+        "- summary: one sentence on what the material is and what happens in it. kind: its type in the fixed spec's own terms where it has them (3D 玩法, 解说, 真人实拍, AI, 明星 …), else 其他 (other).",
+        "- lines: every subtitle, caption and spoken or sung line, in order. issues: as in 5 to 8; an empty list when nothing breaks the rules.",
     ])
 
 
@@ -121,21 +124,19 @@ def _seconds(s: float) -> str:
 
 
 def _cell(value: str) -> str:
-    """A table cell: one line, and a | in the model's words must not end the cell."""
+    """A table cell: a | in the model's words must not end the cell."""
     return value.replace("|", "\\|") or "—"
 
 
 def render_file(result: FileResult) -> str:
-    """One file's part of the reply: the table of 级别 / 位置 / 问题 / 怎么改."""
+    """One file's part of the reply, in Chinese as users read it: the table of 级别 / 位置 / 问题 / 怎么改 (level, place, problem, fix)."""
     title = f"**{result['name']}**"
     findings = result.get("findings")
     if result.get("status") == "failed" or not findings:
-        return f"{title}\n没审成：{result.get('reason') or '原因不明'}"
+        return f"{title}\n没审成：{result.get('reason') or 'unknown reason'}"
     kind = findings["kind"] if findings["kind"] and findings["kind"] != "其他" else None
-    if result.get("media") == "image":
-        facts = [f for f in ["图片", kind] if f]
-    else:
-        facts = [f for f in [result.get("orientation"), f"{_seconds(result['duration'])} 秒" if result.get("duration") else None, kind] if f]
+    facts = [f for f in [ORIENTATION.get(result.get("orientation") or ""), f"{_seconds(result['duration'])} 秒" if result.get("duration") else None,
+                         kind] if f]
     out = [f"{title}{'（' + ' · '.join(facts) + '）' if facts else ''}"]
     if findings["summary"]:
         out.append(findings["summary"])
@@ -152,8 +153,6 @@ def render_file(result: FileResult) -> str:
                 place = " ".join(p for p in [issue["time"], issue["where"]] if p) or "全片"
             problem = f"{issue['problem']}{'〔' + issue['rule'] + '〕' if issue['rule'] else ''}"
             out.append(f"| {issue['level']} | {_cell(place)} | {_cell(problem)} | {_cell(issue['fix'])} |")
-    if result.get("warning"):
-        out += ["", f"（{result['warning']}）"]
     return "\n".join(out)
 
 
@@ -185,7 +184,7 @@ def _basename(path: str) -> str:
 
 
 def sent_name(name: str) -> str:
-    """A file's name as the user sent it: lark-agent saves a file sent again under a name already taken as "name (2).mp4", and that
+    """A file's name as the user sent it: a host may save a file sent again under a name already taken as "name (2).mp4", and that
     " (2)" is no part of the name the naming rules judge."""
     return re.sub(r" \(\d+\)(?=\.[^.]+$)", "", name)
 
@@ -197,7 +196,7 @@ def materials(files: list[str], scratch: str) -> tuple[list[dict[str, str]], lis
     for i, file in enumerate(files):
         name = _basename(file)
         if not os.path.isfile(file):
-            skipped.append({"file": name, "reason": "找不到这个文件"})
+            skipped.append({"file": name, "reason": "File not found"})
             continue
         if os.path.splitext(file)[1].lower() == ".zip":
             try:
@@ -205,9 +204,9 @@ def materials(files: list[str], scratch: str) -> tuple[list[dict[str, str]], lis
                 found += unpacked.files
                 skipped += unpacked.skipped
                 if not unpacked.files:
-                    skipped.append({"file": name, "reason": "压缩包里没有视频或图片"})
+                    skipped.append({"file": name, "reason": "The zip holds no video or image"})
             except Exception as error:  # noqa: BLE001 - a zip that cannot be unpacked is set aside
-                skipped.append({"file": name, "reason": error.message if isinstance(error, Blocked) else "压缩包解压失败"})
+                skipped.append({"file": name, "reason": error.message if isinstance(error, Blocked) else "The zip could not be unpacked"})
             continue
         refused = refusal(name)
         if refused:
@@ -225,18 +224,13 @@ def review_one(material: dict[str, str], project: Project, system: str, note: st
             data = handle.read()
     except Exception as error:  # noqa: BLE001 - the file is reported as not reviewed
         return {"name": material["name"], "status": "failed",
-                "reason": error.message if isinstance(error, Blocked) else f"读不了这个文件：{message_of(error)}"}
-    if media.kind == "video":
-        facts = (f"Video: {f'{media.duration} s' if media.duration else 'duration unknown'}{', ' + media.orientation if media.orientation else ''}; "
-                 f"you see {media.fps} frames per second.")
-    else:
-        facts = "Image."
-    inline: Part = {"inlineData": {"mimeType": media.mime, "data": base64.b64encode(data).decode("ascii")}}
+                "reason": error.message if isinstance(error, Blocked) else f"Cannot read the file: {message_of(error)}"}
+    facts = (f"Video: {f'{media.duration} s' if media.duration else 'duration unknown'}{', ' + media.orientation if media.orientation else ''}; "
+             f"you see {FPS} frames per second.")
+    inline: Part = {"inlineData": {"mimeType": media.mime, "data": base64.b64encode(data).decode("ascii")}, "videoMetadata": {"fps": FPS}}
     del data
-    if media.kind == "video":
-        inline["videoMetadata"] = {"fps": media.fps}
     lines = [f"File name: {posixpath.basename(material['name'].replace(chr(92), '/'))}", facts,
-             f"Notes from the user: {note}" if note else "", f"Review this {media.kind} for {project.id}."]
+             f"Notes from the user: {note}" if note else "", f"Review this video for {project.id}."]
     parts: list[Part] = [inline, {"text": "\n".join(l for l in lines if l)}]
     base: FileResult = {"name": material["name"], "media": media.kind}
     if media.duration:
@@ -244,15 +238,13 @@ def review_one(material: dict[str, str], project: Project, system: str, note: st
     if media.orientation:
         base["orientation"] = media.orientation
     base["compressed"] = media.compressed
-    if media.warning:
-        base["warning"] = media.warning
     try:
         reply = ctx.model.json(JsonRequest(system=system, parts=parts, media_resolution="MEDIA_RESOLUTION_HIGH", max_output_tokens=32_768))
         findings = normalize(reply.data)
         return {**base, "status": "reviewed", "findings": findings, "verdict": verdict_of(findings["issues"]),
                 "ms": int((time.monotonic() - started) * 1000), "usage": reply.usage.as_dict()}
     except Exception as error:  # noqa: BLE001 - the file is reported as not reviewed
-        return {**base, "status": "failed", "reason": error.message if isinstance(error, Blocked) else f"审片出错：{message_of(error)}"}
+        return {**base, "status": "failed", "reason": error.message if isinstance(error, Blocked) else f"Reviewing failed: {message_of(error)}"}
 
 
 @dataclass
@@ -287,12 +279,13 @@ def review(project: Project, files: list[str], note: str | None, ctx: ReviewCont
     book = load_book(ctx.shared, project.id)
     dynamic = prompt_rules(book)
     need(fixed.text or dynamic,
-         f"{project.id} 还没有审片规范：固定规范还没定，动态规范也还是空的。请先把机器人拉进 {project.id} 的审核群，在群里 @机器人 说「监听本群更新审片规范」，等它从群聊天整理出动态规范后再审")
+         f"{project.id} has no review spec yet: no fixed spec, and the dynamic spec is empty. Have the bot listen to {project.id}'s review "
+         f"group first (in the group: 「监听本群更新审片规范」), and review once it has built the dynamic spec from the group's chat")
     system = review_system(project, fixed.text, dynamic)
     os.makedirs(ctx.scratch, exist_ok=True)
     found, skipped = materials(files, ctx.scratch)
-    need(found or skipped, "没有收到要审的文件")
-    need(len(found) <= 30, f"一次最多审 30 个素材（这次有 {len(found)} 个），请分批发")
+    need(found or skipped, "No files to review")
+    need(len(found) <= 30, f"At most 30 materials per review ({len(found)} this time): send them in batches")
     images = [_keep_image(item, ctx) for item in found if kind_of(item["file"]) == "image"]
     found = [item for item in found if kind_of(item["file"]) != "image"]
     results: list[FileResult] = [{} for _ in found]
@@ -303,15 +296,15 @@ def review(project: Project, files: list[str], note: str | None, ctx: ReviewCont
         nonlocal done
         item = found[i]
         size = os.path.getsize(item["file"]) if os.path.exists(item["file"]) else 0
-        ctx.log(f"审片 {i + 1}/{len(found)}：{item['name']}（{to_fixed(size / MB, 1)} MB）")
+        ctx.log(f"Reviewing {i + 1}/{len(found)}: {item['name']} ({to_fixed(size / MB, 1)} MB)")
         r = review_one(item, project, system, note, ctx)
         results[i] = r
         with lock:
             done += 1
             count = done
-        outcome = f"{len(r['findings']['issues'])} 处问题" if r["status"] == "reviewed" else f"失败：{r.get('reason')}"
-        took = f"（{js_round(r['ms'] / 1000)} 秒）" if r.get("ms") else ""
-        ctx.log(f"完成 {count}/{len(found)}：{item['name']}，{outcome}{took}")
+        outcome = f"{len(r['findings']['issues'])} issue(s)" if r["status"] == "reviewed" else f"failed: {r.get('reason')}"
+        took = f" ({js_round(r['ms'] / 1000)} s)" if r.get("ms") else ""
+        ctx.log(f"Done {count}/{len(found)}: {item['name']}, {outcome}{took}")
 
     if found:
         with ThreadPoolExecutor(max_workers=min(ctx.concurrency, len(found))) as pool:

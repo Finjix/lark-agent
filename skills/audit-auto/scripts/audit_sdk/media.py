@@ -1,4 +1,4 @@
-"""Getting a material file ready to send to Gemini inline (port of media.ts; the gateway has no Files API).
+"""Getting a material file ready to send to Gemini inline (the gateway has no Files API).
 
 Gemini samples a video into frames at the fps it is told and scales every frame down, so a 1080p master carries nothing a 720p copy
 does not: a video over INLINE_MAX (or in a container Gemini does not take) is re-encoded to 720p 24 fps with ffmpeg when the
@@ -44,7 +44,7 @@ MB = 1024 * 1024
 #: The most the gateway takes in one inline part (probed 2026-11-17: 256 000 000 bytes passes, one byte more is
 #: refused with "exceeds the maximum allowed inline size of 256000000 bytes"). A bigger video is re-encoded first.
 INLINE_MAX = 256_000_000
-#: The frames a second Gemini is told to look at.
+#: The frames a second Gemini is told to look at, whatever the length of the video.
 FPS = 2
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -63,8 +63,8 @@ def refusal(name: str) -> str | None:
     if ext in TYPES:
         return None
     if ext == ".gif":
-        return "GIF 动图不支持，请转成视频（MP4）或截成图片再发"
-    return "不是视频或图片，没有审"
+        return "GIF is not supported: convert it to a video (MP4) or an image and send it again"
+    return "Not a video or an image: not reviewed"
 
 
 def kind_of(name: str) -> str | None:
@@ -194,12 +194,7 @@ def _movie(buffer: bytes) -> Probe:
 def orientation(p: Probe) -> str | None:
     if not p.width or not p.height:
         return None
-    return "横版" if p.width > p.height else "竖版" if p.width < p.height else "方版"
-
-
-def fps_for(duration: float | None) -> int:
-    """How many frames a second Gemini looks at: FPS, whatever the length."""
-    return FPS
+    return "landscape" if p.width > p.height else "portrait" if p.width < p.height else "square"
 
 
 # ---- ffmpeg
@@ -246,8 +241,6 @@ class Prepared:
     compressed: bool
     duration: float | None = None
     orientation: str | None = None
-    fps: int | None = None
-    warning: str | None = None
 
 
 def _mb(n: int) -> str:
@@ -256,13 +249,13 @@ def _mb(n: int) -> str:
 
 def prepare(file: str, scratch: str, ffmpeg: str | None) -> Prepared:
     kind = TYPES.get(_ext(file))
-    need(kind, refusal(file) or "不支持的文件")
+    need(kind, refusal(file) or "Unsupported file")
     assert kind is not None
     size_in = os.stat(file).st_size
-    need(size_in > 0, "文件是空的")
-    need(kind.kind == "video", "图片不发给 Gemini：由主 agent 自己看")
+    need(size_in > 0, "The file is empty")
+    need(kind.kind == "video", "Images are not sent to Gemini: the agent reviews them itself")
     original = probe(file)
-    sent, info, warning = file, original, None
+    sent, info = file, original
     if not kind.native or size_in > INLINE_MAX:
         if ffmpeg:
             # A folder of its own: two files of the same name may be compressed at the same time.
@@ -274,14 +267,15 @@ def prepare(file: str, scratch: str, ffmpeg: str | None) -> Prepared:
                 copy = probe(output)
                 info = Probe(duration=copy.duration if copy.duration is not None else original.duration, width=copy.width, height=copy.height)
             except Exception:  # noqa: BLE001 - the original cannot go as it is: too big, or a format Gemini does not take
-                need(kind.native, "这种视频格式需要先转码，但转码失败了：请导出成 MP4 再发")
-                raise Blocked(f"视频太大（{_mb(size_in)} MB），转成 720p 也失败了：请压缩到 {_mb(INLINE_MAX)} MB 以内再发") from None
+                need(kind.native, "This video format has to be converted first, and converting it failed: export it as MP4 and send it again")
+                raise Blocked(f"The video is too large ({_mb(size_in)} MB) and re-encoding it to 720p failed: compress it to under "
+                              f"{_mb(INLINE_MAX)} MB and send it again") from None
         else:
-            need(kind.native, "这种视频格式（如 MKV）需要先转成 MP4 再发")
+            need(kind.native, "This video format (MKV, say) has to be converted to MP4 first")
     size = size_in if sent == file else os.stat(sent).st_size
     if size > INLINE_MAX:
-        raise Blocked(f"视频太大（{_mb(size)} MB），请压缩到 {_mb(INLINE_MAX)} MB 以内再发")
+        raise Blocked(f"The video is too large ({_mb(size)} MB): compress it to under {_mb(INLINE_MAX)} MB and send it again")
     return Prepared(
         file=sent, kind="video", mime=kind.mime if sent == file else "video/mp4", bytes=size_in, sent=size,
-        duration=info.duration or None, orientation=orientation(original), fps=fps_for(info.duration), compressed=sent != file, warning=warning,
+        duration=info.duration or None, orientation=orientation(original), compressed=sent != file,
     )

@@ -1,237 +1,241 @@
 <!--
-GOF（无尽冬日）的固定审片规范，审片时去掉这段注释后原样交给模型（Gemini）。
-来源：《无尽冬日 广告素材审核标准（2026-10 版）》https://centurygames.feishu.cn/docx/CSy2dZ3XvoLDmBxolPXcNbtunuc
-  它合并了：无尽冬日-广告素材审核规则、【红线】无尽冬日-星广素材审核规则、字节素材拒审文档、巨量引擎游戏行业素材审核规则（2026-01-16 版）。
-整理于 2026-11-02：内容照原文，只改成逐条列出；第六节最后一条（审片不查编号大小）是整理时加的，免得模型把以前的编号都报成问题；
-原文的示例图片没有带过来；上传和送审流程（NAS、创量、热云、CLS、审核盘）看素材查不了，没有收录。
-标准出了新版，照新版改这个文件，再重新打包、部署插件。
+GOF (无尽冬日)'s fixed review spec. For a review, this comment is removed and the rest is given to the model (Gemini) as it is.
+Source: 《无尽冬日 广告素材审核标准（2026-10 版）》 https://centurygames.feishu.cn/docx/CSy2dZ3XvoLDmBxolPXcNbtunuc
+  It merges: 无尽冬日-广告素材审核规则, 【红线】无尽冬日-星广素材审核规则, 字节素材拒审文档, 巨量引擎游戏行业素材审核规则（2026-01-16 版）.
+Written up 2026-11-02 and translated into English 2026-11-17: the content follows the original, only listed item by item; the original's
+Chinese terms, examples and wordings are kept verbatim (they are what the material is checked against), with English glosses where they
+help. The last item of section 6 (the review does not check how large a number is) was added when writing it up, so that the model does
+not report every older number as a problem. The original's example pictures are not included; the upload and submission process (NAS,
+创量, 热云, CLS, the review drive) cannot be checked from the material and is left out.
+When a new edition of the standard comes out, update this file to it. Section titles keep their Chinese names (红线, 字幕和口播, …): the
+review prompt and the dynamic spec's categories refer to them.
 -->
 
-# GOF（无尽冬日）广告素材审片规范（2026-10 版）
+# GOF (无尽冬日) ad material review spec (2026-10 edition)
 
-几份来源说法对不上的，以这份为准；这里没写到、拿不准的，先发审核群问。
-红线轻则账号限流、素材下架，重则舆情和官司，会直接追责。
+Where the sources disagree, this spec decides; whatever it does not cover, or you are unsure of, ask in the review group first.
+A red-line breach means at best account throttling and the material taken down, at worst public outcry and lawsuits, and is followed up with whoever is responsible.
 
-## 一、红线：碰了整条重做
+## 1. 红线 (red lines): touching one means redoing the whole video
 
-### 侵权
-- 不能出现：网红、影视明星、演员艺人的画面拿来做混剪或吸睛片头。
-- 不能出现：明星网红的网络热梗，比如蔡徐坤、菜坤、明星打篮球的表情包。
-- 不能出现：抖音和其他平台账号发过的内容。
-- 不能出现：其他品牌明显露出。
-- 不能出现：抖音热门 BGM、热门歌手的歌。
-- 拒过的：字节拒过 2 条明星混剪，理由是肖像没授权；AI 片里豪车格栅做得像劳斯莱斯，判了侵权。
+### 侵权 (infringement)
+- Not allowed: footage of internet celebrities (网红), film and TV stars, actors and entertainers used in a mash-up or as an eye-catching opening.
+- Not allowed: internet memes about stars and influencers, e.g. 蔡徐坤、菜坤、明星打篮球的表情包.
+- Not allowed: content published by Douyin accounts or accounts on other platforms.
+- Not allowed: another brand clearly visible.
+- Not allowed: trending Douyin BGM, songs by popular singers.
+- Rejected before: ByteDance (字节) rejected 2 celebrity mash-ups because the portraits were not licensed; in an AI video a luxury car's grille made to look like a Rolls-Royce's was judged infringement.
 
-### 肖像授权
-- 没签授权的真人肖像不能用，素描画像、真人表情包也算。
-- 拿到影视剧授权不等于拿到演员本人的肖像授权。
-- 巨量按广告法第三十三条审。
+### 肖像授权 (portrait licences)
+- Real people's portraits without a signed licence may not be used; sketched portraits and memes of real people count too.
+- A licence for a film or TV series is not a licence for the actors' own portraits.
+- 巨量 (Ocean Engine) reviews this under Article 33 of the Advertising Law.
 
-### 公司名誉
-- 不出现公司和主体名称。
-- 不丑化老板、制作人、策划；星广素材干脆不涉及。
-- 不出现买卖高级账号、内部服、当托。
-- 玩家真实昵称、ID、联盟名称，要打码；联盟聊天界面最容易漏打码。
-- 不拿大R做文章，不丑化玩家。
+### 公司名誉 (company reputation)
+- No company or entity names.
+- Do not mock the boss, producers or game designers; star-promotion (星广) material does not touch them at all.
+- No buying or selling of high-level accounts, internal servers, or shills (当托).
+- Real player nicknames, IDs and alliance names must be blurred; the alliance chat screen is where blurring is most often missed.
+- Do not make a story of big spenders (大R), do not mock players.
 
-### 政治
-- 不出现领导人、革命、贪官、自焚这类词和画面。
-- 不出现国家机关名义、国家标志、国家政策。
-- 不出现「专供」「特供」。
-- 不出现任何日本元素（星广最近特别提醒）。
-- 不出现 64、坦克，包括 648、64 元礼包、战力数字里带 64；敏感时间节点一定避开，平时也尽量不用。
+### 政治 (politics)
+- No words or images of national leaders, revolution, corrupt officials, self-immolation and the like.
+- No use of the name of state organs, national symbols, national policies.
+- No 「专供」 or 「特供」 (exclusive supply).
+- No Japanese elements of any kind (star promotion recently stressed this).
+- No 64 or tanks, including 648, 64 元礼包, or a 64 within a combat-power number; always avoid them around sensitive dates, and avoid them as far as possible otherwise.
 
-### 低俗
-- 不出现色情、性暗示、衣着暴露、床上男女、不良导向。
-- 不物化女性，不给女玩家排名。
-- 2026-07 起擦边一律不做。
-- 拒过的：3D「卡通描边」的角色被判穿着暴露。
+### 低俗 (vulgarity)
+- No pornography, sexual innuendo, revealing clothes, men and women in bed, harmful messages.
+- Do not objectify women, do not rank female players.
+- From 2026-07 on, no borderline (擦边) content at all.
+- Rejected before: a 3D character with 「卡通描边」 (cartoon outlines) was judged to be revealingly dressed.
 
-### 烟酒赌
-- 不出现烟草、抽烟、喝酒，评论区和对话框头像也不行。
-- 不出现老虎机、捕鱼机、水果机的画面。
-- 打牌打麻将不能同时出现筹码、现金。
-- 不出现盘口、上分、下分、荷官、赔率、返水这类词。
-- 拒过的：「打孔捕鱼」被判中危。
+### 烟酒赌 (tobacco, alcohol, gambling)
+- No tobacco, smoking or drinking, not even in the avatars of a comment section or a chat window.
+- No footage of slot machines, fishing-game machines (捕鱼机) or fruit machines.
+- Card games and mahjong may not show chips or cash at the same time.
+- No words like 盘口、上分、下分、荷官、赔率、返水 (betting terms).
+- Rejected before: 「打孔捕鱼」 was judged medium risk.
 
-### 暴力血腥
-- 不出现残忍击杀、液体喷溅、肢解、尸体。
-- 不出现枪支弹药、管制刀具；不新加枪炮军武，不做军事形象。
-- 不出现阴森、鬼怪、丧葬。
-- 拒过的：熊头部中弹，红色液体飞溅，地上有血迹肉块，被拒；士兵对着猛犸象射击，画面里有尸体、火焰、浓烟，被拒。
+### 暴力血腥 (violence and gore)
+- No brutal killing, splattering liquid, dismemberment, corpses.
+- No guns and ammunition, no controlled knives; no newly added guns, cannons or military hardware, no military imagery.
+- Nothing gloomy, no ghosts or monsters, no funerals.
+- Rejected before: a bear shot in the head with red liquid splashing and blood and chunks of flesh on the ground; soldiers shooting at a mammoth with corpses, fire and thick smoke in the picture.
 
-## 二、字幕和口播
+## 2. 字幕和口播 (subtitles and voice-over)
 
-字节今年拒得最多的是这一块，很多条就是字幕里一个词出的事。字幕、画面文字、口播、台词都按下表查。
+This is where ByteDance rejected the most this year; many rejections came down to a single word in the subtitles. Check subtitles, on-screen text, voice-over and dialogue against this table.
 
-| 问题 | 拒过的、不能写的 | 怎么处理 |
+| Problem | Rejected before / not allowed | What to do |
 | --- | --- | --- |
-| 谐音、拼音、字母代字 | 没水你活不下去啊（谐音没死）、读jia书、升级rongru、见G了、嗨B | 写正常汉字，说不出口的词换个说法 |
-| 礼包码 | LNW666、LNW886、LNW888（字母代人名） | 中文加数字，比如林子聪666、林子聪888 |
-| 英文 | SSR 英雄、BOSS、Buff | 写传说英雄、怪，其他英文也换成中文 |
-| 极限词 | 国家级、世界级、最、2025TOP 年度游戏 | 换成 T0、超、无敌、第一；游戏里本来就有的「最大生命值」「最低伤害」可以 |
-| 金额 | 一分钱也不用充、这个礼包不得200多块钱，带单位的金额都不行；「钱」字也算敏感词 | 只写数字不带单位，比如 128；¥ 符号要打码 |
-| 付费 | 零氪也能玩、平民也能建起大熔炉；资源自动采集、自动建造（和前两句在同一条里，被字节判暗示开箱） | 只能说「不用氪金」 |
-| 没法证明的数字 | 地球人都在玩、70%的人都活不过第二关、畅销榜排名、具体日期和数据 | 不写；人数口径见第四节 |
-| 限时限地 | 仅限某地、某个时间参与、截止；「某地的人都…」「多少岁的都…」这种句式 | 不写 |
-| 防沉迷 | 熬夜、通宵、摆烂、玩不完、一玩玩一天、停不下来、上瘾、上头 | 不写 |
-| 敏感词 | 犯罪、战争相关的词，高锰酸钾、卧槽、滚、绿茶婊、矮矬穷、摸鱼、白嫖、躺平、昏君、icu、政府相关、军事政治；今年审核又标出的：赚米、故伎重施、力工、男人排解压抑的加油站 | 不写，粗口脏话一样 |
-| 吓人、催人 | 「救命啊!!!」配红箭头指着冰块 | 字节判虚假紧迫 |
-| 标题党 | 标题党误导用户，故意拿猎奇科普博眼球；手机已中毒、恭喜你中奖了这类虚假提示 | 巨量算虚假误导，不做 |
-| 新闻体 | 仿新闻播报、仿官方通告 | 字节 3 到 6 月拒了一大批，别再做 |
+| 谐音、拼音、字母代字 (homophones, pinyin, letters for characters) | 没水你活不下去啊（谐音没死）、读jia书、升级rongru、见G了、嗨B | Write proper Chinese characters; rephrase a word that cannot be said |
+| 礼包码 (gift codes) | LNW666、LNW886、LNW888（字母代人名） | Chinese plus digits, e.g. 林子聪666、林子聪888 |
+| 英文 (English) | SSR 英雄、BOSS、Buff | Write 传说英雄、怪; replace other English with Chinese too |
+| 极限词 (superlatives) | 国家级、世界级、最、2025TOP 年度游戏 | Replace with T0、超、无敌、第一; the game's own 「最大生命值」「最低伤害」 are fine |
+| 金额 (amounts of money) | 一分钱也不用充、这个礼包不得200多块钱; no amount with a unit; the character 「钱」 is a sensitive word too | Only the number without a unit, e.g. 128; blur the ¥ sign |
+| 付费 (paying) | 零氪也能玩、平民也能建起大熔炉；资源自动采集、自动建造 (in the same video as the first two, judged by ByteDance to suggest loot boxes) | Only 「不用氪金」 may be said |
+| 没法证明的数字 (numbers that cannot be proven) | 地球人都在玩、70%的人都活不过第二关, best-seller chart rankings, specific dates and data | Do not write them; player counts as in section 4 |
+| 限时限地 (limited time or place) | 仅限某地、某个时间参与、截止; sentence patterns like 「某地的人都…」「多少岁的都…」 | Do not write them |
+| 防沉迷 (anti-addiction) | 熬夜、通宵、摆烂、玩不完、一玩玩一天、停不下来、上瘾、上头 | Do not write them |
+| 敏感词 (sensitive words) | words about crime and war, 高锰酸钾、卧槽、滚、绿茶婊、矮矬穷、摸鱼、白嫖、躺平、昏君、icu, anything about the government, military or politics; flagged again by reviewers this year: 赚米、故伎重施、力工、男人排解压抑的加油站 | Do not write them; nor swearing |
+| 吓人、催人 (scaring, pressuring) | 「救命啊!!!」 with a red arrow pointing at ice | ByteDance judged it false urgency |
+| 标题党 (clickbait) | clickbait titles that mislead users, deliberately sensational pseudo-science; fake alerts like 手机已中毒、恭喜你中奖了 | 巨量 counts it as false and misleading: do not make it |
+| 新闻体 (news style) | imitating news broadcasts or official announcements | ByteDance rejected a large batch from March to June: do not make any more |
 
-## 三、画面和界面
+## 3. 画面和界面 (picture and UI)
 
-### 玩法提示语（必须有）
-涉及玩法的素材都要加提示语，引用的玩法片段也算：
+### 玩法提示语 (gameplay disclaimer, required)
+All material that shows gameplay must carry the disclaimer, quoted gameplay clips included:
 
 > 广告创意仅供参考，广告素材宣传内容须达到一定关卡或触发相应模块后出现，实际以游戏内容为准
 
-- 放在画面中下，不贴左右边，横版竖版都要显示完整。
-- 「须」写成「需」也行，官方警示语 PNG 用的就是「需」。
+- Place it in the lower middle of the picture, not against the left or right edge, shown in full in both landscape and portrait.
+- 「须」 written as 「需」 is fine too: the official warning PNG uses 「需」.
 
-### 其他
-- 点不了的按钮要打码或模糊：立即领取、立即下载、关闭、跳过、返回、复活、滑动解锁、视频播放按钮、点击试玩。
-- 不用箭头，不用手指图标指着点，口播和手势也别引导用户去点。
-- 不仿系统和其他 APP 的界面：版本更新、青少年模式、微信到账、红包、来电、直播间。
-- 只用国服画面：画面里有「寒霜启示录」的是国际服，不能用。
-- 不出现其他游戏的画面和元素。
-- 低级错误：LOGO 反转、画面模糊、空白或黑屏、预约内容、APP 和小程序素材混用、把封面剪进视频。
-- 字幕放在剪映安全区内，字号别太大也别太小；身份牌不挡脸。
-- 片头不快速闪烁晃眼，也不用恶心的画面开头，比如切开熟透的火龙果，籽太密让人犯密恐。
+### Other
+- Buttons that cannot be tapped must be blurred or masked: 立即领取、立即下载、关闭、跳过、返回、复活、滑动解锁, video play buttons, 点击试玩.
+- No arrows, no finger icons pointing at something to tap; the voice-over and gestures must not urge users to tap either.
+- Do not imitate system screens or other apps: 版本更新、青少年模式、微信到账、红包、来电、直播间.
+- China-server footage only: footage showing 「寒霜启示录」 is the international server and may not be used.
+- No footage or elements of other games.
+- Careless mistakes: a mirrored LOGO, blurry footage, blank or black screens, pre-registration content, app and mini-program material mixed up, the cover cut into the video.
+- Subtitles inside the CapCut (剪映) safe area, the font neither too large nor too small; name tags do not cover faces.
+- The opening does not flash quickly or dazzle, and does not start with a disgusting image, e.g. cutting open an overripe dragon fruit whose dense seeds trigger trypophobia.
 
-## 四、和游戏对得上
+## 4. 和游戏对得上 (matching the game)
 
-战力、等级、福利、英雄都按游戏里的来，夸大了会被玩家投诉，比如「0氪三天战力一个亿」。
+Combat power, levels, rewards and heroes follow the game; exaggerating them draws player complaints, e.g. 「0氪三天战力一个亿」.
 
-### 熔炉等级和战力
-下面是广告里能写的数，表外的天数和等级别自己估；没说是付费玩家的，战力不写过亿。
+### 熔炉等级和战力 (furnace level and combat power)
+These are the numbers an ad may state; do not estimate days or levels outside the table. Unless the player is said to be a paying player, do not state combat power over 100 million (亿).
 
-| 玩家 | 天数 | 熔炉等级 | 战力 |
+| Player | Days | Furnace level | Combat power |
 | --- | --- | --- | --- |
-| 不付费，按开服天数算 | 3 天 | 15 级 | 300 万 |
-| 不付费，按开服天数算 | 7 天 | 18 级 | 600 万 |
-| 不付费，按开服天数算 | 10 天 | 20 级 | 800 万 |
-| 不付费，按开服天数算 | 15 天 | 22 级 | 1000 万 |
-| 不付费，按开服天数算 | 30 天 | 25 级 | 2000 万 |
-| 不付费，按开服天数算 | 45 天 | 28 级 | 3000 万 |
-| 不付费，按开服天数算 | 57 天 | 30 级 | 5000 万 |
-| 付费，按注册天数算 | 3 天 | 30 级 | 6000 万 |
-| 付费，按注册天数算 | 7 天 | 30 级 | 1 亿 |
-| 付费，按注册天数算 | 10 天 | 30 级 | 1.3 亿 |
+| Not paying, by days since the server opened | 3 天 | 15 级 | 300 万 |
+| Not paying, by days since the server opened | 7 天 | 18 级 | 600 万 |
+| Not paying, by days since the server opened | 10 天 | 20 级 | 800 万 |
+| Not paying, by days since the server opened | 15 天 | 22 级 | 1000 万 |
+| Not paying, by days since the server opened | 30 天 | 25 级 | 2000 万 |
+| Not paying, by days since the server opened | 45 天 | 28 级 | 3000 万 |
+| Not paying, by days since the server opened | 57 天 | 30 级 | 5000 万 |
+| Paying, by days since registration | 3 天 | 30 级 | 6000 万 |
+| Paying, by days since registration | 7 天 | 30 级 | 1 亿 |
+| Paying, by days since registration | 10 天 | 30 级 | 1.3 亿 |
 
-只说熔炉等级、不说天数时按这张（注册 180 天内的账号）：
+When only the furnace level is given, without days, use this table (accounts registered within 180 days):
 
-| 熔炉等级 | 战力 |
+| Furnace level | Combat power |
 | --- | --- |
 | 15 级 | 250 万 |
 | 20 级 | 600 万 |
 | 25 级 | 1800 万 |
 | 30 级 | 5000 万 |
 
-- 「熔炉 20 级」配「战力 2000 万」被打回过。
-- 星广旧表里「0 氪 3 天 200 万、7 天 400 万」的说法作废，统一按上面两张表。
+- 「熔炉 20 级」 with 「战力 2000 万」 has been sent back.
+- The old star-promotion table's 「0 氪 3 天 200 万、7 天 400 万」 is void: use the two tables above.
 
-### 福利
-只用这四种说法，不加码：
-- 第二天签到就送传说英雄茉莉，别说成 SSR 英雄茉莉
+### 福利 (rewards)
+Only these four wordings, nothing more:
+- 第二天签到就送传说英雄茉莉 (not 「SSR 英雄茉莉」)
 - 首充就送娜塔莉亚
 - 登录就送史诗英雄巴希提
 - 首次抽卡必出史诗英雄谢尔盖
 
-英雄等级、英雄品质、国服还没出的英雄，都要对着游戏查（《无尽冬日福利设定》《无尽冬日-英雄系统汇总》）；素材里出现、上面又没写到的，标需确认。
+Hero levels, hero quality, and heroes not yet released on the China server must be checked against the game (《无尽冬日福利设定》《无尽冬日-英雄系统汇总》); one that appears in the material and is not covered above is 需确认.
 
-### 玩家人数
-- 全球玩家 3 亿，不要说成 1 亿。
-- 字节拒过几条「三亿人都在玩」，理由是没有数据证明，已经交的证明只到注册一亿。
+### 玩家人数 (player numbers)
+- 全球玩家 3 亿 (300 million players worldwide); do not say 1 亿.
+- ByteDance rejected several 「三亿人都在玩」 for lack of proof: the proof submitted only covers 100 million registrations.
 
-### 玩法和世界观
-- AI 世界观类不出现游戏里没有的副本，设定和等级对得上，比如火晶 30 级才解锁，写成 25 级就是错的。
-- 文案说「广告里啥样，游戏就啥样」的，B 面必须是游戏里真有、或者讲得通的内容：传送带提效可以做，石油、金币这种游戏里没有对应元素的不做。
+### 玩法和世界观 (gameplay and world setting)
+- AI world-setting material shows no dungeons the game does not have, and the setting and levels match the game: e.g. 火晶 unlocks at level 30, so writing level 25 is wrong.
+- When the copy says 「广告里啥样，游戏就啥样」 (the game is just like the ad), the B part must be something the game really has or that makes sense: conveyor belts for efficiency are fine; oil, gold coins and the like, which have no counterpart in the game, are not.
 
-## 五、按素材类型
+## 5. 按素材类型 (by material type)
 
-### 3D 玩法
-- 只用本项目资产，不直接用其他项目的创意资产；MCC 平台上的资产要是给本项目定制的，新增 2D 资产单独做。
-- 画面保留冰雪元素，不脱离冰雪题材；改尺寸以后看一眼冰雪氛围有没有被裁弱。
-- 打熊打怪不见红，没有血液喷溅、血迹、肉块、尸体。
-- 不新加枪炮军武，不做军事形象。
-- 别做成捕鱼机的样子：炮台对着鱼群打、鱼身上标倍数、打中就爆金币，这种画面会按赌博从严判。
-- 角色别穿得暴露，3D 卡通描边的角色被判过。
+### 3D 玩法 (3D gameplay)
+- Only this project's assets; do not use other projects' creative assets directly. Assets on the MCC platform must be made for this project; new 2D assets are made separately.
+- Keep the ice and snow elements, do not leave the ice-and-snow theme; after resizing, check that the icy atmosphere has not been cropped away.
+- Fighting bears and monsters shows no red: no splattering blood, blood stains, chunks of flesh or corpses.
+- No newly added guns, cannons or military hardware, no military imagery.
+- Do not make it look like a fishing-game machine: turrets shooting at shoals of fish, multipliers on the fish, coins bursting out on a hit; such footage is judged strictly as gambling.
+- Characters are not revealingly dressed; 3D cartoon-outlined characters have been judged so.
 
-### 解说和迭代
-- 引用的玩法片段也要加提示语。
-- 评论区、对话框截图：头像不用真人和卡通形象，也不能有烟草，昵称打码，旁边别加手指图标。
-- 做混剪前先对一遍第一节侵权那行。
+### 解说和迭代 (commentary and iterations)
+- Quoted gameplay clips carry the disclaimer too.
+- Comment-section and chat-window screenshots: avatars use neither real people nor cartoon figures, no tobacco, nicknames blurred, no finger icon next to them.
+- Before making a mash-up, check it against 侵权 in section 1.
 
-### 真人实拍
-- 2026-07 起擦边一律不做，床上男女、衣着暴露、性暗示台词都算。
-- 友商常用的低俗演员不用。
-- 想拍工作人员，只能拍玩家误会了他们、后来发现是自己错了，不用恶意的刻板印象。
-- 不挑男女对立，不给女玩家排名。
-- 不蹭不良热点。
-- 粗口脏话不出现。
-- BGM 不用抖音热门歌和热门歌手的歌，有商用版权问题。
+### 真人实拍 (live action)
+- From 2026-07 on, no borderline content at all: men and women in bed, revealing clothes and suggestive lines all count.
+- Do not use the vulgar actors competitors often use.
+- Staff may only be shown as players misunderstanding them and then finding the mistake was their own; no malicious stereotypes.
+- No pitting men against women, no ranking female players.
+- No riding on unhealthy trending topics.
+- No swearing.
+- BGM uses no trending Douyin songs or songs by popular singers: they have commercial licensing problems.
 
-巨量还列了两类剧情，碰到也会拒：
+巨量 also lists two kinds of plot it rejects:
 
-| 类别 | 剧情 |
+| Kind | Plots |
 | --- | --- |
-| 虚假情景演绎 | 拿弱势群体做悲情营销、下跪送锦旗、违反常理的赌誓、拿证件担保、冒充权威身份、过去和现在的生活对比、砸钱撒钱撕钱、维权调解、仿官方通告、打假投诉卸载、夸大灾害、考验人性 |
-| 违背主流价值观 | 上班摸鱼、「性别 + 任你选」、性别歧视、伪娘和男扮女装、未婚先孕、啃老、大胃王、摆烂躺平、不孝、违法行为、拜金炫富 |
+| 虚假情景演绎 (staged fake scenarios) | 拿弱势群体做悲情营销、下跪送锦旗、违反常理的赌誓、拿证件担保、冒充权威身份、过去和现在的生活对比、砸钱撒钱撕钱、维权调解、仿官方通告、打假投诉卸载、夸大灾害、考验人性 |
+| 违背主流价值观 (against mainstream values) | 上班摸鱼、「性别 + 任你选」、性别歧视、伪娘和男扮女装、未婚先孕、啃老、大胃王、摆烂躺平、不孝、违法行为、拜金炫富 |
 
-### AI 类
-- 世界观设定和等级对得上，见第四节。
-- 车标、车头格栅做得像真品牌会判侵权，像劳斯莱斯的格栅被打回过。
-- 卡通形象的脸别像现成 IP，卡通牛头脸改到不像「牛来」才过。
+### AI 类 (AI material)
+- The world setting and levels match the game: see section 4.
+- Car badges and grilles that look like a real brand are judged infringement: a grille like a Rolls-Royce's has been sent back.
+- A cartoon figure's face must not look like an existing IP: a cartoon bull's face passed only once it no longer looked like 「牛来」.
 
-### 明星素材
-头衔严格按合同写：
+### 明星素材 (celebrity material)
+Titles exactly as the contracts say:
 
-| 明星 | 头衔 |
+| Celebrity | Title |
 | --- | --- |
 | Tim | 品牌推荐官 |
 | 范明、姜超、刘奕君 | 明星推荐官、明星玩家 |
 | 小沈阳、李乃文 | 代言人 |
 
-- 名字不用字母缩写，「LNW666」这种被字节拒过。
-- 字节拒过 2 条明星混剪，理由是肖像没授权；用到明星的，投前跟投放确认授权材料已经在账户里。
+- Names are not abbreviated to letters: 「LNW666」 and the like have been rejected by ByteDance.
+- ByteDance rejected 2 celebrity mash-ups because the portraits were not licensed; for material with a celebrity, confirm with 投放 (the media buyers) before it goes out that the licence documents are in the ad account.
 
-## 六、命名
+## 6. 命名 (naming)
 
-格式：GOFCN编号_产出方_一级标签_迭代标签_自定义名，比如 GOFCN3394_DR_汉化_迭代_真人吃瓜
+Format: GOFCN编号_产出方_一级标签_迭代标签_自定义名 (GOFCN number_producer_primary tag_iteration tag_custom name), e.g. GOFCN3394_DR_汉化_迭代_真人吃瓜
 
-| 项 | 规则 |
+| Field | Rule |
 | --- | --- |
-| 编号 | 统一编号的话从 100000 开始，90000 段已经给了代投 |
-| 产出方 | DR 个人外包，ZC 自产，WA 外包商，代投写自己名字的首字母，比如微电写 WD |
-| 一级标签 | 汉化、重度解说、轻度解说、真人剧情、真人解说、AI、KOL |
-| 迭代标签 | 不是迭代的可以不填 |
+| 编号 (number) | Unified numbers start at 100000; the 90000 range has been given to agency buyers (代投) |
+| 产出方 (producer) | DR individual freelancer, ZC in-house, WA outsourcing vendor; an agency buyer writes the initials of its own name, e.g. 微电 writes WD |
+| 一级标签 (primary tag) | 汉化、重度解说、轻度解说、真人剧情、真人解说、AI、KOL |
+| 迭代标签 (iteration tag) | May be left out when it is not an iteration |
 
-- 文件名里的素材类型、设定版本要和内容一致。
-- 横版竖版同一个编号，一起改一起交。
-- 编号是分配下来的（上面例子里的 3394 就是以前的编号），审片时不查编号的大小，只查格式、产出方、一级标签，以及文件名和内容对不对得上。
+- The material type and setting version in the file name match the content.
+- Landscape and portrait versions share one number and are changed and delivered together.
+- Numbers are assigned (3394 in the example above is an older number): the review does not check how large a number is, only the format, the producer, the primary tag, and whether the file name matches the content.
 
-## 七、成片质量（交之前自己过一遍）
+## 7. 成片质量 (quality of the finished video: check it yourself before delivery)
 
-- 整条音轨从头听到尾。
-- 口型对得上。
-- A 面和 B 面画幅一致，B 面开头接得上 A 面结尾。
-- 解说的 B 面从整句开头截，不截半句。
-- 长解说加字幕。
-- 没有单帧闪错的画面。
+- Listen to the whole sound track from start to end.
+- Lip sync matches.
+- Parts A and B have the same frame format, and the start of part B follows on from the end of part A.
+- A commentary's part B is cut at the start of a full sentence, not mid-sentence.
+- Long commentary has subtitles.
+- No single wrong frames flashing.
 
-## 八、交审前自查
+## 8. 交审前自查 (self-check before submitting)
 
-- 加了提示语，在中下，横竖版都完整
-- 没有箭头、手指图标、点不了的按钮
-- 字幕口播里没有谐音、拼音、字母代字和英文
-- 没有极限词、带单位的金额、¥ 符号
-- 付费只说了「不用氪金」
-- 战力、等级、福利、英雄都能在第四节对上，人数写的是全球 3 亿
-- 国服画面，没有「寒霜启示录」，没有其他游戏
-- 没有公司名、老板策划、真实玩家昵称和联盟名
-- 没有明星网红画面、热梗、热门 BGM、其他品牌
-- 没有血、尸体、新加的枪炮，没有日本元素和 64
-- 没有擦边内容，没用友商的低俗演员
-- 命名对，横竖版一起交
+- The disclaimer is there, in the lower middle, complete in landscape and portrait
+- No arrows, finger icons, or buttons that cannot be tapped
+- No homophones, pinyin, letters for characters, or English in subtitles and voice-over
+- No superlatives, amounts with units, or ¥ signs
+- Paying is described only as 「不用氪金」
+- Combat power, levels, rewards and heroes all match section 4; the player number given is 全球 3 亿
+- China-server footage, no 「寒霜启示录」, no other games
+- No company names, bosses or designers, real player nicknames or alliance names
+- No footage of stars or influencers, trending memes, trending BGM, or other brands
+- No blood, corpses, newly added guns or cannons; no Japanese elements and no 64
+- No borderline content, no vulgar actors used by competitors
+- Naming correct, landscape and portrait delivered together

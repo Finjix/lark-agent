@@ -204,6 +204,33 @@ export class Store {
   }
   /** Finished tasks whose files are still kept and whose retention period ended before `before`. */
   expired(before:number):Task[]{return this.db.prepare(`SELECT * FROM tasks WHERE cleaned_at IS NULL AND finished_at IS NOT NULL AND finished_at<? AND status IN ${TERMINAL_SQL} ORDER BY finished_at`).all(before) as unknown as Task[];}
+  /**
+   * Forgets what is long over: finished tasks that ended before `before` (with their events, messages, files, inputs and deliveries) unless
+   * one of their deliveries is still to go out, retired chats retired before it that no task refers to any more, and all but the newest
+   * `notices` sent notices (their ids only keep a notice from going out twice for the same message, which Feishu redelivers within hours).
+   * Unfinished tasks, current chats and user directories stay. The file is shrunk when much of it is free.
+   */
+  forget(before:number,notices=500):{tasks:number;sessions:number;notices:number}{
+    const forgotten=this.db.transaction(()=>{
+      this.db.exec('CREATE TEMP TABLE IF NOT EXISTS forgotten(id TEXT PRIMARY KEY)');this.db.exec('DELETE FROM temp.forgotten');
+      this.db.prepare(`INSERT INTO temp.forgotten SELECT id FROM tasks WHERE finished_at IS NOT NULL AND finished_at<? AND status IN ${TERMINAL_SQL}
+        AND NOT EXISTS (SELECT 1 FROM delivery_outbox o WHERE o.task_id=tasks.id AND o.status IN ('PENDING','RETRYING'))`).run(before);
+      for(const table of ['task_events','task_artifacts','task_inputs','task_messages','delivery_outbox'])
+        this.db.exec(`DELETE FROM ${table} WHERE task_id IN (SELECT id FROM temp.forgotten)`);
+      const tasks=Number(this.db.prepare('DELETE FROM tasks WHERE id IN (SELECT id FROM temp.forgotten)').run().changes);
+      this.db.exec('DELETE FROM temp.forgotten');
+      const sessions=Number(this.db.prepare('DELETE FROM user_sessions WHERE retired_at IS NOT NULL AND retired_at<? AND NOT EXISTS (SELECT 1 FROM tasks WHERE session_id=user_sessions.id)').run(before).changes);
+      const sent=Number(this.db.prepare(`DELETE FROM delivery_outbox WHERE task_id IS NULL AND status NOT IN ('PENDING','RETRYING')
+        AND rowid NOT IN (SELECT rowid FROM delivery_outbox WHERE task_id IS NULL ORDER BY rowid DESC LIMIT ?)`).run(notices).changes);
+      return {tasks,sessions,notices:sent};
+    })();
+    if(forgotten.tasks+forgotten.sessions+forgotten.notices){
+      const pages=this.db.pragma('page_count',{simple:true}) as number,free=this.db.pragma('freelist_count',{simple:true}) as number;
+      // Not now (another statement is still reading, say) is not a failure: the free pages are used again, and the next round tries again.
+      try{if(pages>256&&free*4>pages)this.db.exec('VACUUM');this.db.pragma('wal_checkpoint(TRUNCATE)');}catch{}
+    }
+    return forgotten;
+  }
   messages(taskId:string):any{return this.db.prepare('SELECT * FROM task_messages WHERE task_id=?').get(taskId);}
   nextSequence(taskId:string){return this.db.prepare('UPDATE task_messages SET sequence=sequence+1 WHERE task_id=? RETURNING sequence').get(taskId) as {sequence:number};}
   stats(){return {tasks:this.db.prepare('SELECT status,count(*) AS count FROM tasks GROUP BY status').all(),deliveries:this.db.prepare('SELECT status,count(*) AS count FROM delivery_outbox GROUP BY status').all()};}

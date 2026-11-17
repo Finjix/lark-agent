@@ -1,4 +1,4 @@
-"""A small non-validating XML reader for the parts of an .xlsx (xml.ts).
+"""A small non-validating XML reader for the parts of an .xlsx.
 
 No DOCTYPE handling, so no entity expansion beyond the five predefined ones and character references. Kept as a hand-written reader
 rather than xml.etree so that it reads exactly what the TypeScript one read: the same text, the same attributes, the same refusals.
@@ -75,25 +75,25 @@ def parse_xml(source: str) -> XmlNode:
             add_text(top, _decode(source[pos:lt]))
         if source.startswith("<!--", lt):
             close = source.find("-->", lt + 4)
-            need(close >= 0, "XML 注释未结束")
+            need(close >= 0, "XML comment not closed")
             pos = close + 3
         elif source.startswith("<![CDATA[", lt):
             close = source.find("]]>", lt + 9)
-            need(close >= 0, "XML CDATA 未结束")
+            need(close >= 0, "XML CDATA not closed")
             add_text(top, source[lt + 9:close])
             pos = close + 3
         elif source.startswith("<?", lt):
             close = source.find("?>", lt + 2)
-            need(close >= 0, "XML 声明未结束")
+            need(close >= 0, "XML declaration not closed")
             pos = close + 2
         elif source.startswith("<!", lt):
             close = source.find(">", lt + 2)
-            need(close >= 0, "XML 声明未结束")
+            need(close >= 0, "XML declaration not closed")
             pos = close + 1
         elif lt + 1 < end and source[lt + 1] == "/":
             close = source.find(">", lt + 2)
-            need(close >= 0 and len(stack) > 1, "XML 标签不匹配")
-            need(_local(source[lt + 2:close].strip()) == top.name, "XML 标签不匹配")
+            need(close >= 0 and len(stack) > 1, "XML tags do not match")
+            need(_local(source[lt + 2:close].strip()) == top.name, "XML tags do not match")
             node = stack.pop()
             node.text = "".join(texts.pop(id(node), []))
             pos = close + 1
@@ -101,16 +101,16 @@ def parse_xml(source: str) -> XmlNode:
             # The first > outside quoted attribute values.
             found = _TAG_END.match(source, lt + 1)
             close = found.end() - 1 if found else end
-            need(close < end, "XML 标签未结束")
+            need(close < end, "XML tag not closed")
             self_closing = source[close - 1] == "/"
             inner = source[lt + 1:close - 1 if self_closing else close]
             space = _SPACE.search(inner)
             raw_name = inner if space is None else inner[:space.start()]
-            need(len(raw_name) > 0, "XML 标签缺少名称")
+            need(len(raw_name) > 0, "XML tag without a name")
             attrs: dict[str, str] = {}
             if space is not None:
                 attribute_text = inner[space.start():]
-                need(len(attribute_text) <= 100_000, "XML 标签过长")
+                need(len(attribute_text) <= 100_000, "XML tag too long")
                 for m in _ATTRIBUTE.finditer(attribute_text):
                     key = m.group(1)
                     if key == "xmlns" or key.startswith("xmlns:"):
@@ -120,13 +120,13 @@ def parse_xml(source: str) -> XmlNode:
             node = XmlNode(_local(raw_name), attrs)
             top.children.append(node)
             if not self_closing:
-                need(len(stack) <= MAX_DEPTH, "XML 嵌套过深")
+                need(len(stack) <= MAX_DEPTH, "XML nested too deeply")
                 stack.append(node)
             pos = close + 1
-    need(len(stack) == 1, "XML 标签未闭合")
+    need(len(stack) == 1, "XML element not closed")
     root.text = "".join(texts.pop(id(root), []))
     doc = root.children[0] if root.children else None
-    need(doc is not None and len(root.children) == 1, "XML 缺少根元素")
+    need(doc is not None and len(root.children) == 1, "XML has no root element")
     return doc  # type: ignore[return-value]
 
 

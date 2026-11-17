@@ -1,4 +1,4 @@
-"""What every picture the skill hands back has in common (shot-page.ts).
+"""What every picture the skill hands back has in common.
 
 This user's own hidden browser (the profile the logins live in) with one page in it, a window of a chosen size, the page's own answers from
 CLS counted, and a PNG that is never written over an existing file. The pictures only look: nothing is typed, and a click happens nowhere
@@ -24,7 +24,7 @@ T = TypeVar("T")
 
 #: The current game the CLS app keeps in local storage (DD-CLS-GLOBAL-CURGAME).
 GAME_KEY = "DD-CLS-GLOBAL-CURGAME"
-EXISTS = "截图文件已存在，不覆盖；换一个新的 .png 文件名"
+EXISTS = "the screenshot file exists already and is not overwritten; give a new .png file name"
 
 
 def pause(ms: float) -> None:
@@ -33,13 +33,13 @@ def pause(ms: float) -> None:
 
 def not_loaded(what: str, reason: str) -> str:
     """A page that did not load at all: the network or the site, not the login (which a refusal would otherwise send the user to renew)."""
-    return f"{what}打不开（{reason}）：网络或网站暂时不可用，不是登录失效；稍后再截图"
+    return f"the {what} did not open ({reason}): the network or the site is unavailable for now, the login has not lapsed; take the screenshot again a little later"
 
 
 def check_picture_target(target: str) -> str:
     """Checks the target of a picture before anything is started: a .png that does not exist yet."""
     file = os.path.abspath(target)
-    need(re.search(r"\.png\Z", file, re.IGNORECASE), "截图文件需要是 .png")
+    need(re.search(r"\.png\Z", file, re.IGNORECASE), "the screenshot file must be a .png")
     need(not os.path.exists(file), EXISTS)
     return file
 
@@ -159,7 +159,7 @@ class ShotPage:
             href = str(self.evaluate("location.href"))
         except Exception:
             href = ""
-        return (self._failed or "页面打不开") if href.startswith("chrome-error:") else self._failed
+        return (self._failed or "the page did not open") if href.startswith("chrome-error:") else self._failed
 
     def resize(self, width: int, height: int) -> None:
         self.cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False}, self.session_id)

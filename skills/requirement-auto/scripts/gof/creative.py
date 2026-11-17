@@ -1,4 +1,4 @@
-"""The material upload, offline (creative.ts).
+"""The material upload, offline.
 
 Which files go up as which creatives, with what annotation, from a request and the options CLS offers. One file is one creative, as on the
 page 上传创意 (a folder is read one level deep, like the page's folder pick, and each file in it is its own creative). Its name is the
@@ -79,7 +79,7 @@ def name_parts(body: str) -> dict:
     """
     parts = body.split("_")
     if len(parts) < 3 or any(p == "" for p in parts):
-        return {"unclear": f"“{body}”不是 一级标签_二级标签_提炼词 的样子，分不清各段是什么"}
+        return {"unclear": f"\"{body}\" is not named 一级标签_二级标签_提炼词: its parts cannot be told apart"}
     return {"primary_tag": parts[0], "secondary_tag": parts[1], "rest": "_".join(parts[2:])}
 
 
@@ -112,14 +112,14 @@ def name_body(name: Optional[str]) -> Optional[str]:
 def material_refusal(file_name: str) -> Optional[str]:
     """Why a file by this name cannot be a material, or None when it can (the same rule for files on disk and files inside a zip)."""
     if file_name.startswith("."):
-        return "隐藏文件"
+        return "hidden file"
     ext = ext_of(file_name).lower()
     if ext == "zip":
-        return "压缩包里的压缩包不读取"
+        return "a zip inside a zip is not read"
     if ext in _ARCHIVES:
-        return "只支持 zip 压缩包（不支持 rar、7z 等），请改成 zip"
+        return "only zip archives are read (not rar, 7z and the like): send it as a zip"
     if ext not in KINDS:
-        return f"CLS 不支持这种格式（{'.' + ext if ext else '无扩展名'}）"
+        return f"CLS does not take this format ({'.' + ext if ext else 'no extension'})"
     return None
 
 
@@ -139,7 +139,7 @@ def scan_materials(inputs: list[str], unpacked: Optional[dict[str, str]] = None)
     (`unpacked`: zip path → its unpacked folder, see unzip.py). What cannot go up is said, not dropped.
     """
     unpacked = unpacked or {}
-    need(isinstance(inputs, list) and len(inputs) > 0, "没有要上传的文件")
+    need(isinstance(inputs, list) and len(inputs) > 0, "no files to upload")
     materials: list[dict] = []
     skipped: list[dict] = []
     seen: set[str] = set()
@@ -156,7 +156,7 @@ def scan_materials(inputs: list[str], unpacked: Optional[dict[str, str]] = None)
             st, is_file = None, False
         file_name = os.path.basename(file)
         if not is_file:
-            skipped.append({"file": file, "reason": "不是普通文件"})
+            skipped.append({"file": file, "reason": "not a regular file"})
             return
         folder = unpacked.get(key) if is_zip(file) else None
         if folder:
@@ -165,7 +165,7 @@ def scan_materials(inputs: list[str], unpacked: Optional[dict[str, str]] = None)
                     consider(os.path.join(folder, entry.name), f"{file_name}：{entry.name}")
             return
         if is_zip(file):
-            skipped.append({"file": file, "reason": "压缩包没有解压"})
+            skipped.append({"file": file, "reason": "the zip was not unpacked"})
             return
         refused = material_refusal(file_name)
         if refused:
@@ -174,14 +174,14 @@ def scan_materials(inputs: list[str], unpacked: Optional[dict[str, str]] = None)
         ext = ext_of(file_name).lower()
         kind = KINDS[ext]
         if st.st_size == 0:
-            skipped.append({"file": file, "reason": "空文件"})
+            skipped.append({"file": file, "reason": "empty file"})
             return
         if st.st_size > MAX_BYTES:
-            skipped.append({"file": file, "reason": "单个文件超过 5 GB"})
+            skipped.append({"file": file, "reason": "larger than 5 GB"})
             return
         name = creative_name(file_name)
         if not js.trim(name):
-            skipped.append({"file": file, "reason": "文件名为空"})
+            skipped.append({"file": file, "reason": "empty file name"})
             return
         material = {"file": os.path.abspath(file), "file_name": file_name, "size": st.st_size, "mtime_ms": st.st_mtime_ns // 1_000_000, "ext": ext,
                     "kind": kind, "name": name, "number": material_number(name)}
@@ -190,21 +190,21 @@ def scan_materials(inputs: list[str], unpacked: Optional[dict[str, str]] = None)
         materials.append(material)
 
     for entry_input in inputs:
-        need(isinstance(entry_input, str) and js.trim(entry_input) != "", "files 里有空路径")
+        need(isinstance(entry_input, str) and js.trim(entry_input) != "", "files holds an empty path")
         full = os.path.abspath(entry_input)
         if not os.path.exists(full):
-            skipped.append({"file": full, "reason": "文件不存在"})
+            skipped.append({"file": full, "reason": "no such file"})
             continue
         if os.path.isdir(full):
             for entry in _sorted_entries(full):
                 inner = os.path.join(full, entry.name)
                 if entry.is_dir():
-                    skipped.append({"file": inner, "reason": "文件夹不可嵌套，里面的文件没有读取"})
+                    skipped.append({"file": inner, "reason": "a folder inside the folder: its files were not read"})
                 else:
                     consider(inner)
         else:
             consider(full)
-    need(len(materials) <= MAX_FILES, f"一次最多上传 {MAX_FILES} 个文件，请分批")
+    need(len(materials) <= MAX_FILES, f"at most {MAX_FILES} files per upload: split it")
     return materials, skipped
 
 
@@ -232,27 +232,27 @@ def number_of(value: Any, label: str) -> int:
     # At most 9 digits, as in material_number: GOFCN plus 11 digits is a requirement number, not a material.
     text = js.to_str(value) if js.is_safe_int(value) else value if isinstance(value, str) else ""
     m = re.fullmatch(r"\s*(?:GOFCN)?([0-9]{1,9})\s*", text, re.IGNORECASE)
-    need(m and int(m.group(1)) > 0, f"{label} 必须是 GOFCN 素材编号（如 67680 或 GOFCN67680）")
+    need(m and int(m.group(1)) > 0, f"{label} must be a GOFCN material number (like 67680 or GOFCN67680)")
     return int(m.group(1))
 
 
 def _text(value: Any, label: str, maximum: int = 255) -> str:
-    need(isinstance(value, str) and js.trim(value) != "" and len(value) <= maximum and not re.search(r"[\r\n\t\x00]", value), f"{label} 必须是非空的一行文字")
+    need(isinstance(value, str) and js.trim(value) != "" and len(value) <= maximum and not re.search(r"[\r\n\t\x00]", value), f"{label} must be one non-empty line of text")
     return js.trim(value)
 
 
 def _names(value: Any, label: str) -> list[str]:
-    need(isinstance(value, list) and len(value) > 0, f"{label} 必须是至少一个名字的列表")
+    need(isinstance(value, list) and len(value) > 0, f"{label} must be a list of at least one name")
     items = [_text(v, f"{label}[{i}]") for i, v in enumerate(value)]
-    need(len(set(items)) == len(items), f"{label} 有重复")
+    need(len(set(items)) == len(items), f"{label} has repeats")
     return items
 
 
 def normalize_upload_request(data: Any) -> dict:
-    need(is_object(data), "上传请求必须是 JSON 对象")
+    need(is_object(data), "the upload request must be a JSON object")
     unknown = [k for k in data.keys() if k not in TOP_KEYS]
-    need(len(unknown) == 0, f"上传请求有未知字段：{'、'.join(unknown)}")
-    need(isinstance(data.get("files"), list) and len(data["files"]) > 0, "files 必须列出要上传的文件或文件夹")
+    need(len(unknown) == 0, f"unknown fields in the upload request: {', '.join(unknown)}")
+    need(isinstance(data.get("files"), list) and len(data["files"]) > 0, "files must list the files or folders to upload")
     request: dict[str, Any] = {"files": [_text(f, f"files[{i}]", 1000) for i, f in enumerate(data["files"])]}
     if "directory" in data:
         request["directory"] = _text(data["directory"], "directory", 500)
@@ -261,20 +261,20 @@ def normalize_upload_request(data: Any) -> dict:
     if "producers" in data:
         request["producers"] = _names(data["producers"], "producers")
     progress = data.get("progress", js.UNDEFINED)
-    need(progress is js.UNDEFINED or progress is True or progress is False or isinstance(progress, str), "progress 只能是 true/false 或进度表链接")
+    need(progress is js.UNDEFINED or progress is True or progress is False or isinstance(progress, str), "progress is true, false or a progress-sheet link")
     request["progress"] = True if progress is js.UNDEFINED or progress is True else False if progress is False else _text(progress, "progress", 1000)
     variants = data.get("variants", js.UNDEFINED)
-    need(variants is js.UNDEFINED or isinstance(variants, bool), "variants 只能是 true/false")
+    need(variants is js.UNDEFINED or isinstance(variants, bool), "variants is true or false")
     if variants is True:
-        need(request["progress"] is not False, "variants（合并变体名称）只在按进度表上传时有用（progress 不能是 false）")
+        need(request["progress"] is not False, "variants (合并变体名称) only works with the progress sheet (progress cannot be false)")
         request["variants"] = True
     if "items" in data:
-        need(isinstance(data["items"], list), "items 必须是列表")
+        need(isinstance(data["items"], list), "items must be a list")
         items = []
         for i, raw in enumerate(data["items"]):
-            need(is_object(raw), f"items[{i}] 必须是对象")
+            need(is_object(raw), f"items[{i}] must be an object")
             extra = [k for k in raw.keys() if k not in ITEM_KEYS]
-            need(len(extra) == 0, f"items[{i}] 有未知字段：{'、'.join(extra)}")
+            need(len(extra) == 0, f"items[{i}] has unknown fields: {', '.join(extra)}")
             item: dict[str, Any] = {"file": _text(raw.get("file"), f"items[{i}].file", 1000)}
             if "number" in raw:
                 item["number"] = number_of(raw["number"], f"items[{i}].number")
@@ -283,14 +283,14 @@ def normalize_upload_request(data: Any) -> dict:
             if "name" in raw:
                 item["name"] = _text(raw["name"], f"items[{i}].name")
             if "variant" in raw:
-                need(request.get("variants"), f"items[{i}].variant 只在合并变体名称（variants: true）时有用")
-                need("name" not in item, f"items[{i}] 的 name 和 variant 只能写一个")
+                need(request.get("variants"), f"items[{i}].variant only works with variants: true")
+                need("name" not in item, f"items[{i}] takes name or variant, not both")
                 item["variant"] = _text(raw["variant"], f"items[{i}].variant")
                 # It goes into the creative's name after the row's 素材名称 and a _, as the parts of a name do.
                 need(not re.search(r"^_|_$|__", item["variant"]) and not re.search(r"[\\/]", item["variant"]),
-                     f"items[{i}].variant“{item['variant']}”不能以 _ 开头或结尾、不能有连续的 _，也不能含 / 或 \\")
+                     f"items[{i}].variant \"{item['variant']}\" cannot start or end with _, hold __, or contain / or \\")
             need(request["progress"] is not False or ("number" not in item and "sheet" not in item),
-                 f"items[{i}].number / sheet 只在按进度表上传时有用（progress 不能是 false）")
+                 f"items[{i}].number / sheet only work with the progress sheet (progress cannot be false)")
             if "type" in raw:
                 item["type"] = _text(raw["type"], f"items[{i}].type")
             if "creator" in raw:
@@ -300,7 +300,7 @@ def normalize_upload_request(data: Any) -> dict:
             if "directory" in raw:
                 item["directory"] = _text(raw["directory"], f"items[{i}].directory", 500)
             if "skip" in raw:
-                need(isinstance(raw["skip"], bool), f"items[{i}].skip 只能是 true/false")
+                need(isinstance(raw["skip"], bool), f"items[{i}].skip is true or false")
                 item["skip"] = raw["skip"]
             items.append(item)
         request["items"] = items
@@ -328,7 +328,7 @@ def find_directory(tree: list[dict], wanted: str) -> dict:
     """The one directory a name, a path ("常规素材/双端共用-视频", any end of the full path) or an ID means."""
     every = flatten_directories(tree)
     want = [js.trim(s) for s in wanted.split("/") if js.trim(s)]
-    need(len(want) > 0, "上传目录为空")
+    need(len(want) > 0, "the upload directory is empty")
     if re.fullmatch(r"[0-9]+", js.trim(wanted)):
         found = [d for d in every if d["id"] == int(js.trim(wanted))]
     else:
@@ -338,8 +338,8 @@ def find_directory(tree: list[dict], wanted: str) -> dict:
             return all(0 <= start + i < len(parts) and parts[start + i] == w for i, w in enumerate(want))
 
         found = [d for d in every if matches(d)]
-    need(len(found) > 0, f"CLS 里没有上传目录“{wanted}”")
-    need(len(found) == 1, f"上传目录“{wanted}”不唯一（{'；'.join(d['path'] for d in found[:5])}），请写出上一级目录")
+    need(len(found) > 0, f"CLS has no upload directory \"{wanted}\"")
+    need(len(found) == 1, f"the upload directory \"{wanted}\" is not unique ({'; '.join(d['path'] for d in found[:5])}): give its parent too")
     return {"id": found[0]["id"], "path": found[0]["path"]}
 
 
@@ -350,7 +350,7 @@ def _person(people: list[dict], wanted: str, label: str) -> dict:
     """
     if re.fullmatch(r"[0-9]+", wanted):
         by_id = next((p for p in people if p.get("id") == int(wanted)), None)
-        need(by_id, f"{label} 不在可选的人里")
+        need(by_id, f"{label} is not among the people on offer")
         return {"id": by_id["id"], "name": by_id["name"]}
     users = [{**p, "status": 1, "roles": []} for p in people]
     found = match_user(users, wanted, False, label)
@@ -371,9 +371,9 @@ def match_people(options: dict, wanted: dict) -> dict:
 
     result: dict[str, Any] = {}
     if wanted.get("creator") is not None:
-        result["creator"] = one(options["creators"], wanted["creator"], f"创意人“{wanted['creator']}”")
+        result["creator"] = one(options["creators"], wanted["creator"], f"创意人 \"{wanted['creator']}\"")
     if wanted.get("producers") is not None:
-        result["producers"] = [one(options["producers"], name, f"制作人“{name}”") for name in wanted["producers"]]
+        result["producers"] = [one(options["producers"], name, f"制作人 \"{name}\"") for name in wanted["producers"]]
     return result
 
 
@@ -391,7 +391,7 @@ def _material_type(types: list[dict], wanted: Optional[str], kind: str) -> dict:
     """The 素材类型 a name or ID means; without one, by what the file is."""
     ident = wanted if wanted is not None else TYPE_OF_KIND[kind]
     found = [t for t in types if t["id"] == ident or t["name"] == ident]
-    need(len(found) == 1, f"CLS 素材类型里没有“{ident}”")
+    need(len(found) == 1, f"CLS has no 素材类型 \"{ident}\"")
     return {"id": found[0]["id"], "name": found[0]["name"]}
 
 
@@ -593,14 +593,14 @@ def parse_numbers(text: str) -> list[int]:
     out: list[int] = []
     for part in [p for p in re.split(r"[,，、;；\s]+", text) if p]:
         m = re.fullmatch(r"(?:GOFCN)?([0-9]{1,9})(?:[-~～至](?:GOFCN)?([0-9]{1,9}))?", part, re.IGNORECASE)
-        need(m, f"看不懂的编号：{part}（写成 67680、GOFCN67680 或 67680-67683）")
+        need(m, f"cannot read the number {part} (write 67680, GOFCN67680 or 67680-67683)")
         start = int(m.group(1))
         stop = start if m.group(2) is None else int(m.group(2))
-        need(start > 0 and stop >= start and stop - start < 500, f"编号范围不对：{part}")
+        need(start > 0 and stop >= start and stop - start < 500, f"invalid number range: {part}")
         for n in range(start, stop + 1):
             if n not in out:
                 out.append(n)
-    need(0 < len(out) <= 500, "要写 1 到 500 个编号")
+    need(0 < len(out) <= 500, "give 1 to 500 numbers")
     return out
 
 
@@ -609,7 +609,7 @@ LISTED_FILES = 30
 
 
 def _grouped(problems: list[dict]) -> str:
-    """Problems grouped by what is wrong, each with the files it concerns ("创意人未定：a.mp4、b.mp4 等 40 个文件")."""
+    """Problems grouped by what is wrong, each with the files it concerns ("创意人 not decided: a.mp4, b.mp4 and 38 more files")."""
     by_reason: dict[str, list[str]] = {}
     for p in problems:
         by_reason.setdefault(p["reason"], [])
@@ -620,17 +620,17 @@ def _grouped(problems: list[dict]) -> str:
         if not files:
             out.append(reason)
         else:
-            more = f" 等 {len(files)} 个文件" if len(files) > LISTED_FILES else ""
-            out.append(f"{reason}：{'、'.join(files[:LISTED_FILES])}{more}")
-    return "；".join(out)
+            more = f" and {len(files) - LISTED_FILES} more files" if len(files) > LISTED_FILES else ""
+            out.append(f"{reason}: {', '.join(files[:LISTED_FILES])}{more}")
+    return "; ".join(out)
 
 
 def _unusable(name: Optional[str]) -> Optional[str]:
     """Why a 素材名称 cannot name a creative, or None when it can."""
     if not name:
-        return "为空或算不出来"
+        return "is empty or cannot be worked out"
     if re.search(r"[\\/]", name):
-        return "含 / 或 \\（CLS 的创意名称里不能有）"
+        return "contains / or \\ (a CLS creative name cannot)"
     return None
 
 
@@ -652,13 +652,13 @@ def _number_by_name(body: str, named: dict[str, list[dict]], variants: bool) -> 
     base = body
     if variants and not numbers_of(body):
         bases = [b for b in variant_bases(body) if numbers_of(b)]
-        listing = "；".join("、".join(f"GOFCN{n}_{b}" for n in numbers_of(b)) for b in bases)
-        need(len(bases) <= 1, f"文件名“GOFCNxxxxx_{body}”可以是进度表几行的变体（{listing}）：用 items[].number 写明是哪一行")
+        listing = "; ".join(", ".join(f"GOFCN{n}_{b}" for n in numbers_of(b)) for b in bases)
+        need(len(bases) <= 1, f"the file name \"GOFCNxxxxx_{body}\" can be a variant of several progress-sheet rows ({listing}): name the row with items[].number")
         if bases:
             base = bases[0]
     numbers = numbers_of(base)
-    need(len(numbers) > 0, f"文件名的 GOFCN 编号待定，进度表里还没有素材名称为“GOFCN<编号>_{body}”{'或它开头部分（变体合并到的那一行）' if variants else ''}的行：这批素材要先登记（为这些文件追加进度表的行，不建 CLS 单），再上传；已经登记、只是名称不同的，用 items[].number 写明是哪一行")
-    need(len(numbers) == 1, f"进度表里有 {len(numbers)} 行的素材名称是“GOFCN<编号>_{base}”（{'、'.join(f'GOFCN{n}' for n in numbers)}）：用 items[].number 写明是哪一行")
+    need(len(numbers) > 0, f"the file name's GOFCN number is open and the progress sheet has no row whose 素材名称 is \"GOFCN<number>_{body}\"{' or its start (the row the variants merge into)' if variants else ''}: register these materials first (append their rows, no CLS ticket), then upload; for rows registered under another name, name the row with items[].number")
+    need(len(numbers) == 1, f"{len(numbers)} progress-sheet rows have the 素材名称 \"GOFCN<number>_{base}\" ({', '.join(f'GOFCN{n}' for n in numbers)}): name the row with items[].number")
     return {"number": numbers[0], "body": base}
 
 
@@ -694,28 +694,28 @@ def _row_of(material: dict, item: dict, rows: dict[int, list[dict]], named: dict
     by = "item" if "number" in item else "name" if pending is not None else "file_name"
     by_name = _number_by_name(pending, named, variants) if pending is not None else None
     number = item["number"] if "number" in item else by_name["number"] if by_name else material["number"]
-    need(number is not None, "文件名不是进度表里的素材名称，也不带 GOFCN 编号：按需求文档、脚本内容判断它是进度表的哪一行，用 items[].number 写明")
+    need(number is not None, "the file name is no 素材名称 of the progress sheet and has no GOFCN number: work out its row from the requirement documents and scripts and give it in items[].number")
     found = rows.get(number)
     if found is None:
         found = [r for r in named.get(by_name["body"] if by_name else "", []) if r["number"] == number] if named.get(by_name["body"] if by_name else "") is not None else []
-    need(len(found) > 0, f"进度表里没有 GOFCN{number}{'（编号取自文件名）' if by == 'file_name' else ''}")
+    need(len(found) > 0, f"the progress sheet has no GOFCN{number}{' (the number in the file name)' if by == 'file_name' else ''}")
     if "sheet" in item:
         tabs = list(dict.fromkeys(r["sheet"] for r in found))
         found = [r for r in found if r["sheet"] == item["sheet"]]
-        need(len(found) > 0, f"进度表的分表“{item['sheet']}”里没有 GOFCN{number}（它在 {'、'.join(tabs)}）")
+        need(len(found) > 0, f"the progress-sheet tab \"{item['sheet']}\" has no GOFCN{number} (it is on {', '.join(tabs)})")
     row = found[0]
-    where = "、".join(f"{r['sheet']} 第 {r['row']} 行" for r in found)
-    advice = "用 items[].sheet 写明是哪个分表的那一行" if len({r["sheet"] for r in found}) == len(found) else "同一个分表里重号，请用户在进度表里核对后重新做计划"
+    where = ", ".join(f"{r['sheet']} row {r['row']}" for r in found)
+    advice = "name the tab with items[].sheet" if len({r["sheet"] for r in found}) == len(found) else "a number repeated within one tab: the user checks the progress sheet, then plan again"
     need(all(r["name"] == row["name"] and r["supplier"] == row["supplier"] and r["reviewer"] == row["reviewer"] for r in found),
-         f"进度表里 GOFCN{number} 有 {len(found)} 行，内容不同（{where}）：{advice}")
+         f"GOFCN{number} is on {len(found)} progress-sheet rows that differ ({where}): {advice}")
     need(by != "file_name" or not row["name"] or _named_as(material, row["name"]) or (variants and _variant_tail(material, row) is not None),
-         f"文件名里的 GOFCN{number} 那一行的素材名称是“{js.to_str(row['name'])}”，和文件名不同{'，文件名也不以它开头（不是它的变体）' if variants else ''}：这个编号可能是它参考的初版。按需求文档判断这个文件是进度表的哪一行，用 items[].number 写明（确实是 GOFCN{number} 也要写明）")
+         f"the row of GOFCN{number} (the number in the file name) has the 素材名称 \"{js.to_str(row['name'])}\", not the file's name{', and the file name does not start with it (no variant of it)' if variants else ''}: the number may be the earlier piece it builds on. Work out the file's row from the requirement documents and give it in items[].number (GOFCN{number} too, if that is the row)")
     return row, by
 
 
 def _listed_row(r: dict) -> dict:
     """A row as the commands list it to the agent."""
-    return {"number": r["number"], "name": r["name"], "where": f"{r['sheet']} 第 {r['row']} 行"}
+    return {"number": r["number"], "name": r["name"], "where": f"{r['sheet']} row {r['row']}"}
 
 
 def registered_row(material: dict, by_number: dict[int, list[dict]], by_body: dict[str, list[dict]]) -> Optional[dict]:
@@ -760,9 +760,9 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
     options = data["options"]
     materials = data["materials"]
     existing: set[str] = data.get("existing") or set()
-    need(options["can_upload"], f"CLS 账号“{options['account']['name']}”在 {options['game']['code']} 没有上传创意的权限")
+    need(options["can_upload"], f"the CLS account \"{options['account']['name']}\" may not upload creatives in {options['game']['code']}")
     by_sheet = request.get("progress") is not False
-    need(not by_sheet or data.get("progress") is not None, "没有读取进度表，定不了素材名称")
+    need(not by_sheet or data.get("progress") is not None, "the progress sheet was not read: no 素材名称 can be decided")
     problems: list[dict] = []
     skipped = list(data["skipped"])
     by_file: dict[str, dict] = {}
@@ -770,8 +770,8 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
         matches = [m for m in materials if m["file_name"] == item["file"] or m["file"] == os.path.abspath(item["file"]) or m["name"] == item["file"]
                    or m.get("origin") == item["file"]]
         if len(matches) != 1:
-            listed = "、".join(m.get("origin") or m["file"] for m in matches)
-            problems.append({"reason": f"items 里的“{item['file']}”{f'对应多个文件（{listed}），写成其中一个' if matches else '不在要上传的文件里'}"})
+            listed = ", ".join(m.get("origin") or m["file"] for m in matches)
+            problems.append({"reason": f"items names \"{item['file']}\", which {f'matches several files ({listed}): name one of them' if matches else 'is not among the files to upload'}"})
             continue
         by_file[matches[0]["file"]] = item
     default_directory = find_directory(options["directories"], request.get("directory") or DEFAULT_DIRECTORY)
@@ -781,13 +781,13 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
     for material in materials:
         item = by_file.get(material["file"]) or {"file": material["file_name"]}
         if item.get("skip"):
-            skipped.append({"file": material["file"], "reason": "按要求不上传"})
+            skipped.append({"file": material["file"], "reason": "skipped as asked"})
             continue
         label = material.get("origin") or material["file_name"]
         # CLS makes one creative of one content (by its MD5): the second copy would be refused at the create, after its row was registered.
         twin = by_content.get(material["md5"])
         if twin:
-            problems.append({"reason": f"和 {twin} 内容完全相同（同一个文件的两份）：CLS 一份内容只建一个创意，只上传其中一个，另一个用 items[].skip 不上传", "file": label})
+            problems.append({"reason": f"the same content as {twin} (one file twice): CLS makes one creative of one content, so upload one and give the other items[].skip", "file": label})
             continue
         by_content[material["md5"]] = label
         bound = None
@@ -802,10 +802,10 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
         # without the sheet, the file's own name or items[].name.
         why = _unusable(row["name"]) if row else None
         if row and why and "name" not in item:
-            problems.append({"reason": f"进度表 GOFCN{row['number']}（{row['sheet']} 第 {row['row']} 行）的素材名称{why}：请用户在进度表补正后重新做计划，或确认一个名称后用 items[].name 写明", "file": label})
+            problems.append({"reason": f"the 素材名称 of GOFCN{row['number']} ({row['sheet']} row {row['row']}) {why}: the user fixes the progress sheet and the upload is planned again, or the user confirms a name, given in items[].name", "file": label})
             continue
         if row and not why and "name" in item:
-            problems.append({"reason": "进度表那一行有素材名称，名称以进度表为准：去掉 items[].name", "file": label})
+            problems.append({"reason": "that progress-sheet row has a 素材名称, which is the name: drop items[].name", "file": label})
             continue
         # With variants, a file goes up as one variant of its row: the 素材名称 and what follows it in the file's name, or items[].variant.
         tail = ""
@@ -818,24 +818,24 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
         key = name.lower()
         if key in named:
             if not row:
-                reason = f"两个文件会得到同一个创意名称“{name}”（{named[key]}、{label}），请改名或只留一个"
+                reason = f"two files would get the same creative name \"{name}\" ({named[key]}, {label}): rename one or keep one"
             elif request.get("variants"):
-                reason = f"两个文件会得到同一个创意名称“{name}”（{named[key]}、{label}）：同一行的几个变体要各有变体名称，文件名里没有的用 items[].variant 写明，同一个文件只留一个"
+                reason = f"two files would get the same creative name \"{name}\" ({named[key]}, {label}): each variant of a row needs its own variant name (give it in items[].variant when the file name has none); of one file keep one"
             else:
-                reason = f"两个文件对应进度表同一行 GOFCN{row['number']}（{named[key]}、{label}），只能留一个"
+                reason = f"two files are the same progress-sheet row GOFCN{row['number']} ({named[key]}, {label}): keep one"
             problems.append({"reason": reason})
         else:
             named[key] = label
         if name in existing:
             if not bound:
-                reason = "CLS 已有同名创意（CLS 会拒绝整批上传），请改名或不上传"
+                reason = "CLS has a creative of this name already (it would refuse the whole upload): rename it or leave it out"
             elif bound[1] != "item":
-                reason = "CLS 已有同名创意，这个文件像是已经传过（CLS 会拒绝整批上传）：已经传过的就不再传"
+                reason = "CLS has a creative of this name already, so the file looks uploaded before (CLS would refuse the whole upload): do not upload it again"
             else:
-                reason = "CLS 已有这一行的创意（CLS 会拒绝整批上传）：已经传过的就不再传，否则核对 items[].number"
+                reason = "CLS has this row's creative already (it would refuse the whole upload): do not upload it again, or check items[].number"
             problems.append({"file": f"{label} → {name}" if renamed else name, "reason": reason})
         try:
-            need(not re.search(r"[\\/]", name), "创意名称不能含 / 或 \\")
+            need(not re.search(r"[\\/]", name), "a creative name cannot contain / or \\")
             directory = find_directory(options["directories"], item["directory"]) if item.get("directory") else default_directory
             kind_type = _material_type(options["types"], item.get("type"), material["kind"])
             # 创意人 / 制作人: the file's own setting, then the request's, then the file's row of the progress sheet. A finished material was made
@@ -844,24 +844,24 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
             row_producers = split_names(row["supplier"]) if row else []
             producer_names = item.get("producers") if item.get("producers") is not None else request.get("producers") if request.get("producers") is not None else (row_producers or None)
             row_number = row["number"] if row else None
-            no_creator = f"（进度表 GOFCN{row_number} 的创意者脚本审核人为空）" if row else ""
-            no_producer = (f"（进度表 GOFCN{row_number} 的设计师供应商为空，供应商就是审核人本人时进度表留空：问用户素材是谁做的（多半是审核人本人），"
-                           "写在 items[].producers）") if row else ""
-            need(creator_name and js.trim(creator_name), f"创意人未定{no_creator}")
-            need(producer_names and len(producer_names) > 0, f"制作人未定{no_producer}")
+            no_creator = f" (the 创意者脚本审核人 of GOFCN{row_number} in the progress sheet is empty)" if row else ""
+            no_producer = (f" (the 设计师供应商 of GOFCN{row_number} in the progress sheet is empty, as it is when the supplier is the reviewer: ask the user who made the material (most likely the reviewer) "
+                           "and give it in items[].producers)") if row else ""
+            need(creator_name and js.trim(creator_name), f"创意人 not decided{no_creator}")
+            need(producer_names and len(producer_names) > 0, f"制作人 not decided{no_producer}")
 
             # The sheet's short names are not always CLS's (廿十一 / 长沙廿拾一文化传媒有限公司): a refusal says where the name came from, and
             # to name the person for this file only, since a top-level field would replace every other file's people from its own row too.
             def sheet_says(field: str, column: str) -> str:
                 given = item.get(field) if item.get(field) is not None else request.get(field)
                 if row and given is None:
-                    return (f"（这是进度表 GOFCN{row['number']} 的{column}；CLS 里叫法不同，就在这个文件的 items[].{field} 写明 CLS 的名字"
-                            f"（所有文件都一样时才写在顶层 {field}），gof creative options 列出可选的人）")
+                    return (f" (this is the {column} of GOFCN{row['number']} in the progress sheet; when CLS spells it otherwise, give the CLS name in this file's items[].{field}"
+                            f" (in the top-level {field} only when it holds for every file); gof creative options lists the people on offer)")
                 return ""
 
-            creator = _with_hint(lambda: _person(options["creators"], creator_name, f"创意人“{creator_name}”"), sheet_says("creator", "创意者脚本审核人"))
-            producers = [_with_hint(lambda n=n: _person(options["producers"], n, f"制作人“{n}”"), sheet_says("producers", "设计师供应商")) for n in producer_names]
-            need(len({p["id"] for p in producers}) == len(producers), "制作人重复")
+            creator = _with_hint(lambda: _person(options["creators"], creator_name, f"创意人 \"{creator_name}\""), sheet_says("creator", "创意者脚本审核人"))
+            producers = [_with_hint(lambda n=n: _person(options["producers"], n, f"制作人 \"{n}\""), sheet_says("producers", "设计师供应商")) for n in producer_names]
+            need(len({p["id"] for p in producers}) == len(producers), "a 制作人 is given twice")
             source: dict[str, Any] = {"name": "progress" if row and not why else "item" if "name" in item else "file"}
             if tail:
                 source["variant"] = "item" if "variant" in item else "file"
@@ -888,8 +888,8 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
         except Blocked as error:
             problems.append({"reason": error.message, "file": label})
     if not items and not problems:
-        listed = "；".join(f"{os.path.basename(s['file'])}（{s['reason']}）" for s in skipped)
-        raise Blocked("没有可上传的文件" + (f"：{listed}" if skipped else ""))
+        listed = "; ".join(f"{os.path.basename(s['file'])} ({s['reason']})" for s in skipped)
+        raise Blocked("no file to upload" + (f": {listed}" if skipped else ""))
     if problems:
         raise Blocked(_grouped(problems))
     now: datetime = data.get("now") or None
@@ -906,7 +906,7 @@ def build_upload_plan(data: dict, names: Optional[list[str]] = None) -> dict:
 def load_upload_plan(file: str) -> dict:
     plan = read_json(file)
     need(isinstance(plan, dict) and plan.get("schema") == 1 and plan.get("kind") == "creative_upload" and isinstance(plan.get("items"), list)
-         and len(plan["items"]) > 0, "不是上传计划文件")
+         and len(plan["items"]) > 0, "not an upload plan file")
     check_seal(plan, "plan_id")
     return plan
 
@@ -959,7 +959,7 @@ def upload_plan_summary(plan: dict, file: str, limit: int = 40) -> dict:
         entry.update({"type": i["type"]["name"], "creator": i["creator"]["name"], "producers": [p["name"] for p in i["producers"]]})
         row = i["source"].get("progress_row")
         if row:
-            entry["progress_row"] = f"{row['sheet']} 第 {row['row']} 行"
+            entry["progress_row"] = f"{row['sheet']} row {row['row']}"
             entry["row_from"] = "request" if row["by"] == "item" else row["by"]
         listed.append(entry)
     result["items"] = listed
@@ -982,11 +982,11 @@ def upload_events(directory: str) -> list[dict]:
     records: list[dict] = []
     previous = ""
     for offset, file in enumerate(files):
-        need(file == f"{str(offset + 1).zfill(6)}.json", "上传批次记录缺失或顺序异常")
+        need(file == f"{str(offset + 1).zfill(6)}.json", "an upload record is missing or out of order")
         event = read_json(os.path.join(folder, file))
         token = event.get("event_id")
         rest = {k: v for k, v in event.items() if k != "event_id"}
-        need(rest.get("previous") == previous and digest(rest) == token, "上传批次记录被修改")
+        need(rest.get("previous") == previous and digest(rest) == token, "an upload record was modified")
         records.append({**rest, "event_id": token})
         previous = token
     return records

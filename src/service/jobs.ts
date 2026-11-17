@@ -52,7 +52,7 @@ export async function declaredJobs(shared=config.shared,skills=config.skills):Pr
 }
 
 /** Ends a job and whatever it started: on Windows a process's children outlive it unless the tree is ended. */
-function end(child:ChildProcess){
+export function endTree(child:ChildProcess){
   if(child.exitCode!==null||child.signalCode!==null||!child.pid)return;
   if(process.platform==='win32')spawn('taskkill',['/pid',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'}).on('error',()=>child.kill());
   else child.kill('SIGKILL');
@@ -104,7 +104,7 @@ export class Jobs {
       this.children.set(job.name,child);
       const keep=(chunk:Buffer)=>{output=(output+chunk.toString('utf8')).slice(-OUTPUT_KEPT);};
       child.stdout!.on('data',keep);child.stderr!.on('data',keep);
-      const timer=setTimeout(()=>{timedOut=true;end(child);},job.timeoutMinutes*60000);timer.unref();
+      const timer=setTimeout(()=>{timedOut=true;endTree(child);},job.timeoutMinutes*60000);timer.unref();
       const finish=(exit:number|null,error?:string)=>{
         clearTimeout(timer);this.children.delete(job.name);this.running.delete(job.name);
         const tail=safeError(new Error(output.trim().slice(-2000)));
@@ -125,7 +125,7 @@ export class Jobs {
   /** No more runs; what is running is ended and waited for (a few seconds at most). */
   async stop(){
     this.stopped=true;for(const {timer} of this.scheduled.values())clearTimeout(timer);this.scheduled.clear();
-    for(const child of this.children.values())end(child);
+    for(const child of this.children.values())endTree(child);
     await Promise.race([Promise.all(this.running.values()),new Promise(resolve=>setTimeout(resolve,5000).unref())]);
   }
 }

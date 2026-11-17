@@ -1,4 +1,4 @@
-"""Gemini through the internal AI gateway (port of gemini.ts).
+"""Gemini through the internal AI gateway.
 
 Over its REST API with plain HTTP (one endpoint is all it takes): generateContent under /v1/models, the key as x-goog-api-key. The
 gateway has no Files API, so media travels inline. Every call here asks for one JSON answer in JSON mode, its shape described in the
@@ -156,10 +156,6 @@ class GatewayModel:
         return parsed if isinstance(parsed, dict) else {}
 
 
-def gateway_model(gw: Gateway, **options: Any) -> GatewayModel:
-    return GatewayModel(gw, **options)
-
-
 _FENCED = re.compile(r"^```(?:json)?\s*([\s\S]*?)\s*```$")
 
 
@@ -167,14 +163,14 @@ def answer_of(response: dict[str, Any]) -> Any:
     """The JSON of an answer; a filtered one is a refusal the user is told about, a broken one is asked for again."""
     block = (response.get("promptFeedback") or {}).get("blockReason")
     if block:
-        raise Blocked(f"AI 的安全策略拦下了这次请求（{block}）：这类内容大概率过不了审，请人工检查")
+        raise Blocked(f"The AI's safety filter blocked the request ({block}): such content will most likely not pass review; check it by hand")
     candidates = response.get("candidates") or []
     if not candidates or not isinstance(candidates[0], dict):
         raise InvalidAnswer("the answer has no candidate")
     candidate = candidates[0]
     finish = str(candidate.get("finishReason") or "")
     if finish in FILTERED:
-        raise Blocked(f"AI 的安全策略拦下了这次回答（{finish}）：这类内容大概率过不了审，请人工检查")
+        raise Blocked(f"The AI's safety filter blocked the answer ({finish}): such content will most likely not pass review; check it by hand")
     if finish == "MAX_TOKENS":
         raise InvalidAnswer("the answer was cut off")
     parts = (candidate.get("content") or {}).get("parts") or []
@@ -223,25 +219,25 @@ def retryable(error: BaseException) -> bool:
 def explain(error: BaseException, gw: Gateway) -> Blocked:
     """A failure the user (or the administrator) can act on, without the key."""
     if isinstance(error, InvalidAnswer):
-        return Blocked("AI 没有给出完整的结果，请再试一次")
+        return Blocked("The AI did not give a complete answer: try again")
     if isinstance(error, HttpError):
         detail = redact(message_of(error), [gw.key])[:300]
         status = error.status
         if status in (401, 403):
-            return GatewayRefused(f"AI 网关不接受这个 key（HTTP {status}），请联系管理员")
+            return GatewayRefused(f"The AI gateway does not accept the key (HTTP {status}): ask the administrator")
         if status == 404:
-            return GatewayRefused(f"AI 网关上找不到模型 {gw.model}（HTTP 404），请联系管理员")
+            return GatewayRefused(f"The AI gateway has no model {gw.model} (HTTP 404): ask the administrator")
         if status == 408:
-            return GatewayDown("AI 网关超时（HTTP 408），稍后再试")
+            return GatewayDown("The AI gateway timed out (HTTP 408): try again later")
         if status == 413:
-            return Blocked("文件太大，AI 网关拒收（HTTP 413）：请压缩后再发")
+            return Blocked("The file is too large for the AI gateway (HTTP 413): compress it and send it again")
         if status == 429:
-            return GatewayDown("AI 网关正在限流（HTTP 429），过几分钟再试")
+            return GatewayDown("The AI gateway is rate-limiting (HTTP 429): try again in a few minutes")
         if status >= 500:
-            return GatewayDown(f"AI 网关暂时不可用（HTTP {status}），稍后再试")
-        return Blocked(f"AI 网关拒绝了这次请求（HTTP {status}）：{detail}")
+            return GatewayDown(f"The AI gateway is unavailable (HTTP {status}): try again later")
+        return Blocked(f"The AI gateway refused the request (HTTP {status}): {detail}")
     if _silent(error):
-        return GatewayDown("AI 网关 10 分钟没有回应，稍后再试（视频很大的话先压缩再发）")
+        return GatewayDown("The AI gateway did not answer for 10 minutes: try again later (compress a very large video first)")
     if retryable(error):
-        return GatewayDown("连不上 AI 网关，稍后再试")
-    return Blocked(f"调用 AI 网关失败：{redact(message_of(error), [gw.key])[:300]}")
+        return GatewayDown("Cannot reach the AI gateway: try again later")
+    return Blocked(f"Calling the AI gateway failed: {redact(message_of(error), [gw.key])[:300]}")

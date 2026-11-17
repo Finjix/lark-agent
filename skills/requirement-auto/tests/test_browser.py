@@ -1,5 +1,5 @@
-"""The hidden browser for real: the CLS login, the QR code, the consent page, and the pictures (cls-session.test.ts, shots.test.ts,
-creative-shot.test.ts). Skipped when no Chrome or Edge is installed, as the originals were."""
+"""The hidden browser for real: the CLS login, the QR code, the consent page, and the pictures. Skipped when no Chrome or Edge is
+installed."""
 
 from __future__ import annotations
 
@@ -221,7 +221,7 @@ class BrowserBasics(unittest.TestCase):
     def test_no_browser_named(self) -> None:
         """A browser named that is not there is said, before anything is started (the Python client never sends loopback through a proxy)."""
         missing = os.path.join(temp_dir("cls-proxy-"), "no-such-browser.exe")
-        self.assertRaisesRegex(Blocked, "浏览器没有启动成功", capture_authorization, os.path.join(temp_dir("cls-proxy-"), "p"), 1, exe=missing)
+        self.assertRaisesRegex(Blocked, "the browser did not start", capture_authorization, os.path.join(temp_dir("cls-proxy-"), "p"), 1, exe=missing)
 
 
 @need_browser
@@ -480,13 +480,13 @@ class LoginTests(unittest.TestCase):
             with self.assertRaises(Blocked) as caught:
                 open_session(os.path.join(temp_dir("cls-profile-"), "p"), 4_000, site.origin, EXE)
             message = caught.exception.message
-            self.assertTrue("暂时无法访问" in message and "不要让用户扫码" in message and "cls login" not in message)
+            self.assertTrue("cannot be reached for now" in message and "ask for no scan" in message and "cls login" not in message)
         finally:
             site.close()
         # CLS's page itself does not load.
         down = capture_authorization(os.path.join(temp_dir("cls-profile-"), "p"), 3_000, f"http://127.0.0.1:{closed_port()}", EXE)
         self.assertEqual(down["state"], "unreachable", down)
-        self.assertRegex(down["reason"], "ERR_CONNECTION_REFUSED|连接失败")
+        self.assertRegex(down["reason"], "ERR_CONNECTION_REFUSED|connection failed")
 
 
 def is_png(test: unittest.TestCase, file: str) -> None:
@@ -602,12 +602,12 @@ class ShotChecks(unittest.TestCase):
         output = os.path.join(directory, "progress.png")
         early = main(["feishu", "screenshot", "--batch", directory, "--output", output], None, ONLINE)
         self.assertEqual(early["code"], 2)
-        self.assertRegex(early["result"]["reason"], "还没有追加并验收")
+        self.assertRegex(early["result"]["reason"], "has not appended and verified rows yet")
         no_draft = main(["cls", "screenshot", "--batch", directory, "--output", os.path.join(directory, "draft.png")], None, ONLINE)
         self.assertEqual(no_draft["code"], 2)
-        self.assertRegex(no_draft["result"]["reason"], "还没有保存任何 CLS 草稿")
+        self.assertRegex(no_draft["result"]["reason"], "has no CLS draft saved yet")
         self.assertFalse(os.path.exists(output))
-        self.assertRegex(not_loaded("进度表", "net::ERR_CONNECTION_REFUSED"), "^进度表打不开（net::ERR_CONNECTION_REFUSED）：.*不是登录失效")
+        self.assertRegex(not_loaded("progress sheet", "net::ERR_CONNECTION_REFUSED"), r"^the progress sheet did not open \(net::ERR_CONNECTION_REFUSED\): .*the login has not lapsed")
 
 
 @need_browser
@@ -622,7 +622,7 @@ class ShotTests(unittest.TestCase):
             self.assertEqual(result["state"], "ok", result)
             is_png(self, output)
             self.assertEqual(range_asked(site), "A120:AB131")
-            self.assertRaisesRegex(Blocked, "不覆盖", sheet_screenshot, temp_dir("sheet-profile-"), output, url, None, EXE)
+            self.assertRaisesRegex(Blocked, "not overwritten", sheet_screenshot, temp_dir("sheet-profile-"), output, url, None, EXE)
         finally:
             site.close()
 
@@ -646,7 +646,7 @@ class ShotTests(unittest.TestCase):
             self.assertEqual(result["state"], "ok", result)
             is_png(self, output)
             self.assertIn("/api/workflow/script/5001?game_id=94", site.seen, f"the draft was asked for in GOFCN: {site.seen}")
-            self.assertRaisesRegex(Blocked, "不覆盖", draft_screenshot, temp_dir("draft-profile-"), output, 5001, GAME, site.origin, EXE)
+            self.assertRaisesRegex(Blocked, "not overwritten", draft_screenshot, temp_dir("draft-profile-"), output, 5001, GAME, site.origin, EXE)
         finally:
             site.close()
 
@@ -701,7 +701,7 @@ class ShotTests(unittest.TestCase):
             self.assertEqual([result["rows"], result["total"]], [2, "共 2 条"])
             is_png(self, output)
             self.assertIn("/api/creatives?game_id=94&upload_users[]=1565", site.seen, f"the list asked for GOFCN and this account: {site.seen}")
-            self.assertRaisesRegex(Blocked, "不覆盖", list_screenshot, temp_dir("shot-profile-"), output, 1565, GAME, origin=site.origin, exe=EXE)
+            self.assertRaisesRegex(Blocked, "not overwritten", list_screenshot, temp_dir("shot-profile-"), output, 1565, GAME, origin=site.origin, exe=EXE)
         finally:
             site.close()
 

@@ -78,16 +78,16 @@ class GeminiTest(unittest.TestCase):
             self.assertEqual(busy.ask().attempts, 3)
             self.assertEqual(busy.waits, [0.005, 0.02])
         with Gemini([lambda: json_reply({}, 503)] * 3) as tired:
-            self.assertRegex(str(tired.error()), r"AI 网关暂时不可用（HTTP 503）")
+            self.assertRegex(str(tired.error()), r"AI gateway is unavailable \(HTTP 503\)")
         with Gemini([lambda: json_reply({"error": {"code": 400, "message": "Request payload size exceeds the limit (key sk-test-key-123)"}}, 400)]) as refused:
             error = refused.error()
-            self.assertRegex(str(error), r"AI 网关拒绝了这次请求（HTTP 400）")
+            self.assertRegex(str(error), r"AI gateway refused the request \(HTTP 400\)")
             self.assertNotIn("sk-test-key-123", str(error))
             self.assertEqual(len(refused.sent), 1, "a refusal is not sent again")
         with Gemini([lambda: json_reply({}, 401)]) as g:
-            self.assertRegex(str(g.error()), "不接受这个 key")
+            self.assertRegex(str(g.error()), "does not accept the key")
         with Gemini([lambda: json_reply({}, 404)]) as g:
-            self.assertRegex(str(g.error()), r"找不到模型 gemini-3\.8-flash")
+            self.assertRegex(str(g.error()), r"has no model gemini-3\.8-flash")
         # A key or model the gateway refuses is how it is set up, not this request; a gateway that timed out the request is only slow now.
         with Gemini([lambda: json_reply({}, 403)]) as g:
             self.assertIsInstance(g.error(), GatewayRefused)
@@ -96,17 +96,17 @@ class GeminiTest(unittest.TestCase):
             self.assertIsInstance(late, GatewayDown)
             self.assertIn("HTTP 408", str(late))
         with Gemini([lambda: answer("", "PROHIBITED_CONTENT")]) as g:
-            self.assertRegex(str(g.error()), "安全策略拦下了这次回答")
+            self.assertRegex(str(g.error()), "safety filter blocked the answer")
         with Gemini([lambda: json_reply({"promptFeedback": {"blockReason": "OTHER"}})]) as g:
-            self.assertRegex(str(g.error()), "安全策略拦下了这次请求")
+            self.assertRegex(str(g.error()), "safety filter blocked the request")
         with Gemini([lambda: answer("x", "MAX_TOKENS")] * 3) as g:
-            self.assertRegex(str(g.error()), "没有给出完整的结果")
+            self.assertRegex(str(g.error()), "did not give a complete answer")
         with Gemini([lambda: Reply(drop=True), lambda: answer('{"ok":true}')]) as offline:
             self.assertEqual(offline.ask().data, {"ok": True}, "a dropped connection is tried again")
         with Gemini([lambda: Reply(delay=1.0, body=b"{}"), lambda: answer('{"ok":true}')], timeout=0.2) as silent:
             error = silent.error()
             self.assertIsInstance(error, GatewayDown)
-            self.assertRegex(str(error), "10 分钟没有回应")
+            self.assertRegex(str(error), "did not answer for 10 minutes")
             self.assertEqual(len(silent.sent), 1, "a gateway that did not answer in time is not asked again")
         with Gemini([lambda: answer('```json\n[{"op": "add"}]\n```')]) as fenced:
             self.assertEqual(fenced.ask().data, [{"op": "add"}], "a fenced answer is taken too")
@@ -116,13 +116,13 @@ class GeminiTest(unittest.TestCase):
         refused = urllib.error.URLError(ConnectionRefusedError(10061, "No connection could be made because the target machine actively refused it"))
         self.assertTrue(retryable(refused))
         self.assertIsInstance(explain(refused, gw), GatewayDown)
-        self.assertEqual(explain(refused, gw).message, "连不上 AI 网关，稍后再试")
+        self.assertEqual(explain(refused, gw).message, "Cannot reach the AI gateway: try again later")
         unknown = urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))
-        self.assertEqual(explain(unknown, gw).message, "连不上 AI 网关，稍后再试")
+        self.assertEqual(explain(unknown, gw).message, "Cannot reach the AI gateway: try again later")
         silent = urllib.error.URLError(TimeoutError("timed out"))
         self.assertFalse(retryable(silent))
-        self.assertRegex(explain(silent, gw).message, "10 分钟没有回应")
-        self.assertRegex(explain(ValueError("odd"), gw).message, "^调用 AI 网关失败：odd")
+        self.assertRegex(explain(silent, gw).message, "did not answer for 10 minutes")
+        self.assertRegex(explain(ValueError("odd"), gw).message, "^Calling the AI gateway failed: odd")
         self.assertNotIsInstance(explain(ValueError("odd"), gw), GatewayDown)
         self.assertIsInstance(explain(ValueError("odd"), gw), Blocked)
 

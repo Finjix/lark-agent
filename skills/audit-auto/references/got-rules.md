@@ -1,320 +1,325 @@
 <!--
-GOT 的固定审片规范，审片时去掉这段注释后原样交给模型（Gemini）。
-来源：《GOT 广告素材审核规则（初版 V0.3）》https://centurygames.feishu.cn/docx/Kqhydk1dIopY8KxXOX7cOAeJn3g（2026-11-04，供团队审阅的初稿）
-整理于 2026-11-04：内容照原文，只改成逐条列出（每项「要求」是原文的通过要求，「要改」是原文的需修改情况）；各段的「依据：S…」和第十二节的资料来源没有带过来；
-第一节最后一条（审片时看不到策划方案）是整理时加的，免得模型把按方案验收的数值、取舍都报成需确认；
-看素材查不了的没有收录：送审和反馈流程（第十节）、AI 片头的共享盘归档和 CLS 上传标签；第十一节自查清单是前面各条的汇总，也没有收录；
-这里的第十节「命名」取自原文第十节的交付与归档和第十二节的命名待确认项；原文第十二节的差异项、待确认项只收了审片用得上的（这里的第十一节「不要当成统一要求的」）。
-规则出了新版，照新版改这个文件，再重新打包、部署插件。
+GOT's fixed review spec. For a review, this comment is removed and the rest is given to the model (Gemini) as it is.
+Source: 《GOT 广告素材审核规则（初版 V0.3）》 https://centurygames.feishu.cn/docx/Kqhydk1dIopY8KxXOX7cOAeJn3g (2026-11-04, a first draft for the team to review)
+Written up 2026-11-04 and translated into English 2026-11-17: the content follows the original, only listed item by item ("Required" is
+the original's pass requirement, "要改" (to fix) the cases it says need changing); quoted Chinese terms and examples are kept verbatim.
+Left out: each part's 「依据：S…」 references and section 12's list of sources. The last item of section 1 (the review cannot see the
+plan) was added when writing it up, so that the model does not report every number and choice that is checked against the plan as
+需确认. Left out because the material cannot show them: the submission and feedback process (original section 10), the shared-drive
+filing and CLS upload tags of AI openings; the original section 11's self-check list only sums up the items before it and is left out
+too. Section 10 here (命名) comes from the original's section 10 on delivery and filing and section 12's open naming questions; of the
+original section 12's differences and open questions only those a review can use are kept (section 11 here, 不要当成统一要求的).
+When a new version of the rules comes out, update this file to it. Section titles keep their Chinese names (红线, …): the review prompt
+and the dynamic spec's categories refer to them.
 -->
 
-# GOT 广告素材审片规范（初版 V0.3）
+# GOT ad material review spec (first draft V0.3)
 
-适用于 GOT 以 3D 玩法为主的广告素材，也补充迭代、解说、AI 和真人素材的要求。核心是让观众在最终成片里看清玩法、看懂变化，画面、声音和节奏共同服务于创意。
-这份是供团队审阅的初稿；这里没写到、拿不准的，先发审核群问。
+For GOT's ad material, mostly 3D gameplay, with requirements added for iterations, commentary, AI and live-action material. The core: viewers can see the gameplay and understand what changes in the finished video; picture, sound and pacing all serve the creative idea.
+This is a first draft for the team to review; whatever it does not cover, or you are unsure of, ask in the review group first.
 
-## 一、审核口径
+## 1. 审核口径 (review basis)
 
-- 以已确认的策划方案、实际成片镜头和对应投放版本为依据。玩法策略、制作质量和投放适用要求分别核对，写清问题落在哪一项。
-- 地编、模型、灯光、特效和动画都在实际出片镜头、画幅和观看尺寸下判断，同时看关键过程，不能只看一张截图。
-- 清楚、统一、易懂是质量要求；资产的精细度和细节数量要服务于机制表达。
-- 某条素材的塔数、箭矢数量、路线、阵型、时长等，按该条方案验收，不能把单个案例的数值扩成全部 GOT 素材的统一要求。
-- GOF 的国内平台禁词、英雄福利、熔炉战力、明星头衔、编号这些口径，不直接套用到 GOT。
-- 机制预审可以用临时资产；成片按本规范的画面、声音和交付要求验收。预审通过不等于成片通过。
-- 授权或宣传口径有问题、核心玩法看不懂、关键因果错误，整条不通过；局部画面、声音、字幕或衔接问题改完复审。
-- 审片时看不到策划方案：按方案验收的数值和取舍（塔数、路数、时长、比例、速度快慢）不查，只查成片本身看不看得懂、前后一不一致；用户在备注里说了方案要求的，按备注查。
+- Judge by the confirmed plan (策划方案), the shots of the actual finished video and the matching delivery version. Check gameplay strategy, production quality and delivery requirements separately, and say which of them a problem falls under.
+- Judge level design (地编), models, lighting, effects and animation in the shots, frame format and viewing size of the actual video, and look at the key processes too, not at a single screenshot.
+- Clear, consistent and easy to understand is the quality requirement; the refinement and amount of detail of assets serve showing the mechanics.
+- One material's number of towers, number of arrows, routes, formations, length and the like are checked against that material's plan: do not turn one case's numbers into a rule for all GOT material.
+- GOF's rules for Chinese platforms' banned words, hero rewards, furnace combat power, celebrity titles and numbering do not apply to GOT as they are.
+- A mechanics pre-review may use temporary assets; the finished video is checked against this spec's picture, sound and delivery requirements. Passing the pre-review is not passing as a finished video.
+- A problem with licences or advertising claims, core gameplay that cannot be understood, or a wrong key cause and effect fails the whole video; local problems with the picture, sound, subtitles or transitions are fixed and reviewed again.
+- The review cannot see the plan: do not check the numbers and choices that are checked against the plan (number of towers, number of routes, length, proportions, how fast or slow); check only whether the finished video itself is understandable and consistent from start to end. Where the user's note gives what the plan requires, check against the note.
 
-## 二、红线：基础底线与宣传口径
+## 2. 红线 (red lines): basic limits and advertising claims
 
-### 版权、肖像与品牌
-- 要求：音乐、视频、图片、模型、字体和真人素材都能确认商用范围；明星、网红、影视片段、第三方标识和相似 IP 形象单独核对授权。
-- 要改：来源和授权不清；把网络内容直接混剪；AI 画面出现可识别的第三方品牌或近似 IP。
+### 版权、肖像与品牌 (copyright, portraits and brands)
+- Required: the commercial-use scope of music, video, images, models, fonts and live-action footage can be confirmed; stars, influencers, film and TV clips, third-party marks and look-alike IP figures have their licences checked one by one.
+- 要改: unclear source or licence; internet content mashed up as it is; an AI picture showing a recognisable third-party brand or a near-copy of an IP.
 
-### 个人信息与名誉
-- 要求：玩家昵称、ID、联盟名、聊天截图等按确认口径脱敏；涉及公司、员工或玩家的剧情先确认使用范围。
-- 要改：暴露真实个人信息；用贬损、羞辱玩家或工作人员的表达。
+### 个人信息与名誉 (personal information and reputation)
+- Required: player nicknames, IDs, alliance names, chat screenshots and the like are anonymised as agreed; plots involving the company, staff or players have their scope of use confirmed first.
+- 要改: real personal information exposed; wording that belittles or humiliates players or staff.
 
-### 内容底线
-- 要求：不出现色情、性暗示、歧视、仇恨、猎奇伤害、血液喷溅、肢解；涉及政治、宗教、烟酒、赌博暗示的内容要先确认。
-- 要改：靠低俗或伤害画面吸睛；战斗反馈依赖血腥细节；出现赌博式的奖励暗示。
+### 内容底线 (content limits)
+- Required: no pornography, sexual innuendo, discrimination, hatred, sensational injury, splattering blood or dismemberment; content touching politics, religion, tobacco and alcohol, or hinting at gambling is confirmed first.
+- 要改: catching the eye with vulgar or injurious images; combat feedback that relies on gory detail; rewards presented in a gambling-like way.
 
-### 产品与宣传一致
-- 要求：游戏版本、语言和投放地区明确；英雄、等级、功能、奖励、福利、活动、人数和成长数值用已确认的资料。
-- 要改：混入其他游戏或版本对不上的界面；自己编福利、排名、人数、付费效果、解锁条件或成长承诺。
+### 产品与宣传一致 (product and advertising consistent)
+- Required: the game version, language and delivery region are clear; heroes, levels, features, rewards, benefits, events, player numbers and growth numbers use confirmed information.
+- 要改: screens from other games or from a version that does not match mixed in; made-up rewards, rankings, player numbers, effects of paying, unlock conditions or growth promises.
 
-### 创意表现与真实玩法
-- 要求：创意演示和实机内容按确认的范围使用；出现「广告与游戏一致」这类承诺时，逐项核实；提示语按投放版本提供。
-- 要改：把创意演示包装成实机保证；功能名称、解锁等级、玩法承诺和对应版本不符。
+### 创意表现与真实玩法 (creative presentation and real gameplay)
+- Required: creative demos and real gameplay are used within the confirmed scope; a promise like 「广告与游戏一致」 (the ad is the same as the game) is verified item by item; the disclaimer follows the delivery version.
+- 要改: a creative demo presented as a guarantee of real gameplay; feature names, unlock levels or gameplay promises that do not match the version.
 
-### 界面与引导
-- 要求：交互提示、按钮、手势和落地引导按投放平台确认的样式做；画面里的玩法信息和广告点击入口能区分。
-- 要改：仿系统故障、到账或中奖提示；用点不了的假关闭、假领取界面误导点击。
+### 界面与引导 (UI and prompts)
+- Required: interaction hints, buttons, gestures and landing prompts follow the styles the ad platform confirmed; gameplay information in the picture can be told apart from the ad's tap target.
+- 要改: imitating system errors, payment-received or prize notices; fake close or fake claim screens that cannot be tapped, misleading users to tap.
 
-GOT 还没有完整的市场和平台清单。「禁用所有英文」「金额一律去单位」「特定数字或地域元素全部禁用」这些 GOF 个案，不当作 GOT 的通用禁令；具体市场或平台的文案、提示语和交互样式，送审时按对应口径核对。
+GOT has no full list of markets and platforms yet. GOF's individual cases such as 「禁用所有英文」 (no English at all), 「金额一律去单位」 (amounts always without units) and 「特定数字或地域元素全部禁用」 (certain numbers or regional elements banned outright) are not general bans for GOT; a specific market's or platform's copy, disclaimer and interaction styles are checked against its own rules when the material is submitted.
 
-## 三、玩法、创意与整体节奏
+## 3. 玩法、创意与整体节奏 (gameplay, creative idea and overall pacing)
 
-先让观众理解当前目标、压力和解决动作，再看节奏有没有递进。塔防、建造、资源和阵型变化围绕这条素材的核心体验展开。
+First let viewers understand the current goal, the pressure and the action that resolves it, then see whether the pacing builds. Tower defence, building, resources and formation changes revolve around this material's core experience.
 
-### 核心目标
-- 要求：从开场的主要镜头能看懂我方在守什么、敌人从哪里来、玩家在做什么；复合物体的主次和主要威胁明确。
-- 要改：不知道谁是主角、谁是敌人；Boss、木桶和爆出的兵各自作用不清，多个对象重复承担同一功能。
+### 核心目标 (core goal)
+- Required: from the opening's main shots it is clear what our side is defending, where the enemy comes from and what the player is doing; in a compound object, what is primary and what is the main threat are clear.
+- 要改: unclear who the hero is and who the enemy is; the roles of the Boss, the barrels and the soldiers bursting out are each unclear, several objects doing the same job.
 
-### 玩法循环
-- 要求：有建造和战斗时，看得清建造、火力或防御的变化和敌方压力的关系；有资源时，资源的来源、消耗和结果容易懂。
-- 要改：连着展示多个动作却彼此没关系；资源、数值、塔和兵群同时变化，看不出哪个动作带来了结果。
+### 玩法循环 (gameplay loop)
+- Required: where there is building and fighting, the relation between changes in building, firepower or defence and the enemy's pressure is clear; where there are resources, their source, spending and result are easy to understand.
+- 要改: several actions shown in a row with no relation between them; resources, numbers, towers and troops all changing at once, so that it is unclear which action brought the result.
 
-### 规则一致
-- 要求：同一条件下的攻击、目标、射程、碰撞、奖励和惩罚前后一致；有意反转要先交代条件变化，按已有规则自然发生。
-- 要改：同一个没打破的木桶，前面受惩罚、后面没提示就得奖励；前面打得到，后面条件没变却打不到；为推进剧情临时改规则。
+### 规则一致 (consistent rules)
+- Required: under the same conditions, attacks, targets, range, collisions, rewards and penalties are consistent from start to end; an intended reversal first shows the change of conditions and then happens naturally under the existing rules.
+- 要改: the same unbroken barrel is penalised first and later rewarded without any hint; first it can be hit, later it cannot although nothing changed; rules changed on the spot to push the plot.
 
-### 压力可见
-- 要求：用距离、数量密度、推进速度、血量或阵型把威胁表现出来；先让观众明白防线为什么吃力，再触发建塔或强化。
-- 要改：威胁还没建立就自动解决；为制造危机没提示就加速或突然换位；正反馈刚出现就被新事件淹没。
+### 压力可见 (visible pressure)
+- Required: the threat is shown through distance, density of numbers, speed of advance, health or formation; viewers first see why the defence is struggling, then the tower building or strengthening is triggered.
+- 要改: a threat resolved automatically before it is established; speeding up or a sudden change of position without a hint, to create a crisis; positive feedback drowned by a new event as soon as it appears.
 
-### 解决与升级
-- 要求：建塔、升级或调整策略之后，先给出看得出的成功反馈，再逐步露出弱点或新的压力。
-- 要改：第一次攻击就只有落空或伤害减弱，能力还没展示；升级只加装饰；结果没看清就切走。
+### 解决与升级 (resolution and upgrade)
+- Required: after building a tower, upgrading or changing strategy, a visible success comes first, then weaknesses or new pressure are revealed step by step.
+- 要改: the first attack only misses or does less damage before the ability has been shown; an upgrade that only adds decoration; cutting away before the result is clear.
 
-### 递进与变奏
-- 要求：重复段落承担新的作用；重要事件按观众注意力的顺序发生；结尾保留成果展示和完成节点。
-- 要改：多个新事件同时发生；为提速直接批量清场，跳过逐步杀伤或压力释放；为凑时长重复建塔清兵。
+### 递进与变奏 (build-up and variation)
+- Required: repeated passages do a new job; important events happen in the order of the viewer's attention; the ending keeps the display of the result and the completion point.
+- 要改: several new events at once; clearing the field in bulk to speed up, skipping the step-by-step killing or release of pressure; building towers and clearing troops again and again to fill time.
 
-### 信息数量
-- 要求：优先组合已有元素形成新体验，按观众理解的顺序引入新信息；时长按内容需要定。
-- 要改：用额外玩法、复杂 UI 或多种资源解释本来简单的目标。
+### 信息数量 (amount of information)
+- Required: prefer combining existing elements into a new experience, introduce new information in the order viewers understand it; the length is set by what the content needs.
+- 要改: extra gameplay, complex UI or several resources used to explain a goal that is simple.
 
-### 首轮教学
-- 要求：先完整展示一次危机、准备或投入、攻击和反馈，再引入下一层机制；要展示落空时，先让观众知道为什么会命中或落空。
-- 要改：第一轮机制还没看懂就进入升级、换路或特殊单位；看不出当前的等待、失败或下一步需求从哪来。
+### 首轮教学 (first-round teaching)
+- Required: first show one whole round of crisis, preparation or investment, attack and feedback, then introduce the next layer of mechanics; when a miss is to be shown, viewers first know why something hits or misses.
+- 要改: moving on to upgrades, route changes or special units before the first round's mechanics are understood; unclear where the current waiting, failure or next need comes from.
 
-### 状态与触发信号
-- 要求：解除阻挡、冲锋、爆兵、破碎、加速或特殊事件有单一、清楚的触发依据，准备状态和发生顺序看得出来。
-- 要改：蓝兵先冲锋、围栏随后才破；相同的石头在不同位置停留的理由不一致；没有铺垫就触发新机制。
+### 状态与触发信号 (states and trigger signals)
+- Required: removing a block, a charge, soldiers bursting out, breaking, speeding up or a special event has one clear trigger, and the ready state and order of events are visible.
+- 要改: the blue soldiers charge first and the fence breaks only afterwards; identical stones stop in different places for inconsistent reasons; a new mechanic triggered without set-up.
 
-### 兵线状态与编队
-- 要求：看得出当前是连续推进、分团留白、自然散开、规整队列还是碰撞堆积；状态变化服务于攻击覆盖、危机和段落感。
-- 要改：无意断流削弱压力；为追求整齐破坏爆炸的随机感；要靠成排杀伤时，动作和排布却撑不起整排反馈。
+### 兵线状态与编队 (troop-line states and formations)
+- Required: it is visible whether the troops are advancing continuously, in groups with gaps, scattering naturally, in neat ranks or piling up in a collision; changes of state serve attack coverage, crisis and the sense of passages.
+- 要改: an unintended break in the flow weakening the pressure; neatness destroying the randomness of an explosion; killing in rows wanted, but the actions and layout cannot support row-wide feedback.
 
-复查方法：先静音看一遍，能说出「压力来自哪里—做了什么—局势怎样变化」；再带声音看情绪是不是在强化同一个过程。
+How to check: watch it once on mute and be able to say 「压力来自哪里—做了什么—局势怎样变化」 (where the pressure comes from, what was done, how the situation changes); then watch with sound and check that the mood reinforces the same process.
 
-## 四、地编、模型与材质
+## 4. 地编、模型与材质 (level design, models and materials)
 
-地编先保证玩法成立、路线清楚，再完善地形和资产的整体美感。细节以实际镜头里有没有作用为准。
+Level design first makes the gameplay work and the routes clear, then perfects the overall beauty of terrain and assets. Detail counts only where it does something in the actual shot.
 
-### 功能地形
-- 要求：保留需要的道路、弯道、阻挡和空间关系；路线有主次，地形服务于弹道、攻击覆盖和兵线变化；双路或绕行要能看出作用。
-- 要改：为容纳机制硬造绕路；没有主次的分叉分散注意力；弯道、高差和装饰过多；看得见的边界和实际阻挡不一致。
+### 功能地形 (functional terrain)
+- Required: the roads, bends, blocks and spatial relations needed are kept; routes have a primary and secondary one, the terrain serves trajectories, attack coverage and troop-line changes; double routes or detours show what they are for.
+- 要改: detours forced in to fit a mechanic; forks with no primary one scattering attention; too many bends, height differences and decorations; visible borders that do not match the actual blocks.
 
-### 道路与高差
-- 要求：路面起伏服务于设计；两侧高度和连接关系看起来合理，道路边缘不被误读成斜坡或说不清的结构。
-- 要改：不是设计需要的凹陷、折面和高低突变；左右高差造成错误的空间感；墙体降低后看不出阻挡作用。
+### 道路与高差 (roads and height differences)
+- Required: the rise and fall of the road surface serves the design; the heights and connections of both sides look reasonable, and road edges are not misread as slopes or unclear structures.
+- 要改: dips, folded surfaces and abrupt height changes the design does not need; height differences between left and right giving a wrong sense of space; a lowered wall no longer visibly blocking.
 
-### 崖壁与边界
-- 要求：崖顶、崖脚、转角和道路接缝协调，重复单元不过分抢眼；模型摆放组成连续的边界。
-- 要改：突兀的蕾丝边或规律的波浪轮廓；直接旋转模型造成边界生硬、接缝明显；为了露边形成不合理的体块。
+### 崖壁与边界 (cliffs and borders)
+- Required: cliff tops, cliff feet, corners and road seams fit together, repeated units do not stand out too much; models are placed to form a continuous border.
+- 要改: abrupt lacy edges or regular wavy outlines; models simply rotated, making borders stiff and seams obvious; unreasonable masses made to show an edge.
 
-### 构图层次
-- 要求：道路、塔、兵线和城堡层次清楚，背景资产帮助认出环境；空地和装饰有主次。
-- 要改：树、山石、前景或建筑挡住核心互动；局部细节过密；背景轮廓抢走主事件的注意力。
+### 构图层次 (composition layers)
+- Required: roads, towers, troop lines and the castle are layered clearly, background assets help identify the environment; open ground and decoration have a primary and secondary.
+- 要改: trees, rocks, the foreground or buildings blocking the core interaction; local detail too dense; background outlines taking attention from the main event.
 
-### 资产辨识
-- 要求：国王、敌我士兵、塔和大怪在成片尺寸下分得清；系列兵种造型语言协调；塔的朝向、功能和升级差异看得出。
-- 要改：拼用不同风格的兵种，看着割裂；缩小后轮廓粘在一起；武器、主体和装饰的颜色互相干扰；只有凑近才看得出细节。
+### 资产辨识 (telling assets apart)
+- Required: the king, our and the enemy's soldiers, towers and big monsters can be told apart at the finished size; a series of unit types shares a consistent design language; towers' orientation, function and upgrade differences are visible.
+- 要改: unit types of different styles put together, looking disjointed; outlines merging when scaled down; weapons, bodies and decorations clashing in colour; details visible only up close.
 
-### 比例与落地
-- 要求：结合兵间距、道路宽度、机位和透视调整角色与建筑比例；接触、落地和距离看得明白。
-- 要改：靠拉高镜头塞下所有资产；调比例让国王和城堡看不见了；近大远小让人误判双方兵量；明显漂浮或穿插，破坏空间判断。
+### 比例与落地 (proportions and grounding)
+- Required: character and building proportions are adjusted together with soldier spacing, road width, camera position and perspective; contact, grounding and distances are clear.
+- 要改: raising the camera to squeeze all assets in; proportions changed so that the king and castle can no longer be seen; perspective (near large, far small) making viewers misjudge the two sides' numbers; obvious floating or clipping breaking spatial judgement.
 
-### 材质与风格
-- 要求：轮廓、描边、材质、配色和细节密度协调；非核心的纹理、缝隙、地边线、孔洞和影子尽量简化，保留识别需要的结构。
-- 要改：描边粗细杂乱；细碎的缝隙和影子增加噪声；高精细节抢走机制重点；材质和配色混杂。
+### 材质与风格 (materials and style)
+- Required: outlines, strokes, materials, colours and detail density are consistent; non-core textures, cracks, ground edge lines, holes and shadows are simplified as far as possible, keeping the structure needed to recognise things.
+- 要改: stroke widths all over the place; fine cracks and shadows adding noise; high-detail elements taking the focus from the mechanic; materials and colours mixed up.
 
-### 复合资产关系
-- 要求：Boss 带着木桶、盾牌或装置时，连接、承载和受击关系好懂；谁负责运输、阻挡、耐久或制造威胁要清楚。
-- 要改：运输物和载体在视觉上脱节；没说明就同时当肉盾、推兵、爆兵；靠加复杂部件解释简单功能。
+### 复合资产关系 (relations in compound assets)
+- Required: when a Boss carries barrels, shields or devices, the connection, carrying and hit relations are easy to understand; it is clear who transports, blocks, endures or creates the threat.
+- 要改: the transported object and its carrier visually disconnected; one thing acting as meat shield, troop pusher and soldier spawner at once without explanation; complex parts added to explain a simple function.
 
-## 五、灯光、色彩与渲染画面
+## 5. 灯光、色彩与渲染画面 (lighting, colour and rendering)
 
-灯光先突出视觉中心，让主体、动作和空间关系清楚；参数按场景和镜头定。
+Lighting first brings out the visual centre, making subjects, actions and spatial relations clear; parameters are set per scene and shot.
 
-### 主体可见
-- 要求：国王、塔、城堡、敌人和关键交互在当前镜头里清楚，主要表面读得出形体。
-- 要改：主体死黑、过曝或被背光压没；只看得到建筑侧墙，核心造型认不出。
+### 主体可见 (subjects visible)
+- Required: the king, towers, castle, enemies and key interactions are clear in the current shot, and the main surfaces read as forms.
+- 要改: a subject pitch-black, overexposed or swallowed by backlight; only a building's side walls visible, its core shape unrecognisable.
 
-### 光影关系
-- 要求：光源方向、投影、接触和受光关系协调，帮助判断地形、资产高度和位置。
-- 要改：阴影明显漂移、悬浮或闪动；光影方向让人误读空间关系。
+### 光影关系 (light and shadow)
+- Required: light direction, cast shadows, contact and lit surfaces are consistent and help judge terrain, asset heights and positions.
+- 要改: shadows obviously drifting, floating or flickering; a light direction that makes the spatial relations misread.
 
-### 整体配色
-- 要求：敌我、道路、背景和奖励区分得开，视觉中心明确；昼夜变化前后都看得懂玩法。
-- 要改：整个画面明显偏红或偏紫；颜色混成一片；夜景氛围盖住关键动作。
+### 整体配色 (overall colour)
+- Required: our side and the enemy, roads, background and rewards can be told apart, with a clear visual centre; the gameplay is understandable before and after a day-night change.
+- 要改: the whole picture obviously tinted red or purple; colours merging into one; a night atmosphere hiding key actions.
 
-### 风格变化
-- 要求：季节、地域或沙漠等迭代在光影、曝光、配色、环境元素和声音上协调。
-- 要改：只堆符号，整体违和；换皮后主体、路线或对抗关系认不清。
+### 风格变化 (style changes)
+- Required: iterations by season, region, desert and the like are consistent in light and shadow, exposure, colours, environment elements and sound.
+- 要改: only symbols piled up, the whole feeling wrong; after a reskin the subjects, routes or the confrontation can no longer be recognised.
 
-### 成片清晰度
-- 要求：按交付尺寸看轮廓、文字和运动中的稳定性，处理明显的锯齿、噪点、闪烁、拖影和单帧异常。
-- 要改：静帧清楚但一动就糊成一团；细小的兵群和箭矢认不出。
+### 成片清晰度 (clarity of the finished video)
+- Required: outlines, text and stability in motion are checked at the delivery size; obvious jaggies, noise, flicker, smearing and single-frame glitches are dealt with.
+- 要改: clear in a still frame but a blur once it moves; small troops and arrows unrecognisable.
 
-## 六、蓝图效果、特效与动画
+## 6. 蓝图效果、特效与动画 (blueprint effects, VFX and animation)
 
-看最终表现是否符合观众直觉：动作、弹道、受击、击退、阵型和奖励之间要有连续、清楚的因果。
+Check that the final result matches the viewer's intuition: actions, trajectories, hits, knockback, formations and rewards follow one another in a continuous, clear cause and effect.
 
-### 建造与升级
-- 要求：角色到位、投入或消耗、建造完成、功能生效，顺序对；完成后看得出结果。
-- 要改：没建完就攻击；升级看不出差别；金币或资源扣除和看得见的操作脱节。
+### 建造与升级 (building and upgrading)
+- Required: the character arrives, invests or spends, the building is completed, the function takes effect, in the right order; the result is visible once done.
+- 要改: attacking before the building is finished; no visible difference after an upgrade; coins or resources deducted out of step with the visible action.
 
-### 发射与命中
-- 要求：发射点、朝向、飞行、落点和目标看得清；弹体和必要的拖尾在深浅背景下都清楚，飞行速度、自转和射程前后一致。
-- 要改：弹道和地面或兵线融在一起；上抛和下落重叠到分不清；目标已经变了，弹道却没有说得通的追踪或转火。
+### 发射与命中 (firing and hitting)
+- Required: the firing point, direction, flight, landing point and target are clear; projectiles and needed trails are clear against both dark and light backgrounds, and flight speed, spin and range are consistent throughout.
+- 要改: trajectories merging into the ground or the troop line; rising and falling shots overlapping indistinguishably; the target has changed but the trajectory shows no believable tracking or retargeting.
 
-### 打击反馈
-- 要求：发射、飞行、受击和退场的重点服从镜头和玩法；弹体数量、尺度、覆盖、杀伤和推动，和威力感受相称。
-- 要改：大面积强箭雨却几乎没伤害，也没解释；微弱的命中却没理由地推退一大段；聚散后的伤害差异没有看得见的依据。
+### 打击反馈 (hit feedback)
+- Required: what firing, flight, hits and exits stress follows the shot and the gameplay; the number, size, coverage, killing and pushing of projectiles match the sense of power.
+- 要改: a large, strong arrow rain doing almost no damage, unexplained; a weak hit pushing a long way back for no reason; differences in damage after gathering and spreading with no visible basis.
 
-### 击退与变阵
-- 要求：碰撞用身体位移、弹开、减速或停顿交代受力，再用合适的曲线恢复推进；侧向堆积、碰墙变形或推力传导符合直觉。
-- 要改：只转头、没有受力反应；队伍瞬移或无理由拉长；受击后恢复太快，压力没了；没建立设定就让人类兵线蛇形波动。
+### 击退与变阵 (knockback and formation changes)
+- Required: collisions show the force through body displacement, bouncing off, slowing down or pausing, then resume the advance on a fitting curve; sideways piling, deformation against walls or force passing through the line feel intuitive.
+- 要改: only turning the head, no reaction to the force; the line teleporting or stretching for no reason; recovering too fast after a hit, so the pressure is gone; a human troop line snaking without that having been set up.
 
-### 移动与动作
-- 要求：朝向、移速、起停、受击和回收的状态变化协调；速度变化有看得见的原因；同一攻击要成排反馈时，队列和动作撑得起。
-- 要改：无理由先缩后走；滑步和材质不符；没预兆突然加速。
+### 移动与动作 (movement and actions)
+- Required: changes of facing, speed, starting and stopping, being hit and recovering are consistent; speed changes have a visible cause; where one attack is to give row-wide feedback, the ranks and actions can support it.
+- 要改: shrinking back before moving for no reason; sliding steps that do not fit the material; sudden speed-ups without warning.
 
-### 数值与资源
-- 要求：数字、血量、资源掉落和收集对应当前事件，变化节奏便于看清。
-- 要改：数字跳变、重复奖励、计数不连贯；挡住核心动作；没有看得见的原因就结算。
+### 数值与资源 (numbers and resources)
+- Required: numbers, health, resource drops and collection match the current event, and change at a pace that can be followed.
+- 要改: numbers jumping, repeated rewards, counts that do not add up; covering the core action; settling up with no visible cause.
 
-### 特效主次
-- 要求：特效突出当前重点，亮度、粒子和覆盖范围配得上主体尺寸；关键的命中、停留和完成节点留出看得出的时间。
-- 要改：一命中就全部消失，结果没感觉；箭雨还在落就切到地面消失；烟尘、金币或亮光长时间盖住主事件。
+### 特效主次 (effects: what comes first)
+- Required: effects stress the current focus, their brightness, particles and coverage match the subject's size; key hits, pauses and completion points get visible time.
+- 要改: everything vanishing on impact so that the result is not felt; cutting to the ground disappearing while the arrows are still falling; dust, coins or glow covering the main event for a long time.
 
-### 蓄力、装填与冷却
-- 要求：用和攻击有关的动作或简洁的状态变化交代准备、装填和回收，观众明白为什么在等、什么时候会发射。
-- 要改：没提示地强制等待；齿轮、后仰、加箭和发光同时变；回收动作比清兵结果还抢眼。
+### 蓄力、装填与冷却 (charging, reloading and cooldown)
+- Required: preparation, reloading and recovery are shown with actions related to the attack or simple state changes, so viewers understand why there is a wait and when it will fire.
+- 要改: forced waiting without a hint; gears, leaning back, adding arrows and glowing all changing at once; the recovery action more eye-catching than the clearing result.
 
-### 锁定、射程与多塔分工
-- 要求：同一条件下目标选择、射程和切换条件一致；集火、错位、依次发射或最终合击表达清楚。
-- 要改：第一座塔清完兵，第二座塔就无故失效或制造反向威胁；该集火却各打各的无关目标；前后射程没提示就变了。
+### 锁定、射程与多塔分工 (targeting, range and division of labour between towers)
+- Required: target choice, range and switching conditions are consistent under the same conditions; focused fire, staggered fire, firing in turn or a final combined strike are shown clearly.
+- 要改: after the first tower clears the troops, the second tower stops working for no reason or creates a reverse threat; focused fire expected but each tower shoots at unrelated targets; the range changing without a hint.
 
-### 阻挡破坏与后续动作
-- 要求：盾牌、围栏、木桶等的损坏和攻击相符；破碎、消失、兵线起步和涌出衔接，触发信号前后一致。
-- 要改：东西还没破兵就穿出来了；破坏方式和命中方向无关；破碎后还长时间僵着等；木桶爆兵直接机械整齐地展开。
+### 阻挡破坏与后续动作 (breaking blocks and what follows)
+- Required: damage to shields, fences, barrels and the like matches the attack; breaking, vanishing, the troop line starting and pouring out follow on, with consistent trigger signals.
+- 要改: soldiers coming through before the thing is broken; the way it breaks unrelated to the direction of the hit; frozen waiting for a long time after breaking; soldiers from a barrel spreading out in a mechanically neat way.
 
-### 弹量与段落变化
-- 要求：以箭雨、范围扩散或数量增长为亮点时，有看得出的强弱、聚散或密度变化，并先展示有效杀伤。
-- 要改：一直恒定发射，没有阶段变化；一开始就散开减伤，原本的威力还没建立；所有阶段都齐射，盖住重点。
+### 弹量与段落变化 (projectile volume and changes between passages)
+- Required: where arrow rain, area spread or growing numbers are the highlight, there are visible changes in strength, gathering and spreading or density, and effective killing is shown first.
+- 要改: constant firing all along, no change of phase; spreading out and reducing damage at once, before the original power is established; volleys in every phase, covering the focus.
 
-## 七、镜头、字幕和画面信息
+## 7. 镜头、字幕和画面信息 (camera, subtitles and on-screen information)
 
-镜头围绕观众此刻需要看懂的事件安排；换画幅后重新看构图和信息，不能只机械裁切。
+The camera is arranged around the event viewers need to understand at that moment; after changing the frame format, look at the composition and information again rather than cropping mechanically.
 
-### 关键事件可见
-- 要求：建造、攻击、受击、碰撞、阵型变化和局势反转发生时，镜头里看得到相关主体和结果。
-- 要改：国王建造时镜头移向一侧，兵线和压力跑到画外；关键事件发生完才切回来。
+### 关键事件可见 (key events visible)
+- Required: when building, attacks, hits, collisions, formation changes and reversals happen, the subjects involved and the result are in the shot.
+- 要改: the camera moving to one side while the king builds, the troop line and pressure off screen; cutting back only after the key event is over.
 
-### 观看重点
-- 要求：同一时段有明确的重点，镜头运动、特效、数字、UI 和声音都支持它；新兵线或新目标在注意力空档进来，可以用国王移动、空间变化或必要的信号引导。
-- 要改：多个事件同时抢视线；升级时无关数字抢焦点；新一路敌人已经构成威胁，却没引导玩家注意。
+### 观看重点 (viewing focus)
+- Required: there is one clear focus at a time, supported by camera movement, effects, numbers, UI and sound; a new troop line or target comes in during a lull in attention, guided by the king's movement, spatial change or a needed signal.
+- 要改: several events competing for the eye at once; unrelated numbers grabbing the focus during an upgrade; a new line of enemies already a threat without the player's attention being drawn to it.
 
-### 画幅适配
-- 要求：每个交付画幅都核对主体、道路边界、兵线、数值和文字是否完整。
-- 要改：横竖版裁切后丢了玩法条件、敌人来源或核心结果；重要数字和提示语被边缘切掉。
+### 画幅适配 (frame formats)
+- Required: in every delivered frame format, check that the subjects, road borders, troop lines, numbers and text are complete.
+- 要改: landscape or portrait crops losing gameplay conditions, the enemy's source or the core result; important numbers and the disclaimer cut off at the edge.
 
-### 字幕与口播
-- 要求：语言和本地化版本正确，文字、口播和画面一致；字幕读得清、不挡关键动作；口型和配音对得上。
-- 要改：错字、错译、半句截断、口播和展示不符；字幕挡住目标或数值；错误地留着其他项目的名称。
+### 字幕与口播 (subtitles and voice-over)
+- Required: the language and localised version are correct, text, voice-over and picture agree; subtitles are readable and do not cover key actions; lip sync and dubbing match.
+- 要改: typos, mistranslations, sentences cut in half, voice-over not matching what is shown; subtitles covering a target or a number; another project's name wrongly left in.
 
-### 界面与包装
-- 要求：LOGO、片尾、提示语和安全区按当前确认的版本用，画面信息层级清楚。
-- 要改：LOGO 反转；示意标签或剪辑辅助信息进了成片；封面剪进视频；黑帧、空白和单帧闪错。
+### 界面与包装 (UI and packaging)
+- Required: LOGO, end card, disclaimer and safe area follow the currently confirmed version, and the information hierarchy in the picture is clear.
+- 要改: a mirrored LOGO; illustrative labels or editing aids in the finished video; the cover cut into the video; black frames, blank frames and single wrong frames.
 
-### 开场方位
-- 要求：守城类开场交代主城或保护目标、敌人来源和攻防方向；第一帧展示主城用于守城类版本，特殊片头另行确认。
-- 要改：第一个有效画面不知道身在哪、敌人从哪来；只展示局部资产，目标和威胁长时间缺席。
+### 开场方位 (opening orientation)
+- Required: a defend-the-city opening shows the main city or the protected target, where the enemy comes from and the directions of attack and defence; showing the main city in the first frame is for defend-the-city versions, special openings are confirmed separately.
+- 要改: in the first meaningful picture it is unclear where we are and where the enemy comes from; only local assets shown, the goal and the threat absent for a long time.
 
-### 镜头高度与视觉比较
-- 要求：综合调整塔间距、角色比例、兵列和机位，让建造和兵线反馈看得见；需要比较双方兵量时，按透视后看上去的数量核对。
-- 要改：为多放塔单纯拉高机位，UI、国王和小兵都变小；近处和远处的兵量看起来明显失衡，误导对抗判断。
+### 镜头高度与视觉比较 (camera height and visual comparison)
+- Required: tower spacing, character proportions, troop ranks and camera position are adjusted together so that building and troop-line feedback are visible; where the two sides' numbers are to be compared, check them as they look after perspective.
+- 要改: simply raising the camera to fit more towers, making the UI, the king and the soldiers small; troop numbers near and far looking clearly unbalanced, misleading the judgement of the confrontation.
 
-## 八、音乐、音效与后期合成
+## 8. 音乐、音效与后期合成 (music, sound effects and post-production)
 
-音乐和音效帮观众注意当前动作、感受压力和释放：先定画面重点，再分配声音的音色、响度和频段。
+Music and sound effects help viewers notice the current action and feel the pressure and its release: first set the picture's focus, then allocate the sounds' timbre, loudness and frequency range.
 
-### 音画对应
-- 要求：建造、射击、命中、碰撞、资源和升级的核心声音和画面的时间点、材质、动作相符。
-- 要改：先响后打、打了不响；木头、石头、盔甲的材质听感混用；核心动作没有对应的声音。
+### 音画对应 (sound matches picture)
+- Required: the core sounds of building, shooting, hits, collisions, resources and upgrades match the picture in timing, material and action.
+- 要改: the sound before the hit, or a hit without sound; wood, stone and armour sounding alike; core actions without a matching sound.
 
-### 声音优先级
-- 要求：突出当前视觉焦点；非重点区域和重复动作适当压低，同一阶段听得出主事件。
-- 要改：箭塔、对撞、金币和背景一直一样突出；画面在看石头，声音却被箭塔吸走；声音叠在一起糊成一团。
+### 声音优先级 (sound priority)
+- Required: the current visual focus is stressed; non-focus areas and repeated actions are turned down, and the main event of each phase can be heard.
+- 要改: arrow towers, clashes, coins and background equally loud all along; the picture is on the stones but the sound is pulled to the arrow tower; sounds stacked into a mush.
 
-### 连发与重复
-- 要求：高速弓弩保留合适的拉弦、发射和命中听感，重复的声音有变化；非焦点的高频动作按整体听感组织。
-- 要改：连续尖锐撞击、刺耳高频或现代机枪感；机械重复；每一下都配音，声音密度失控。
+### 连发与重复 (rapid fire and repetition)
+- Required: fast bows and crossbows keep a fitting draw, release and hit sound, and repeated sounds vary; high-frequency actions outside the focus are organised for the overall sound.
+- 要改: continuous sharp impacts, piercing high frequencies or a modern machine-gun feel; mechanical repetition; a sound for every single hit, the sound density out of control.
 
-### 音乐风格
-- 要求：BGM 和这条素材的中世纪、地域或迭代风格协调。
-- 要改：画面和声音时代或地域明显错位；只加了某种乐器，整体风格还是不协调。
+### 音乐风格 (music style)
+- Required: the BGM fits this material's medieval, regional or iteration style.
+- 要改: picture and sound clearly from different eras or regions; only one instrument added, the overall style still not fitting.
 
-### 节奏与收尾
-- 要求：音乐的进入、转折、强弱、高潮和结束配合建造、加压、反击和释放。
-- 要改：全程平铺或突然截断；高潮和关键事件错开；结尾只是生硬地压低音量。
+### 节奏与收尾 (rhythm and ending)
+- Required: the music's entry, turns, dynamics, climax and end go with the building, rising pressure, counter-attack and release.
+- 要改: flat all the way or cut off abruptly; the climax out of step with the key event; the ending just a crude fade in volume.
 
-### 混音与合成
-- 要求：整条成片完整听过，BGM 给核心音效和口播留出空间，衔接自然，没有明显的爆音、杂音和突兀的音量跳变。
-- 要改：片头片尾断音；声音堆叠盖住口播；合成后多出异常。
+### 混音与合成 (mixing and compositing)
+- Required: the whole finished video has been listened to, the BGM leaves room for core sound effects and voice-over, transitions are natural, with no obvious clipping, noise or abrupt jumps in volume.
+- 要改: sound cut off at the start or end; stacked sounds covering the voice-over; anomalies added in compositing.
 
-## 九、按素材类型
+## 9. 按素材类型 (by material type)
 
-### 新做的 3D 玩法素材
-- 先看核心矛盾、首轮教学、反馈规则和节奏，再看地编、材质、描边和特效细节；成片按第三到第八节完整验收。
+### 新做的 3D 玩法素材 (new 3D gameplay material)
+- First look at the core conflict, first-round teaching, feedback rules and pacing, then at level design, materials, strokes and effect details; the finished video is checked in full against sections 3 to 8.
 
-### 换皮与迭代
-- 替换了地形、模型、材质、灯光、配乐的，重看比例、碰撞、路线长度、可见区域、音色和整体节奏。
+### 换皮与迭代 (reskins and iterations)
+- Where terrain, models, materials, lighting or music were replaced, check proportions, collisions, route length, visible area, timbre and overall pacing again.
 
-### 解说与混剪
-- 引用的片段和版本对得上；解说从整句接起，口播、字幕和画面一致，A/B 段的画幅和内容接得上；截图脱敏、授权单独核对。
+### 解说与混剪 (commentary and mash-ups)
+- Quoted clips match their versions; commentary starts at a full sentence, voice-over, subtitles and picture agree, the A/B parts match in frame format and content; screenshots are anonymised and licences checked separately.
 
-### 真人与明星
-- 确认肖像、音乐、片段和头衔的使用范围；剧情、台词、服装和画面守第二节的底线；口型、配音和游戏展示一致。
+### 真人与明星 (live action and celebrities)
+- Confirm the scope of use of portraits, music, clips and titles; plot, lines, costumes and picture keep within section 2's limits; lip sync, dubbing and the game shown agree.
 
-### AI 素材
-- 和其他素材同一套成片标准：主体、动作、因果和游戏设定。AI 片头另按下面的专项要求查。
+### AI 素材 (AI material)
+- The same finished-video standard as other material: subjects, actions, cause and effect, and the game's setting. AI openings are also checked against the special requirements below.
 
-### AI 片头专项
-只用于 AI 片头。片头不能靠下面这些吸睛：
+### AI 片头专项 (AI openings)
+For AI openings only. An opening may not catch the eye with:
 
-| 类型 | 不能做的 |
+| Kind | Not allowed |
 | --- | --- |
-| 生理猎奇 | 疼痛、挤痘、拔毛、切肉、密集恐惧、动物剥皮这类让人不适的画面，内容和游戏体验没关系 |
-| 无端暴力 | 没有剧情支撑、和题材无关的斧头爆砍、角色互殴；玩法里正常的战斗不算 |
-| 无关抓马剧情 | 出轨、伦理纠纷这类和玩法、题材无关的狗血内容；片头要和后面的游戏打底、创意方向接得上 |
-| 品牌、IP 与肖像 | 严禁知名品牌元素，比如 NBA 现场、星巴克 LOGO、可口可乐标识；不用影视角色、游戏 IP 和知名场景；AI 人物不能和明星、公众人物长得高度相似 |
+| 生理猎奇 (physiological shock) | pain, squeezing pimples, plucking hair, cutting meat, trypophobia, skinning animals and similar disturbing images unrelated to the game experience |
+| 无端暴力 (gratuitous violence) | axe hacking or characters fighting each other without plot support and unrelated to the theme; normal combat in the gameplay does not count |
+| 无关抓马剧情 (unrelated drama) | affairs, ethical disputes and similar soap-opera content unrelated to the gameplay or theme; the opening must lead into the game footage and creative direction that follow |
+| 品牌、IP 与肖像 (brands, IP and likeness) | well-known brand elements are strictly forbidden, e.g. NBA 现场、星巴克 LOGO、可口可乐标识; no film or TV characters, game IP or famous locations; AI people must not closely resemble stars or public figures |
 
-- 动物口播和拟人题材：大猩猩 Vlog、动物拟人化吐槽这类违和题材要规避；「萌宠口播文案配游戏打底素材」留有尝试空间。碰到动物口播的，标需确认，看采用的是哪个方向。
-- 尺寸和时长：1080x1920，60 秒以内。
-- 水印：用规定的水印素材（英语+韩语水印），语言和显示要对；其他语言的水印还没定，标需确认。
-- 命名：文件名形如 GOT3D10001_EN_BJHT1AI片头【片头命名】+【UE素材命名】_AI片头_1080x1920（文件夹名同样格式，不带语言和尺寸）。编号、产出方、名称换成实际的，示例编号不代表起始号段；语言字段和实际版本一致；保留片头和 UE 打底素材的对应关系。
+- Talking animals and anthropomorphic themes: incongruous themes like 大猩猩 Vlog or 动物拟人化吐槽 are to be avoided; 「萌宠口播文案配游戏打底素材」 (cute-pet voice-over copy over game footage) leaves room for trying. For a talking-animal opening, mark it 需确认, to check which direction it takes.
+- Size and length: 1080x1920, at most 60 seconds.
+- Watermark: use the prescribed watermark asset (English + Korean watermark), with the right language and display; watermarks for other languages are not settled yet: mark them 需确认.
+- Naming: file names like GOT3D10001_EN_BJHT1AI片头【片头命名】+【UE素材命名】_AI片头_1080x1920 (folder names in the same format, without language and size). Number, producer and name are replaced by the real ones, and the example number does not mean where the numbering starts; the language field matches the actual version; keep the link between the opening and its UE base footage.
 
-## 十、命名
+## 10. 命名 (naming)
 
-- 文件名里的项目、语言、方案、版本和尺寸要和内容一致；同一改动的多个画幅一起交。
-- AI 片头的命名见第九节。其他 GOT 素材的编号、命名字段和版本规则还没定：只查文件名和内容对不对得上，不查格式。
+- The project, language, plan, version and size in the file name match the content; several frame formats of the same change are delivered together.
+- AI openings' naming: see section 9. Numbering, naming fields and version rules for other GOT material are not settled yet: check only whether the file name matches the content, not its format.
 
-## 十一、不要当成统一要求的
+## 11. 不要当成统一要求的 (not to be taken as general requirements)
 
-下面这些会上说法不一，按单条素材的方案定，不能因为和其中一种说法不同就报问题：
+Meetings have said different things about these; they are decided per material by its plan. Do not report a problem only because the material differs from one of the views:
 
-- 速度与攻速：有的提速、有的降速。按机制、阶段和可读性看，不设统一快慢。
-- 整齐、散开与间隔：爆兵后自然散开、成排杀伤要同步、分团拉开间距，各有适用的阶段（爆炸生成、教学、推进、清兵），不把一种状态套到所有素材。
-- 单路与双路：路线、威胁和关注顺序清楚就行，路数由脚本定。
-- 多塔发射：依次发射、统一爆发、集火、错位打击都可以，按教学、常规拉扯和最终释放分别安排，不统一禁止齐射或交替。
-- 大小怪速度与角色：不规定大怪一定更快、更慢、低血量或只做运输。
-- 木桶奖惩：通用要求只是条件和奖惩前后一致；怎么爆、谁触发、怎么收尾按方案。
-- 箭雨落地与消失：命中、落地和消失要看得出来，但不统一成某个固定延迟。
-- 推人、Boss 与悬崖：不要求所有推人素材保留或取消悬崖，也不规定 Boss 一律不能推兵。
-- 比例：国王约为弓兵的 1.3 倍是一份纪要记的基准，多塔镜头里又调过国王和城堡的显示比例；默认比例和镜头缩放分开看，不按 1.3 倍硬查。
-- 局部穿插：特定收尾为了动作完成感可以适当取舍，但敌人不能从侧边漏出来，镜头仍要清楚表达命中、包围和结束；不推广为全项目允许穿墙。
-- 血雾、颜料等死亡表现：表现上试过不等于投放获准，出现了标需确认（看市场和渠道），第二节的底线照常查。
+- Speed and attack speed: some speed up, some slow down. Judge by mechanics, phase and readability; there is no general faster or slower.
+- Neat, scattered and spaced: scattering naturally after soldiers burst out, killing in rows in sync, groups spaced apart each fit their phase (spawning by explosion, teaching, advance, clearing); do not apply one state to all material.
+- Single and double routes: clear routes, threats and order of attention are enough; the number of routes is set by the script.
+- Multiple towers firing: firing in turn, bursting together, focused fire and staggered strikes are all fine, arranged for teaching, normal back-and-forth and the final release; volleys or alternation are not generally forbidden.
+- Speed and role of small and big monsters: no rule that a big monster must be faster, slower, low on health or only transport.
+- Barrel rewards and penalties: the general requirement is only that conditions, rewards and penalties are consistent; how it bursts, who triggers it and how it ends follow the plan.
+- Arrow rain landing and vanishing: hitting, landing and vanishing must be visible, but not with one fixed delay.
+- Pushing people, Bosses and cliffs: no requirement that all pushing material keeps or drops the cliff, and no rule that a Boss may never push soldiers.
+- Proportions: the king at about 1.3 times an archer is a baseline from one set of meeting notes, and the display proportions of the king and the castle were adjusted again in multi-tower shots; look at default proportions and camera zoom separately, do not check strictly against 1.3.
+- Local clipping: a particular ending may make trade-offs for a sense of completed action, but enemies must not leak out at the side, and the shot must still clearly show the hit, the encirclement and the end; this does not mean clipping through walls is allowed project-wide.
+- Blood mist, paint and similar death effects: having tried an effect does not mean it is approved for delivery; when one appears, mark it 需确认 (depends on market and channel), and section 2's limits are checked as usual.

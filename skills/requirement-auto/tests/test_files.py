@@ -1,4 +1,4 @@
-"""Unpacking zips, the retention sweep, and small fixes (unzip.test.ts, retention.test.ts, fixes.test.ts)."""
+"""Unpacking zips, the retention sweep, and small fixes."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from gof.cls_guard import check_pin, pin_state
 from gof.cls_session import account_names, check_token
 from gof.creative import material_refusal
 from gof.paths import resolve_data_paths
-from gof.retention import prune_expired, retention_days
+from gof.retention import Pruned, prune_expired, retention_days
 from gof.unzip import extract_entry, list_zip, unpack_zip
 from gof.util import Blocked, write_json_new
 from gof.web import FetchError, Response
@@ -45,8 +45,8 @@ class UnzipTests(unittest.TestCase):
         with open(os.path.join(result.dir, "GOFCN66367_片头.mp4"), "rb") as handle:
             self.assertEqual(handle.read(), video, "deflated data comes back exactly")
         self.assertEqual([[s["file"], s["reason"]] for s in result.skipped], [
-            ["素材.zip：新建文件夹/说明.txt", "CLS 不支持这种格式（.txt）"],
-            ["素材.zip：新建文件夹/子文件夹/c.mp4", "压缩包里的子文件夹不读取（文件夹不可嵌套）"]])
+            ["素材.zip：新建文件夹/说明.txt", "CLS does not take this format (.txt)"],
+            ["素材.zip：新建文件夹/子文件夹/c.mp4", "a folder inside the zip is not read (folders do not nest)"]])
         # The same zip again: the folder already unpacked is used as it is.
         again = unpack_zip(file, root, material_refusal)
         self.assertEqual(again.dir, result.dir)
@@ -66,16 +66,16 @@ class UnzipTests(unittest.TestCase):
         """A damaged entry is refused and nothing of it is left; unsafe paths are never written."""
         bad = zip_file("bad.zip", make_zip([{"name": "a.mp4", "data": "abc", "bad_crc": True}]))
         root = temp_dir("unpacked-")
-        self.assertRaisesRegex(Blocked, "已损坏", unpack_zip, bad, root, material_refusal)
+        self.assertRaisesRegex(Blocked, "is damaged", unpack_zip, bad, root, material_refusal)
         folder = os.listdir(root)[0]
         self.assertEqual(os.listdir(os.path.join(root, folder, "files")), [])
         evil = zip_file("evil.zip", make_zip([{"name": "../evil.mp4", "data": "x"}, {"name": "ok.mp4", "data": "y"}]))
         out = temp_dir("unpacked-")
         result = unpack_zip(evil, out, material_refusal)
         self.assertEqual(os.listdir(result.dir), ["ok.mp4"])
-        self.assertEqual(result.skipped[0]["reason"], "路径不安全，没有解压")
+        self.assertEqual(result.skipped[0]["reason"], "unsafe path, not unpacked")
         self.assertFalse(os.path.exists(os.path.join(out, "evil.mp4")))
-        self.assertRaisesRegex(Blocked, "不是有效的 zip", list_zip, zip_file("not.zip", b"not a zip"))
+        self.assertRaisesRegex(Blocked, "not a valid zip", list_zip, zip_file("not.zip", b"not a zip"))
 
     def test_windows_names(self) -> None:
         """Names a Windows file cannot hold are stored with _ and said so; two that come out the same are one file, not a failed zip."""
@@ -88,7 +88,7 @@ class UnzipTests(unittest.TestCase):
             self.assertEqual(handle.read(), "one", "the first of the two is kept")
         self.assertEqual(result.renamed, [{"file": "mac.zip：素材/为什么?_竖版.mp4", "as": "为什么__竖版.mp4"}, {"file": "mac.zip：素材/对抗:竖版.mp4", "as": "对抗_竖版.mp4"}])
         self.assertEqual([s["file"] for s in result.skipped], ["mac.zip：素材/为什么*_竖版.mp4"])
-        self.assertRegex(result.skipped[0]["reason"], r"和“为什么\?_竖版\.mp4”换掉 Windows 文件名不能有的字符后同名")
+        self.assertRegex(result.skipped[0]["reason"], r"the same name as \"为什么\?_竖版\.mp4\" once the characters a Windows file name cannot hold are replaced")
         self.assertEqual(unpack_zip(file, root, material_refusal).renamed, result.renamed, "said again when the unpacked folder is used again")
 
     def test_existing_target(self) -> None:
@@ -96,7 +96,7 @@ class UnzipTests(unittest.TestCase):
         file = zip_file("one.zip", make_zip([{"name": "a.mp4", "data": "new"}]))
         entry = list_zip(file)[0]
         target = write_file(os.path.join(temp_dir("target-"), "a.mp4"), "already here")
-        self.assertRaisesRegex(Blocked, "解压失败", extract_entry, file, entry, target)
+        self.assertRaisesRegex(Blocked, "could not be unpacked", extract_entry, file, entry, target)
         with open(target, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "already here")
 
@@ -119,16 +119,16 @@ class RetentionTests(unittest.TestCase):
 
     def test_old_go_logins_stay(self) -> None:
         """Old batches and temporary files go; the logins next to them, and anything still fresh, stay."""
-        paths = resolve_data_paths({"LARK_AGENT_USER_DIR": temp_dir("ra-ret-")})
+        paths = resolve_data_paths({"AGENT_USER_DIR": temp_dir("ra-ret-")})
         batch = write_file(os.path.join(paths.batches, "abc123", "manifest.json"), "x")
         write_file(os.path.join(paths.batches, "abc123", "nested", "evidence.json"), "x")
         snapshot = write_file(os.path.join(paths.tmp, "snap.xlsx"), "x")
         qr = write_file(os.path.join(paths.cls, "login-qr.json"), "x")
         account = write_file(os.path.join(paths.root, "cls", "account.json"), "x")
         profile = write_file(os.path.join(paths.root, "cls", "browser-profile", "Default", "Cookies"), "x")
-        self.assertEqual(prune_expired(paths, later(6)), 0, "inside the period nothing goes")
+        self.assertEqual(prune_expired(paths, later(6)), Pruned(), "inside the period nothing goes")
         self.assertTrue(os.path.exists(batch) and os.path.exists(snapshot))
-        self.assertEqual(prune_expired(paths, later(8)), 2, "the batch folder and the temporary file")
+        self.assertEqual(prune_expired(paths, later(8)), Pruned(entries=2, files=3, bytes=3), "the batch folder (two files) and the temporary file")
         self.assertTrue(not os.path.exists(os.path.join(paths.batches, "abc123")) and not os.path.exists(snapshot))
         self.assertTrue(os.path.exists(paths.batches) and os.path.exists(paths.tmp), "the folders themselves stay")
         for kept in (qr, account, profile):
@@ -136,32 +136,72 @@ class RetentionTests(unittest.TestCase):
 
     def test_batch_whole(self) -> None:
         """A batch is removed whole or not at all: one recently touched file keeps all of it."""
-        paths = resolve_data_paths({"LARK_AGENT_USER_DIR": temp_dir("ra-ret-")})
+        paths = resolve_data_paths({"AGENT_USER_DIR": temp_dir("ra-ret-")})
         old = write_file(os.path.join(paths.batches, "busy", "manifest.json"), "x")
         recent = write_file(os.path.join(paths.batches, "busy", "events.jsonl"), "x")
         now = time.time() * 1000 + 8 * DAY
         # A file written 'now' (8 days on) is the one still in use.
         os.utime(recent, (now / 1000, now / 1000))
-        self.assertEqual(prune_expired(paths, now), 0)
+        self.assertEqual(prune_expired(paths, now).entries, 0)
         self.assertTrue(os.path.exists(old) and os.path.exists(recent))
 
     def test_unpacked_each(self) -> None:
         """Every unpacked zip is judged on its own: one unpacked recently does not keep the older ones."""
-        paths = resolve_data_paths({"LARK_AGENT_USER_DIR": temp_dir("ra-ret-")})
+        paths = resolve_data_paths({"AGENT_USER_DIR": temp_dir("ra-ret-")})
         old_zip = write_file(os.path.join(paths.tmp, "unpacked", "aaaa-old", "files", "big.mp4"), "x")
         write_file(os.path.join(paths.tmp, "unpacked", "aaaa-old", "complete.json"), "x")
         recent = write_file(os.path.join(paths.tmp, "unpacked", "bbbb-new", "complete.json"), "x")
         now = later(8)
         os.utime(recent, (now / 1000, now / 1000))
-        self.assertEqual(prune_expired(paths, now), 1)
+        self.assertEqual(prune_expired(paths, now), Pruned(entries=1, files=2, bytes=2))
         self.assertFalse(os.path.exists(os.path.dirname(os.path.dirname(old_zip))), "the old one goes")
         self.assertTrue(os.path.exists(recent), "the recent one stays")
         self.assertTrue(os.path.exists(os.path.join(paths.tmp, "unpacked")), "and so does the folder that holds them")
 
+    def test_prune_command(self) -> None:
+        """`gof.py prune`, the host's housekeeping hook: one JSON line with the files and bytes removed, exit 0, the CLS login kept."""
+        import json
+        import subprocess
+        import sys
+        from unittest import mock
+
+        from gof.cli import main
+
+        user = temp_dir("ra-prune-")
+        paths = resolve_data_paths({"AGENT_USER_DIR": user})
+        old = [write_file(os.path.join(paths.batches, "abc123", "manifest.json"), "12345"),
+               write_file(os.path.join(paths.tmp, "unpacked", "aaaa-old", "files", "a.mp4"), "123"),
+               write_file(os.path.join(paths.tmp, "request.json"), "1")]
+        account = write_file(os.path.join(paths.cls, "account.json"), "{}")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_")}
+        env["AGENT_USER_DIR"] = user
+        # Eight days on, everything written above is past the retention period, then a file written "now" is not.
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("gof.retention.time.time", return_value=time.time() + 8 * DAY / 1000):
+            fresh = write_file(os.path.join(paths.tmp, "plan.json"), "22")
+            os.utime(fresh, (time.time() + 8 * DAY / 1000,) * 2)
+            self.assertEqual(main(["prune"]), {"result": {"status": "ok", "files": 3, "bytes": 9}, "code": 0})
+            self.assertTrue(not any(os.path.exists(f) for f in old))
+            self.assertTrue(os.path.exists(fresh) and os.path.exists(account), "what is recent and the CLS login stay")
+            self.assertEqual(main(["prune"])["result"], {"status": "ok", "files": 0, "bytes": 0}, "nothing left to remove")
+            self.assertEqual([main(["prune", "--all"])["code"], main(["prune", "--all"])["result"]["status"]], [2, "blocked"])
+
+        # The command line itself: one JSON line on stdout, exit 0; a named user without a directory is refused.
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "gof.py")
+
+        def prune(environment: dict) -> subprocess.CompletedProcess:
+            return subprocess.run([sys.executable, script, "prune"], env={**environment, "PYTHONUTF8": "1"}, cwd=os.path.dirname(os.path.dirname(script)),
+                                  capture_output=True, text=True, encoding="utf-8", timeout=60)
+
+        done = prune(env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines(), ['{"bytes":0,"files":0,"status":"ok"}'])
+        refused = prune({**{k: v for k, v in env.items() if k != "AGENT_USER_DIR"}, "AGENT_USER_OPEN_ID": "ou_alice"})
+        self.assertEqual([refused.returncode, json.loads(refused.stdout)["status"]], [2, "blocked"])
+
     def test_links(self) -> None:
         """A missing folder is fine, and a link in place of a folder is not followed."""
-        paths = resolve_data_paths({"LARK_AGENT_USER_DIR": temp_dir("ra-ret-")})
-        self.assertEqual(prune_expired(paths, later(30)), 0)
+        paths = resolve_data_paths({"AGENT_USER_DIR": temp_dir("ra-ret-")})
+        self.assertEqual(prune_expired(paths, later(30)).entries, 0)
         outside = write_file(os.path.join(temp_dir("ra-out-"), "keep.txt"), "x")
         os.makedirs(paths.root, exist_ok=True)
         try:
@@ -173,7 +213,7 @@ class RetentionTests(unittest.TestCase):
                 os.symlink(os.path.dirname(outside), paths.tmp, target_is_directory=True)
             except OSError:
                 return  # no right to make links here
-        self.assertEqual(prune_expired(paths, later(30)), 0)
+        self.assertEqual(prune_expired(paths, later(30)).entries, 0)
         self.assertTrue(os.path.exists(outside))
 
 
@@ -195,7 +235,7 @@ class FixesTests(unittest.TestCase):
         for text in ("", '{"id":', '{"id":"7"}', "null"):
             write_file(file, text)
             self.assertEqual(pin_state(file)["state"], "corrupt", text)
-            self.assertRaisesRegex(Blocked, "损坏", check_pin, file, {"id": 7, "name": "张三"})
+            self.assertRaisesRegex(Blocked, "damaged", check_pin, file, {"id": 7, "name": "张三"})
             with open(file, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), text, "the file is left for an administrator")
         write_file(file, '{"id":7,"name":"张三","pinned_at":"x"}')

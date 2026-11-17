@@ -1,5 +1,5 @@
-"""Small helpers that keep the Python port's numbers and text identical to what the TypeScript original produced (JSON files that
-both versions read and write, and the Markdown and prompts derived from them)."""
+"""Small helpers that keep numbers and text as the skill's original TypeScript version wrote them (the JSON files in the shared
+folder keep that format)."""
 
 from __future__ import annotations
 

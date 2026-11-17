@@ -1,4 +1,4 @@
-"""The CLS client of the material upload, kept apart from the requirement client (creative-adapter.ts).
+"""The CLS client of the material upload, kept apart from the requirement client.
 
 cls_adapter.py can never upload. This one speaks the same internal HTTP API the page 我的创意 > 创意列表 > 上传创意 uses, with the
 logged-in session's Authorization, and can do exactly what that page does: read the options, ask for upload links, put the files into the
@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from . import js
-from .cls_adapter import ClsError, json_or_none
+from .cls_adapter import ClsError, answer_of, fetch_failed
 from .web import FetchError, Fetcher, fetch as default_fetch
 
 #: The page's 上传创意 calls, in the order it makes them (see the CLS frontend: views/creativity/materials-upload, components/MaterialUpload).
@@ -62,7 +62,7 @@ class CreativeAdapter:
                  upload_timeout_ms: Optional[int] = None, fetch: Optional[Fetcher] = None, upload_host: Optional[re.Pattern] = None,
                  allow_http_upload: bool = False, before_write: Optional[Callable[[str], None]] = None) -> None:
         if not origin or not authorization:
-            raise ClsError("必须使用 CLS 当前登录会话")
+            raise ClsError("a logged-in CLS session is needed")
         self._origin = origin
         self._authorization = authorization
         self._timeout_ms = timeout_ms if timeout_ms is not None else 30_000
@@ -80,7 +80,7 @@ class CreativeAdapter:
 
     def _request(self, method: str, path: str, query: Optional[list[tuple[str, str]]] = None, body: Any = None, timeout_ms: Optional[int] = None) -> Any:
         allowed = (method == "GET" and (path in READ_PATHS or re.fullmatch(r"/api/creative/[1-9][0-9]*", path))) or (method == "POST" and path in WRITE_PATHS)
-        _assert(allowed, "删除、发布、确认和未知路径均被禁止")
+        _assert(allowed, "deleting, publishing, confirming and unknown paths are not allowed")
         write = method == "POST" and path in (CREATE, ANNOTATE)
         start = js.now_ms()
         headers = {"Authorization": self._authorization}
@@ -96,19 +96,8 @@ class CreativeAdapter:
             response = self._fetch(url, method=method, headers=headers, body=payload,
                                    timeout=(timeout_ms if timeout_ms is not None else self._timeout_ms) / 1000, redirect="error")
         except FetchError as error:
-            reason = "请求超时" if error.timeout else "连接失败"
-            raise ClsError(f"写入结果未知（{reason}）；先回读，不重试" if write else f"CLS 请求失败（{reason}）", "unknown" if write else "blocked") from None
-        data = json_or_none(response)
-        code = data.get("code", js.UNDEFINED) if isinstance(data, dict) else js.UNDEFINED
-        self._calls.append({"method": method, "path": path, "http_status": response.status, "business_code": code, "elapsed_ms": js.now_ms() - start})
-        server_message = next((x for x in ((data.get("message"), data.get("msg")) if isinstance(data, dict) else ()) if isinstance(x, str) and js.trim(x)), None)
-        detail = f"HTTP {response.status}{f'，业务码 {js.to_str(code)}' if code is not js.UNDEFINED else ''}{'，' + js.u16slice(js.trim(server_message), 0, 300) if server_message else ''}"
-        if write and (response.status >= 500 or response.status in (408, 429)):
-            raise ClsError(f"写入结果未知（服务端或网关错误，{detail}）；先回读，不重试", "unknown")
-        if write and 200 <= response.status < 300 and not js.is_num(code):
-            raise ClsError(f"写入结果未知（{detail}，响应没有业务码）；先回读，不重试", "unknown")
-        _assert(200 <= response.status < 300 and js.is_num(code) and code == 0, f"CLS 请求失败（{detail}）")
-        return data.get("data")
+            raise fetch_failed(error, write) from None
+        return answer_of(response, method, path, write, start, self._calls)
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
         query: list[tuple[str, str]] = []
@@ -151,29 +140,29 @@ class CreativeAdapter:
                                             "sort_field": "updated_at", "sort_order": "desc"})
 
     def creative(self, ident: int) -> Any:
-        _assert(js.is_safe_int(ident) and ident > 0, "创意 ID 无效")
+        _assert(js.is_safe_int(ident) and ident > 0, "invalid creative ID")
         return self._request("GET", f"/api/creative/{int(ident)}")
 
     def sign(self, game_id: int, keys: list[str]) -> dict:
-        _assert(len(keys) > 0 and len(set(keys)) == len(keys), "上传文件名为空或重复")
+        _assert(len(keys) > 0 and len(set(keys)) == len(keys), "an upload file name is empty or repeated")
         data = self._request("POST", SIGN, None, {"files": keys, "game_id": game_id})
         urls = data.get("urls") if isinstance(data, dict) else None
         mapping = data.get("mapping") if isinstance(data, dict) and data.get("mapping") is not None else {}
-        _assert(isinstance(urls, dict) and isinstance(mapping, dict), "CLS 上传链接返回结构变化，停止")
+        _assert(isinstance(urls, dict) and isinstance(mapping, dict), "CLS's upload links came back in another shape: stopped")
         files: list[dict] = []
         for key, raw in urls.items():
-            _assert(key in keys and isinstance(raw, str), "CLS 返回了未申请文件的上传链接，停止")
+            _assert(key in keys and isinstance(raw, str), "CLS returned an upload link for a file that was not asked for: stopped")
             try:
                 url = urlsplit(raw)
                 host = url.hostname or ""
                 _ = url.port
             except ValueError:
-                raise ClsError("CLS 返回的上传链接无效，停止") from None
-            _assert(url.scheme in ("http", "https") and host, "CLS 返回的上传链接无效，停止")
+                raise ClsError("CLS returned an invalid upload link: stopped") from None
+            _assert(url.scheme in ("http", "https") and host, "CLS returned an invalid upload link: stopped")
             _assert((url.scheme == "https" or (self._allow_http_upload and url.scheme == "http")) and self._upload_host.fullmatch(host)
-                    and not url.username and not url.password, f"CLS 返回的上传地址不是对象存储（{host}），停止")
+                    and not url.username and not url.password, f"the upload address CLS returned is not object storage ({host}): stopped")
             target = mapping.get(key)
-            _assert(isinstance(target, str) and target.endswith(f"/{key[key.find('/') + 1:]}"), "CLS 上传文件名映射缺失或不符，停止")
+            _assert(isinstance(target, str) and target.endswith(f"/{key[key.find('/') + 1:]}"), "CLS's mapping of upload file names is missing or wrong: stopped")
             self._signed[key] = raw
             netloc = host + (f":{url.port}" if url.port else "")
             files.append({"key": key, "url": raw, "object": f"{netloc}{unquote(url.path)}", "expires_at": signature_end(raw)})
@@ -182,17 +171,17 @@ class CreativeAdapter:
     def put(self, key: str, file: str, size: int) -> dict:
         """Puts one file to the link CLS gave for it. No CLS credentials go with it: the link carries its own signature."""
         url = self._signed.get(key)
-        _assert(url, "没有这个文件的上传链接")
-        _assert(os.path.getsize(file) == size, f"文件大小变化：{file}")
+        _assert(url, "no upload link for this file")
+        _assert(os.path.getsize(file) == size, f"the file's size changed: {file}")
         start = js.now_ms()
         try:
             with open(file, "rb") as handle:
                 response = self._fetch(url, method="PUT", headers={"Content-Type": PAGE_PUT_TYPE}, body=handle, length=size,
                                        timeout=self._upload_timeout_ms / 1000, redirect="error")
         except FetchError as error:
-            raise ClsError(f"文件上传失败（{'超时' if error.timeout else '连接失败'}）：{file}") from None
+            raise ClsError(f"file upload failed ({'timed out' if error.timeout else 'connection failed'}): {file}") from None
         self._calls.append({"method": "PUT", "path": "<upload link>", "http_status": response.status, "elapsed_ms": js.now_ms() - start})
-        _assert(200 <= response.status < 300, f"文件上传失败（HTTP {response.status}）：{file}")
+        _assert(200 <= response.status < 300, f"file upload failed (HTTP {response.status}): {file}")
         etag = response.header("etag")
         return {"etag": etag.replace('"', "") if etag is not None else None, "bytes": size}
 
@@ -205,7 +194,7 @@ class CreativeAdapter:
 
     def create_creatives(self, game_id: int, names: list[str], directories: dict[str, int]) -> dict:
         _assert(len(names) > 0 and len(set(names)) == len(names) and all(js.is_safe_int(directories.get(n)) and directories[n] > 0 for n in names),
-                "创意名称/上传目录不完整")
+                "a creative name or the upload directory is incomplete")
         data = self._request("POST", CREATE, [("confirmed", "1")], {"game_id": game_id, "names": names, "adsdesk_dir_ids": directories}, self._create_timeout_ms)
         succ = data.get("succ") if isinstance(data, dict) else None
         fail = (data.get("fail") if data.get("fail") is not None else []) if isinstance(data, dict) else []
@@ -213,13 +202,13 @@ class CreativeAdapter:
               and all(isinstance(s, dict) and isinstance(s.get("name"), str) and s["name"] in names and js.is_safe_int(s.get("id")) and s["id"] > 0 for s in succ)
               and all(isinstance(f, str) for f in fail))
         if not ok:
-            raise ClsError("创建结果结构不符；创意可能已创建，先回读核对，不重试", "unknown")
+            raise ClsError("the create answer has an unexpected shape; creatives may have been created: read back first, never retry", "unknown")
         return {"succ": [{"name": s["name"], "id": s["id"]} for s in succ], "fail": [js.to_str(f) for f in fail]}
 
     def annotate(self, game_id: int, creatives: list[dict]) -> None:
         _assert(len(creatives) > 0 and all(js.is_safe_int(c["id"]) and c["id"] > 0 and js.is_safe_int(c["sponsor"]) and c["sponsor"] > 0
                                            and len(c["producers"]) > 0 and all(js.is_safe_int(p) and p > 0 for p in c["producers"]) and len(c["types"]) > 0
-                                           for c in creatives), "标注不完整")
+                                           for c in creatives), "incomplete annotation")
         # The page's 保存 sends exactly these fields; custom_tags (创意标签) stays empty.
         self._request("POST", ANNOTATE, None, {"game_id": game_id, "creatives": [{"id": c["id"], "sponsor": c["sponsor"], "producers": c["producers"],
                                                                                    "types": c["types"], "custom_tags": []} for c in creatives]})

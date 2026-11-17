@@ -1,4 +1,4 @@
-"""Removes this user's batches and temporary files nobody has touched for a while (retention.ts)."""
+"""Removes this user's batches and temporary files nobody has touched for a while."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import shutil
 import stat as stat_module
 import sys
 import time
+from dataclasses import dataclass
 from typing import Callable, Mapping
 
 from .paths import DataPaths
@@ -19,7 +20,7 @@ DAY = 86_400_000
 
 
 def retention_days(env: Mapping[str, str] | None = None) -> int:
-    """Days to keep untouched batches and temporary files: 7 like lark-agent's workspace, a whole number of at least 1 from the environment."""
+    """Days to keep untouched batches and temporary files: 7, or a whole number of at least 1 from REQUIREMENT_AUTO_RETENTION_DAYS."""
     env = os.environ if env is None else env
     raw = env.get(RETENTION_DAYS_ENV)
     from .js import number
@@ -66,6 +67,11 @@ def _change_time_ms(target: str) -> float:
         kernel32.CloseHandle(handle)
 
 
+def _is_link(st: os.stat_result) -> bool:
+    """A reparse point on Windows (a symbolic link or a junction, which lstat shows as a directory) is a link all the same."""
+    return stat_module.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
 def _touched(target: str) -> tuple[float, bool] | None:
     """The most recent creation, change or move of a file; a link is looked at as a link, never followed."""
     try:
@@ -74,8 +80,7 @@ def _touched(target: str) -> tuple[float, bool] | None:
         return None
     birth = getattr(st, "st_birthtime", st.st_ctime if sys.platform == "win32" else 0)
     at = max(birth * 1000, st.st_mtime * 1000, _change_time_ms(target))
-    link = bool(getattr(st, "st_file_attributes", 0) & getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
-    return at, stat_module.S_ISDIR(st.st_mode) and not link
+    return at, stat_module.S_ISDIR(st.st_mode) and not _is_link(st)
 
 
 def _newest(target: str) -> float:
@@ -100,10 +105,7 @@ def _is_real_dir(path: str) -> bool:
         st = os.lstat(path)
     except OSError:
         return False
-    if not stat_module.S_ISDIR(st.st_mode):
-        return False
-    # A junction is a directory to lstat on Windows: it is a link all the same.
-    return not (getattr(st, "st_file_attributes", 0) & getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return stat_module.S_ISDIR(st.st_mode) and not _is_link(st)
 
 
 def _remove(target: str) -> None:
@@ -115,20 +117,48 @@ def _remove(target: str) -> None:
         os.remove(target)
 
 
-def prune_expired(paths: DataPaths, now: float | None = None, days: int | None = None) -> int:
+@dataclass
+class Pruned:
+    """What a sweep removed: whole batches and tmp entries, and the files and bytes in them."""
+
+    entries: int = 0
+    files: int = 0
+    bytes: int = 0
+
+
+def _measure(target: str) -> tuple[int, int]:
+    """The files below a path and their size; a link counts as one file, never followed."""
+    if not _is_real_dir(target):
+        try:
+            st = os.lstat(target)
+        except OSError:
+            return 0, 0
+        return 1, st.st_size if stat_module.S_ISREG(st.st_mode) else 0
+    files = size = 0
+    try:
+        names = os.listdir(target)
+    except OSError:
+        return 0, 0
+    for name in names:
+        f, s = _measure(os.path.join(target, name))
+        files += f
+        size += s
+    return files, size
+
+
+def prune_expired(paths: DataPaths, now: float | None = None, days: int | None = None) -> Pruned:
     """
-    Deletes what nobody has touched for `days` from this user's batches and temporary files, and nothing else: the Feishu login, the CLS
-    login and its account record live next to them and stay. A batch goes whole, and only when nothing in it is newer than the cutoff, so a
-    batch that is still being worked on is never cut in half. What cannot be deleted now is left for the next run. Returns how many went.
+    Deletes what nobody has touched for `days` from this user's batches and temporary files, and nothing else: the CLS login and its
+    account record (cls/) live next to them and stay. A batch goes whole, and only when nothing in it is newer than the cutoff, so a batch
+    that is still being worked on is never cut in half. What cannot be deleted now is left for the next run.
     """
     now = time.time() * 1000 if now is None else now
     days = retention_days() if days is None else days
     cutoff = now - days * DAY
-    removed = 0
+    pruned = Pruned()
 
     def sweep(root: str, keep_entry: Callable[[str], bool] = lambda name: False) -> None:
         """Each entry of a real folder (a link in its place would lead the sweep out of the user's directory) goes whole once nothing in it is recent."""
-        nonlocal removed
         if not _is_real_dir(root):
             return
         try:
@@ -140,10 +170,18 @@ def prune_expired(paths: DataPaths, now: float | None = None, days: int | None =
             try:
                 if keep_entry(name) or _newest(target) >= cutoff:
                     continue
-                _remove(target)
-                removed += 1
             except OSError:
-                pass  # open in a program or no permission: next time
+                continue
+            files, size = _measure(target)
+            try:
+                _remove(target)
+                pruned.entries += 1
+            except OSError:
+                # Open in a program or no permission: what is left goes next time; only what really went is counted.
+                left_files, left_size = _measure(target)
+                files, size = files - left_files, size - left_size
+            pruned.files += files
+            pruned.bytes += size
 
     sweep(paths.batches)
 
@@ -156,4 +194,4 @@ def prune_expired(paths: DataPaths, now: float | None = None, days: int | None =
         return True
 
     sweep(paths.tmp, unpacked)
-    return removed
+    return pruned

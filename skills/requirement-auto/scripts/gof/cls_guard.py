@@ -1,4 +1,4 @@
-"""Guards around the CLS login, for a host where several users share one computer (cls-guard.ts).
+"""Guards around the CLS login, for a host where several users share one computer.
 
  - The account pin. CLS cannot tell us which Feishu user a company account belongs to, so the first account that logs in on a user's profile
    is remembered (id and name only) and any later login by a different account is refused. It does not prove that the first login was the
@@ -31,7 +31,7 @@ def read_pin(file: str) -> Optional[dict]:
     return {"id": value["id"], "name": "" if name is None else js.to_str(name), "pinned_at": "" if pinned is None else js.to_str(pinned)}
 
 
-CORRUPT_PIN = "这个用户的 CLS 账号绑定记录损坏（文件存在但读不出），已拒绝登录；需要管理员核对或清除 cls/account.json 后重新登录。"
+CORRUPT_PIN = "this user's CLS account record is damaged (the file exists but cannot be read), so the login is refused; an administrator has to check or delete requirement-auto/cls/account.json, then log in again"
 
 
 def pin_state(file: str) -> dict:
@@ -64,8 +64,8 @@ def check_pin(file: str, account: dict, now: Optional[Callable[[], datetime]] = 
                 raise Blocked(CORRUPT_PIN) from None
             pin = again["pin"]
     if pin and pin["id"] != account["id"]:
-        raise Blocked(f"这个用户的 CLS 账号已绑定为“{pin['name']}”，这次登录的是另一个账号，已拒绝。请用“{pin['name']}”的公司账号登录；"
-                      "如果确实要更换账号，需要管理员清除该用户的 CLS 登录资料后重新登录。")
+        raise Blocked(f"this user's CLS login is bound to the account \"{pin['name']}\" and another account logged in, so it is refused. Scan with the company account \"{pin['name']}\"; "
+                      "to change the account, an administrator clears this user's CLS login data first")
     # The same account under another name (an intern taken on, say): the consent page is checked against the name it goes by now. Written
     # aside and moved into place, so that a pin is never left half written.
     if pin and account.get("name") and account["name"] != pin["name"]:
@@ -97,10 +97,10 @@ def write_qr(record_file: str, target: str, png: bytes, now: Optional[Callable[[
     """Writes the picture. A file that is not the previous picture is never overwritten."""
     file = os.path.abspath(target)
     if not re.search(r"\.png\Z", file, re.IGNORECASE):
-        raise Blocked("二维码文件需要是 .png")
+        raise Blocked("the QR file must be a .png")
     previous = read_qr(record_file)
     if os.path.exists(file) and (previous or {}).get("path") != file:
-        raise Blocked("这个文件已存在，不覆盖；换一个新的 .png 文件名")
+        raise Blocked("this file exists already and is not overwritten; give a new .png file name")
     os.makedirs(os.path.dirname(file), exist_ok=True)
     with open(file, "wb") as handle:
         handle.write(png)
@@ -145,7 +145,7 @@ def reap_stale_qr(record_file: str, profile_dir: str, now: Optional[Callable[[],
 
 class Online:
     """
-    What the commands that go online need (cls-online.ts `Online`): a session, one look for a login already there, the pinned account, and
+    What the commands that go online need: a session, one look for a login already there, the pinned account, and
     a QR login. Tests give their own.
     """
 

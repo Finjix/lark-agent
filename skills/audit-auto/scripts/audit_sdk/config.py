@@ -1,25 +1,23 @@
-"""What the skill runs with (port of config.ts).
+"""What the skill runs with: everything comes from the environment, or has a default here. Every variable is optional.
 
-Everything comes from the host (lark-agent) through the environment, or has a default here:
+  AUDIT_AUTO_GEMINI_KEY      the AI gateway key (reviews and the dynamic spec need it)
+  FEISHU_APP_ID / _SECRET    the bot's Feishu app, which reads the review groups (the bot is a member of each)
+  AGENT_USER_DIR             the user's data root (absolute); this skill keeps per-user data in audit-auto/ there: tmp/ (scratch)
+                             and reviews/ (kept review results). Default ~/.agent-skills/user
+  AGENT_SHARED_DIR           data shared by all users (absolute); this skill keeps review groups and dynamic specs in audit-auto/
+                             there. Default ~/.agent-skills/shared
+  AGENT_CHAT_ID / _TYPE      the chat of this turn and whether it is 'p2p' or 'group', when the host knows it
+  AGENT_USER_OPEN_ID         who asked
+  AUDIT_AUTO_RETENTION_DAYS  how long `prune` keeps scratch and review results (default 14)
 
-  AUDIT_AUTO_GEMINI_KEY        the AI gateway key (lark-agent's .env; it reaches the script through the environment)
-  LARK_AGENT_SHARED_DIR        the folder skills share; this skill keeps its review groups and dynamic specs in audit-auto/ there
-  LARK_AGENT_USER_DIR          the user's folder (scratch space goes to audit-auto/tmp in it, kept reviews to audit-auto/reviews)
-  LARK_AGENT_CHAT_ID / _TYPE   the chat of this turn and whether it is a group (listening to a review group needs one)
-  LARK_AGENT_USER_OPEN_ID      who asked
-  FEISHU_APP_ID / _SECRET      the bot's Feishu app, to read the review groups' messages as the bot
-
-Overrides, for the administrator (lark-agent's .env) and tests: AUDIT_AUTO_GEMINI_BASE_URL, AUDIT_AUTO_GEMINI_API_VERSION,
-AUDIT_AUTO_GEMINI_MODEL, AUDIT_AUTO_GEMINI_THINKING, AUDIT_AUTO_FEISHU_BASE, AUDIT_AUTO_SKILL_ROOT, FFMPEG.
-
-The gateway key comes from the environment only (AUDIT_AUTO_GEMINI_KEY in lark-agent's .env).
+Overrides, for the administrator and tests: AUDIT_AUTO_GEMINI_BASE_URL, AUDIT_AUTO_GEMINI_API_VERSION, AUDIT_AUTO_GEMINI_MODEL,
+AUDIT_AUTO_GEMINI_THINKING, AUDIT_AUTO_FEISHU_BASE, AUDIT_AUTO_SKILL_ROOT, FFMPEG.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -45,7 +43,7 @@ def skill_root(env: Env | None = None) -> str:
     root = Path(__file__).resolve().parent.parent.parent
     if (root / "SKILL.md").is_file():
         return str(root)
-    raise Blocked("找不到技能目录（SKILL.md），技能文件不完整，请联系管理员")
+    raise Blocked("The skill's folder (SKILL.md) is missing: the skill is incomplete, ask the administrator to reinstall it")
 
 
 def skill_version(root: str) -> str:
@@ -77,7 +75,7 @@ def gateway(env: Env | None = None) -> Gateway:
     gateway key (the gateway takes the same key for every model), gemini-3.8-flash thinking at medium."""
     env = os.environ if env is None else env
     thinking = (text(env, "AUDIT_AUTO_GEMINI_THINKING") or "medium").upper()
-    need(thinking in THINKING, "AUDIT_AUTO_GEMINI_THINKING 只能是 minimal、low、medium 或 high")
+    need(thinking in THINKING, "AUDIT_AUTO_GEMINI_THINKING must be minimal, low, medium or high")
     return Gateway(
         base_url=(text(env, "AUDIT_AUTO_GEMINI_BASE_URL") or "https://lumos.diandian.info/winky/gemini").rstrip("/"),
         api_version=text(env, "AUDIT_AUTO_GEMINI_API_VERSION") or "v1",
@@ -88,11 +86,10 @@ def gateway(env: Env | None = None) -> Gateway:
 
 
 def gateway_key(env: Env | None = None) -> str:
-    """The gateway key: AUDIT_AUTO_GEMINI_KEY, which the administrator sets in lark-agent's .env. The model never reads it, and it
-    appears in no output."""
+    """The gateway key, from the environment only. The model never reads it, and it appears in no output."""
     env = os.environ if env is None else env
     given = text(env, "AUDIT_AUTO_GEMINI_KEY")
-    need(given, "找不到 AI 网关的 key：lark-agent 的 .env 里没有设置 AUDIT_AUTO_GEMINI_KEY，请联系管理员")
+    need(given, "AUDIT_AUTO_GEMINI_KEY is not set: ask the administrator to set it in the environment")
     return given  # type: ignore[return-value]
 
 
@@ -110,7 +107,7 @@ def feishu_app(env: Env | None = None) -> App:
     env = os.environ if env is None else env
     app_id = text(env, "FEISHU_APP_ID")
     secret = text(env, "FEISHU_APP_SECRET")
-    need(app_id and secret, "没有飞书应用的凭证（FEISHU_APP_ID / FEISHU_APP_SECRET，由 lark-agent 提供），请联系管理员")
+    need(app_id and secret, "FEISHU_APP_ID / FEISHU_APP_SECRET are not set: ask the administrator to set the bot's Feishu app in the environment")
     return App(id=app_id, secret=secret, base=(text(env, "AUDIT_AUTO_FEISHU_BASE") or "https://open.feishu.cn/open-apis").rstrip("/"))  # type: ignore[arg-type]
 
 
@@ -124,20 +121,36 @@ class Turn:
 
 def turn_of(env: Env | None = None) -> Turn:
     env = os.environ if env is None else env
-    return Turn(chat=text(env, "LARK_AGENT_CHAT_ID"), chat_type=text(env, "LARK_AGENT_CHAT_TYPE"), user=text(env, "LARK_AGENT_USER_OPEN_ID"))
+    return Turn(chat=text(env, "AGENT_CHAT_ID"), chat_type=text(env, "AGENT_CHAT_TYPE"), user=text(env, "AGENT_USER_OPEN_ID"))
+
+
+def _data_dir(env: Env, name: str, default: str, home: str | None) -> str:
+    given = text(env, name)
+    root = os.path.abspath(given) if given else os.path.join(home or os.path.expanduser("~"), ".agent-skills", default)
+    return os.path.join(root, SKILL)
 
 
 def shared_dir(env: Env | None = None, home: str | None = None) -> str:
-    """What the skill keeps for every user alike (the review groups it listens to, their dynamic specs): never cleaned up, never sent."""
-    env = os.environ if env is None else env
-    given = text(env, "LARK_AGENT_SHARED_DIR")
-    if given:
-        return os.path.join(os.path.abspath(given), SKILL)
-    return os.path.join(home or os.path.expanduser("~"), ".audit-auto", "shared")
+    """What the skill keeps for every user alike (the review groups it listens to, their dynamic specs): never pruned."""
+    return _data_dir(os.environ if env is None else env, "AGENT_SHARED_DIR", "shared", home)
 
 
-def scratch_root(env: Env | None = None) -> str:
-    """Scratch space for unpacked zips and compressed videos. Never the workspace: the host sends the user what appears there."""
+def user_dir(env: Env | None = None, home: str | None = None) -> str:
+    """This user's data: tmp/ (scratch) and reviews/ (kept results), both expendable (see prune.py)."""
+    return _data_dir(os.environ if env is None else env, "AGENT_USER_DIR", "user", home)
+
+
+def scratch_root(env: Env | None = None, home: str | None = None) -> str:
+    """Scratch space for unpacked zips and compressed videos. Never the working directory: a host may send the user what appears there."""
+    return os.path.join(user_dir(env, home), "tmp")
+
+
+def reviews_dir(env: Env | None = None, home: str | None = None) -> str:
+    return os.path.join(user_dir(env, home), "reviews")
+
+
+def retention_days(env: Env | None = None) -> int:
     env = os.environ if env is None else env
-    user = text(env, "LARK_AGENT_USER_DIR")
-    return os.path.join(os.path.abspath(user), SKILL, "tmp") if user else os.path.join(tempfile.gettempdir(), SKILL)
+    given = text(env, "AUDIT_AUTO_RETENTION_DAYS") or "14"
+    need(re.fullmatch(r"\d+", given) and int(given) >= 1, f"AUDIT_AUTO_RETENTION_DAYS must be a whole number of days, at least 1 (it is {given!r})")
+    return int(given)

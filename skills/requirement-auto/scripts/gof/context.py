@@ -1,4 +1,4 @@
-"""What the agent needs besides the requirement document to fill a request in by itself (context.ts).
+"""What the agent needs besides the requirement document to fill a request in by itself.
 
 The target sheet, the next material number and the dropdown options. Never earlier rows or earlier batches: the agent works from the
 document alone. Read-only.
@@ -21,7 +21,7 @@ def context(bridge: Bridge, snapshot: Snapshot, worksheet: Optional[str] = None)
     cols = tables[sheet]
     token = target(bridge)
     metadata = sheets_of(bridge, token)
-    need(canonical(_sorted_titles(metadata)) == canonical(snapshot.sheet_names), "API 工作表列表与 XLSX 不匹配，先重新导出快照")
+    need(canonical(_sorted_titles(metadata)) == canonical(snapshot.sheet_names), "the API's list of tabs does not match the XLSX: export a new snapshot first")
     meta = next(s for s in metadata if s.get("title") == sheet)
     rules = read_rules(bridge, token, [meta])
     last = snapshot.last[sheet]

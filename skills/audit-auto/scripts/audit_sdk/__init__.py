@@ -1,5 +1,5 @@
 """audit-auto: AI review of ad material with Gemini, and dynamic review specs built from review-group chats.
 
-Python port of the audit-auto plugin's TypeScript sources (dev/audit-sdk/src in the audit-auto repository); the modules mirror
-them: cli, config, errors, gemini, lark, media, projects, review, rules, transcript, and unzip (zip.ts).
+Modules: cli (the commands), config (environment), errors, gemini (the AI gateway), lark (reading Feishu groups), media, projects,
+prune (housekeeping), review, rules (the dynamic spec), transcript (group messages as the model reads them), unzip.
 """

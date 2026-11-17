@@ -1,4 +1,4 @@
-"""The picture of 我的创意 > 创意列表 the user gets after an upload (creative-shot.ts).
+"""The picture of 我的创意 > 创意列表 the user gets after an upload.
 
 It is taken in this user's own hidden CLS browser (the profile the login lives in), the way a person would see the list: the app is opened,
 the list is shown for GOFCN with the uploads of this account, newest first (the list's own saved filter, set in this profile's local

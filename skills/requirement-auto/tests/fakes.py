@@ -1,4 +1,4 @@
-"""Stand-ins for CLS and for the object storage its upload links point at (test/helpers/fake-cls.ts, fake-creative.ts)."""
+"""Stand-ins for CLS and for the object storage its upload links point at."""
 
 from __future__ import annotations
 

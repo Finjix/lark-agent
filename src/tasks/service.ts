@@ -53,6 +53,8 @@ export class TaskService {
     // Without this there is no way to learn what to put in the allowlist, so the refusal says who the user is.
     if(!this.authorized(message)){this.notice(message,`尚未获授权，请联系管理员开通。\n你的 Open ID：${message.user}\n租户：${message.tenant}`);return;}
     if(message.error){this.notice(message,message.error);return;}
+    // Queued now, it would be dropped at the next start without a word: the user is told instead.
+    if(this.stopping){this.notice(message,BOT_DOWN);return;}
     // The one thing the bot itself answers: /new. Everything else, a slash included, is for the agent.
     if(message.text.trim()==='/new'&&!message.attachments?.length){await this.newConversation(message);return;}
     if(!message.text.trim()&&!message.attachments?.length)return;
@@ -169,7 +171,7 @@ export class TaskService {
     return {session:this.store.session(session.id)!,folder};
   }
   async start(task:Task){
-    if(this.runs.has(task.id))return;
+    if(this.stopping||this.runs.has(task.id))return;
     const abort=new AbortController();this.runs.set(task.id,abort);
     const steering=this.steeringFor(task.id);
     let turn:Turn|undefined;

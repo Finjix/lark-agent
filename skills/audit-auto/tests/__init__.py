@@ -1,4 +1,4 @@
-"""Tests of the audit-auto skill (ports of dev/audit-sdk/test/*.test.ts). Run from lark-agent's root:
+"""Tests of the audit-auto skill. Run from the folder that holds skills/ (the repository root):
 
     python -m unittest discover -s skills/audit-auto/tests -t skills/audit-auto
 """

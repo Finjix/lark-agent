@@ -1,4 +1,4 @@
-"""The commands of the material upload that go online: `gof creative options | rows | files | plan | run | status | screenshot` (creative-online.ts).
+"""The commands of the material upload that go online: `gof creative options | rows | files | plan | run | status | screenshot`.
 
 `plan` and `rows` only read (CLS options, existing names, the progress sheet); `run` does the upload the approved plan describes. A run keeps
 its record in the user's batch directory, so running it again goes on from where it stopped: before the create, the files are simply put up
@@ -56,10 +56,10 @@ def _adapter_for(session: dict, deps: UploadDeps, **extra: Any) -> CreativeAdapt
 def read_options(api: CreativeAdapter, session: dict) -> dict:
     """What the page 上传创意 offers this account in GOFCN: upload directories, 创意人 and 制作人 candidates, 素材类型."""
     games, account, permissions = api.games(), api.account(), api.permissions()
-    need(isinstance(games, list) and js.truthy(account) and isinstance(permissions, dict), "CLS 返回结构变化，停止")
+    need(isinstance(games, list) and js.truthy(account) and isinstance(permissions, dict), "CLS answered in another shape: stopped")
     game = next((g for g in games if g.get("code") == "GOFCN"), None)
-    need(game and js.is_safe_int(game.get("id")), f"CLS 账号“{session['account']['name']}”没有 GOFCN 项目的创意权限")
-    need(account.get("id") == session["account"]["id"] and account.get("status") == 1, "CLS 当前账号无法核对")
+    need(game and js.is_safe_int(game.get("id")), f"the CLS account \"{session['account']['name']}\" has no creative access to the GOFCN project")
+    need(account.get("id") == session["account"]["id"] and account.get("status") == 1, "the CLS account cannot be checked")
     # The page goes by the role this account has in the game's group; without one, by its own roles.
     group = next((p for p in (account.get("group_permissions") or []) if isinstance(p.get("project_ids"), list) and game["id"] in p["project_ids"]), None)
     roles = [group["role_id"]] if group and group.get("role_id") else (account.get("roles") or [])
@@ -67,7 +67,7 @@ def read_options(api: CreativeAdapter, session: dict) -> dict:
     pages = ((group or {}).get("permissions") or {}).get("pages") if isinstance((group or {}).get("permissions"), dict) else None
     directories, people, types = api.directories(game["id"]), api.people(game["id"]), api.types(game["id"])
     need(isinstance(directories, list) and isinstance((people or {}).get("creative_users"), list) and isinstance((people or {}).get("producers"), list)
-         and isinstance((types or {}).get("types"), list), "CLS 上传选项结构变化，停止")
+         and isinstance((types or {}).get("types"), list), "the shape of CLS's upload options changed: stopped")
 
     def pick(items: list[dict]) -> list[dict]:
         return [{"id": p["id"], "name": js.to_str(p.get("name"))} for p in items if js.is_safe_int(p.get("id"))]
@@ -145,14 +145,14 @@ def existing_names(api: CreativeAdapter, game_id: int, names: list[str]) -> set[
 def _sheet_token(bridge: Any, url: str) -> dict:
     """The spreadsheet a progress sheet link (wiki node or sheets link) points at."""
     doc_path = feishu_doc_path(url, "wiki|sheets", True)
-    need(doc_path, "进度表链接需要是公司飞书的 wiki 或 sheets 链接")
+    need(doc_path, "the progress-sheet link must be a company Feishu wiki or sheets link")
     parts = doc_path.rstrip("/").split("/")
     kind, token = parts[1], parts[2]
     if kind == "sheets":
         return {"token": token, "title": ""}
     node = (bridge.api_read("/open-apis/wiki/v2/spaces/get_node", {"token": token, "obj_type": "wiki"}) or {}).get("node") or {}
     need(node.get("obj_type") == "sheet" and re.fullmatch(r"[A-Za-z0-9]+", js.to_str(node.get("obj_token") if node.get("obj_token") is not None else "")),
-         "这个链接不是电子表格")
+         "this link is not a spreadsheet")
     return {"token": node["obj_token"], "title": js.to_str(node["title"]) if node.get("title") is not None else ""}
 
 
@@ -165,9 +165,9 @@ def _read_progress_sheet(bridge: Any, source: Any, tmp_dir: str, use: Callable[[
     os.makedirs(tmp_dir, exist_ok=True)
     file = os.path.join(tmp_dir, f"progress-lookup-{js.now_ms()}-{os.getpid()}.xlsx")
     bridge.export_sheet(found["token"], file)
-    need(os.path.exists(file), "进度表导出没有落盘")
+    need(os.path.exists(file), "the progress-sheet export was not saved")
     try:
-        label = "插件进度表" if source is True else f"{found['title'] or '用户给的进度表'}（{source}）"
+        label = "the skill's progress sheet" if source is True else f"{found['title'] or 'the progress sheet given'} ({source})"
         return use(Snapshot(file), label)
     finally:
         try:
@@ -194,7 +194,7 @@ def find_rows(bridge: Any, numbers: list[int], texts: list[str], progress: Any =
     working out which row each file is before planning. Reads only.
     """
     deps = deps or UploadDeps()
-    need(len(numbers) > 0 or len(texts) > 0, "rows 需要 --numbers 或 --find")
+    need(len(numbers) > 0 or len(texts) > 0, "rows needs --numbers or --find")
 
     def use(snapshot: Snapshot, label: str) -> dict:
         found = search_progress_rows(snapshot, numbers, texts)
@@ -202,7 +202,7 @@ def find_rows(bridge: Any, numbers: list[int], texts: list[str], progress: Any =
                                   "rows": [{"number": r["number"], "name": r["name"], "keyword": r["keyword"], "head_reference": r["head_reference"],
                                             "creative_reference": r["creative_reference"], "primary_tag": r["primary_tag"], "secondary_tag": r["secondary_tag"],
                                             "creative_form": r["creative_form"], "supplier": r["supplier"], "reviewer": r["reviewer"],
-                                            "where": f"{r['sheet']} 第 {r['row']} 行"} for r in found["rows"]]}
+                                            "where": f"{r['sheet']} row {r['row']}"} for r in found["rows"]]}
         if found["not_found"]:
             result["not_found"] = found["not_found"]
         if found["more"]:
@@ -241,7 +241,7 @@ def _unpack_archives(inputs: list[str], root: str) -> dict:
 
 
 def _gather(inputs: list[str], deps: UploadDeps) -> dict:
-    """The files behind what the user gave, zips unpacked into this user's tmp (a folder reaches lark-agent only as a zip), and what cannot go up."""
+    """The files behind what the user gave, zips unpacked into this user's tmp (a chat can hand over a folder only as a zip), and what cannot go up."""
     from .retention import UNPACKED
 
     archives = _unpack_archives(inputs, os.path.join(_tmp_dir(deps), UNPACKED))
@@ -316,21 +316,21 @@ def plan_upload(online: Any, bridge: Any, request_file: str, output: str, deps: 
     """Reads the request, the files and what CLS offers, and writes the sealed plan the user approves. Sends nothing."""
     deps = deps or UploadDeps()
     file = os.path.abspath(output)
-    need(not os.path.exists(file), "计划文件已存在，不覆盖")
+    need(not os.path.exists(file), "the plan file exists already and is not overwritten")
     request = normalize_upload_request(read_json(request_file))
     gathered = _gather(request["files"], deps)
     materials, skipped, renamed = gathered["materials"], gathered["skipped"], gathered["renamed"]
     hashed = []
     for material in materials:
         digest = hash_file(material["file"])
-        need(digest["size"] == material["size"], f"读取期间文件大小变化：{material['file']}")
+        need(digest["size"] == material["size"], f"the file's size changed while it was read: {material['file']}")
         hashed.append({**material, "sha256": digest["sha256"], "md5": digest["md5"]})
     session = online.session()
     api = _adapter_for(session, deps)
     options = read_options(api, session)
     data: dict[str, Any] = {"request": request, "options": options, "materials": hashed, "skipped": skipped, "existing": set()}
     if request["progress"]:
-        need(bridge is not None, "这个环境不能读飞书进度表")
+        need(bridge is not None, "this environment cannot read the Feishu progress sheet")
         # Every row a file may be: the one the request names for it, the one its file name's number points at, and for a file named
         # GOFCNxxxxx_<name>, the one named GOFCN<number>_<name> (with variants, also those named as the start of it).
         numbers = list(dict.fromkeys(n for n in [*[i.get("number") for i in request.get("items") or []], *[m["number"] for m in hashed]] if js.is_num(n)))
@@ -381,7 +381,7 @@ def _open_batch(plan: dict, deps: UploadDeps) -> str:
     directory = _batch_of(plan, deps)
     copy = os.path.join(directory, "plan.json")
     if os.path.exists(copy):
-        need(load_upload_plan(copy)["plan_id"] == plan["plan_id"], "上传批次目录与计划不符")
+        need(load_upload_plan(copy)["plan_id"] == plan["plan_id"], "the upload batch directory does not match the plan")
     else:
         os.makedirs(directory, exist_ok=True)
         write_json_new(copy, plan)
@@ -391,18 +391,18 @@ def _open_batch(plan: dict, deps: UploadDeps) -> str:
 
 def _still_offered(plan: dict, options: dict) -> None:
     """The plan's people, directories and types must still be on offer, and the account still able to upload."""
-    need(options["can_upload"], "CLS 账号已没有上传创意的权限")
-    need(options["game"]["id"] == plan["game"]["id"], "GOFCN 项目变化")
+    need(options["can_upload"], "the CLS account may no longer upload creatives")
+    need(options["game"]["id"] == plan["game"]["id"], "the GOFCN project changed")
     dirs = {d["id"] for d in flatten_directories(options["directories"])}
     creators = {p["id"] for p in options["creators"]}
     producers = {p["id"] for p in options["producers"]}
     types = {t["id"] for t in options["types"]}
     for item in plan["items"]:
-        need(item["directory"]["id"] in dirs, f"上传目录已不存在：{item['directory']['path']}")
-        need(item["creator"]["id"] in creators, f"创意人已不可选：{item['creator']['name']}")
+        need(item["directory"]["id"] in dirs, f"the upload directory no longer exists: {item['directory']['path']}")
+        need(item["creator"]["id"] in creators, f"the 创意人 is no longer on offer: {item['creator']['name']}")
         for p in item["producers"]:
-            need(p["id"] in producers, f"制作人已不可选：{p['name']}")
-        need(item["type"]["id"] in types, f"素材类型已不可选：{item['type']['name']}")
+            need(p["id"] in producers, f"the 制作人 is no longer on offer: {p['name']}")
+        need(item["type"]["id"] in types, f"the 素材类型 is no longer on offer: {item['type']['name']}")
 
 
 def _same_ids(a: list, b: list) -> bool:
@@ -497,7 +497,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
     sleep = deps.sleep or (lambda ms: time.sleep(ms / 1000))
 
     def same_account(s: dict) -> None:
-        need(s["account"]["id"] == plan["account"]["id"], f"当前登录的 CLS 账号“{s['account']['name']}”不是计划里的“{plan['account']['name']}”")
+        need(s["account"]["id"] == plan["account"]["id"], f"the CLS account logged in now, \"{s['account']['name']}\", is not the plan's \"{plan['account']['name']}\"")
 
     session = online.session()
     same_account(session)
@@ -512,7 +512,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
             stamp = js.iso(deps.now().timestamp() * 1000) if deps.now else js.iso()
             write_json_new(create_marker, {"plan_id": plan["plan_id"], "at": stamp})
         except Exception:
-            raise ClsError("这个批次已经发出过创建请求；先回读核对，不重发", "unknown") from None
+            raise ClsError("this batch's create was sent already: read back first; it is never sent again", "unknown") from None
 
     api = _adapter_for(session, deps, before_write=before_write)
     game_id = plan["game"]["id"]
@@ -521,11 +521,11 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
     if not os.path.exists(create_marker):
         # Nothing has been created yet: everything up to the create can be done (again) from the start.
         for item in items:
-            need(os.path.isfile(item["file"]) and os.path.getsize(item["file"]) == item["size"], f"文件在批准后不见了或变了：{item['file']}")
-            need(hash_file(item["file"])["sha256"] == item["sha256"], f"文件在批准后被改过：{item['file']}")
+            need(os.path.isfile(item["file"]) and os.path.getsize(item["file"]) == item["size"], f"the file is gone or changed since the plan was approved: {item['file']}")
+            need(hash_file(item["file"])["sha256"] == item["sha256"], f"the file was modified since the plan was approved: {item['file']}")
         _still_offered(plan, read_options(api, session))
         clash = existing_names(api, game_id, [i["name"] for i in items])
-        need(not clash, f"CLS 现在已有同名创意：{'、'.join(sorted(clash, key=[i['name'] for i in items].index))}；请改名后重新做计划")
+        need(not clash, f"CLS now has creatives of these names: {', '.join(sorted(clash, key=[i['name'] for i in items].index))}; rename and plan again")
         mapped: dict[str, str] = {}
         finished: list[str] = []
         for group in _chunks(items):
@@ -534,7 +534,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
             signed = api.sign(game_id, keys)
             by_key = {f["key"]: f for f in signed["files"]}
             missing = [k for k in keys if k not in by_key]
-            need(not missing, f"CLS 没有给这些文件上传链接（格式不受支持）：{'、'.join(missing)}")
+            need(not missing, f"CLS gave no upload link for these files (format not supported): {', '.join(missing)}")
             # Lists, not objects keyed by name: a material name is never taken for a credential's field (see seal.py).
             record("signed", {"keys": keys, "objects": [f["object"] for f in signed["files"]],
                               "mapping": [{"key": key, "to": to} for key, to in signed["mapping"].items()]})
@@ -549,7 +549,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
                     if attempt > 1 or (link.get("expires_at") is not None and link["expires_at"] * 1000 - js.now_ms() < 5 * 60_000):
                         again = api.sign(game_id, [key])
                         fresh = next((f for f in again["files"] if f["key"] == key), None)
-                        need(fresh, f"CLS 没有再给 {item['file_name']} 上传链接")
+                        need(fresh, f"CLS gave no new upload link for {item['file_name']}")
                         link = fresh
                         signed["mapping"][key] = again["mapping"].get(key)
                         record("signed", {"keys": [key], "objects": [fresh["object"]], "mapping": [{"key": key, "to": again["mapping"].get(key, js.UNDEFINED)}]})
@@ -568,7 +568,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
         # and not at all while CLS cannot be asked, since nothing has been made yet and the next run starts over.
         still = check_token(session["origin"], session["authorization"], deps.adapter.get("fetch"))
         if "unreachable" in still:
-            raise Blocked("CLS 暂时无法访问，还没有创建任何创意：稍后再运行本命令（文件会重新上传，不会重复创建）")
+            raise Blocked("CLS cannot be reached for now and no creative was created: run this command again a little later (the files are uploaded again, nothing is created twice)")
         if "rejected" in still:
             session = online.session()
             same_account(session)
@@ -588,7 +588,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
     attempt_data = _last_data(events, "create_attempt")
     if not attempt_data:
         # The attempt is recorded before the marker is made, so a marker without one means the batch record is damaged: what went out is not known.
-        return {"status": "unknown", "batch": directory, "reason": "批次记录不完整，创建请求是否发出无法确定；先在 CLS 创意列表里核对这些文件是否已有创意，不重发",
+        return {"status": "unknown", "batch": directory, "reason": "the batch record is incomplete, so whether the create was sent is not known: check in the CLS creative list whether these files have creatives; it is never sent again",
                 "list_url": LIST_URL}
     names = attempt_data["names"]
     item_of = {names[i]: item for i, item in enumerate(items) if i < len(names)}
@@ -619,7 +619,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
         record("reconciled", {"found": [{"name": n, "id": i} for n, i in ids.items()], "missing": [n for n in names if n not in ids]})
         events = upload_events(directory)
         if refused and not ids:
-            return {"status": "blocked", "batch": directory, "reason": f"CLS 没有创建创意：{refused['reason']}", "uploaded": []}
+            return {"status": "blocked", "batch": directory, "reason": f"CLS created no creative: {refused['reason']}", "uploaded": []}
         if refused:
             failed = [n for n in names if n not in ids]
 
@@ -636,7 +636,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
             break
         round_ = len([e for e in upload_events(directory) if e["step"] == "annotate_attempt"]) + 1
         if round_ > 3:
-            annotate_error = "标注已发送 3 次仍未生效"
+            annotate_error = "the annotation was sent 3 times and has not taken effect"
             break
         record("annotate_attempt", {"round": round_, "ids": [ident for _, ident in pending]})
         try:
@@ -683,7 +683,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
         entry["adsdesk"] = adsdesk(ident)
         uploaded.append(entry)
     not_created = [{"name": n, "file": (item_of.get(n) or {}).get("file_name", js.UNDEFINED),
-                    "reason": f"CLS 拒绝创建：{refused['reason']}" if refused else "CLS 已有内容相同的素材（MD5 重复），没有创建"} for n in failed]
+                    "reason": f"CLS refused to create it: {refused['reason']}" if refused else "CLS has a material of the same content already (same MD5): not created"} for n in failed]
     missing = [{"name": n, "file": (item_of.get(n) or {}).get("file_name", js.UNDEFINED)} for n in names if n not in ids and n not in failed]
     verified_data: dict[str, Any] = {"uploaded": [{"id": u["id"], "name": u["name"], "verified": u["verified"], **({"problems": u["problems"]} if "problems" in u else {})}
                                                   for u in uploaded], "not_created": failed, "missing": [m["name"] for m in missing]}
@@ -696,7 +696,7 @@ def run_upload(online: Any, plan_file: str, deps: Optional[UploadDeps] = None) -
         result["not_created"] = not_created
     if missing:
         result["missing"] = missing
-        result["reason"] = "创建请求的结果没能确认：这些文件在 CLS 里还没找到。稍后再运行一次本命令核对，不会重新创建"
+        result["reason"] = "the create's result could not be confirmed: these files are not found in CLS yet. Run this command again a little later to check; nothing is created again"
     if attempt_data.get("renamed"):
         result["renamed"] = attempt_data["renamed"]
     if plan["skipped"]:
@@ -717,7 +717,7 @@ def list_picture(online: Any, output: str, rows: Optional[int], deps: Optional[U
     session = online.session()
     games = _adapter_for(session, deps).games()
     game = next((g for g in (games if isinstance(games, list) else []) if g.get("code") == "GOFCN"), None)
-    need(game, f"CLS 账号“{session['account']['name']}”没有 GOFCN 项目")
+    need(game, f"the CLS account \"{session['account']['name']}\" has no GOFCN project")
     options: dict[str, Any] = {"output": output, "account_id": session["account"]["id"], "game": game}
     if rows is not None:
         options["rows"] = rows
@@ -726,11 +726,11 @@ def list_picture(online: Any, output: str, rows: Optional[int], deps: Optional[U
         options["profile_dir"] = cls_profile_dir()
     result = list_screenshot(**options)
     if result["state"] == "unreachable":
-        raise Blocked(not_loaded("创意列表", result["reason"]))
+        raise Blocked(not_loaded("creative list", result["reason"]))
     if result["state"] == "login_required":
-        raise Blocked("CLS 登录已失效（页面停在登录页）：先运行 gof login check 再截图")
+        raise Blocked("the CLS login has lapsed (the page stopped on the sign-in page): run gof login check, then take the screenshot again")
     if result["state"] == "no_access":
-        raise Blocked(f"创意列表打不开（停在 {result['where']}）：账号可能没有这个页面的权限")
+        raise Blocked(f"the creative list did not open (stopped at {result['where']}): the account may have no access to it")
     return {"status": "screenshot_saved", "file": result["file"], "rows": result["rows"], "total": result["total"], "list_url": LIST_URL}
 
 

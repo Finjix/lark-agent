@@ -1,8 +1,9 @@
-"""Where one user's requirement-auto data lives (paths.ts).
+"""Where one user's requirement-auto data lives.
 
-Batches, temporary files and the CLS records (the account the CLS login is pinned to, the QR picture waiting to be scanned). The Feishu
-login and the hidden browser are lark-agent's (its Feishu module, see agent_feishu.py). The directory is decided by the host (lark-agent) for the
-process it starts, never by a tool argument or by the model: whoever is served by this process can only reach this one directory.
+Batches, temporary files and the CLS records (the account the CLS login is pinned to, the QR picture waiting to be scanned), under
+<AGENT_USER_DIR>/requirement-auto/, or ~/.agent-skills/user/requirement-auto/ when the host names no user directory. The Feishu login and the
+hidden browser belong to the feishu skill (see agent_feishu.py). The directory is decided by the host for the process it starts, never by a
+tool argument or by the model: whoever is served by this process can only reach this one directory.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from .util import Blocked
 
 @dataclass(frozen=True)
 class DataPaths:
-    #: host: LARK_AGENT_USER_DIR was given; standalone: the home folder fallback
+    #: host: AGENT_USER_DIR was given; standalone: the default under the home folder
     mode: str
     root: str
     batches: str
@@ -25,16 +26,18 @@ class DataPaths:
     cls: str
 
 
-USER_DIR_ENV = "LARK_AGENT_USER_DIR"
-OPEN_ID_ENV = "LARK_AGENT_USER_OPEN_ID"
+USER_DIR_ENV = "AGENT_USER_DIR"
+OPEN_ID_ENV = "AGENT_USER_OPEN_ID"
+#: The user directory below the home folder when the host names none (the feishu skill uses the same one).
+DEFAULT_USER_DIR = (".agent-skills", "user")
 
 
 def _absolute(name: str, value: str) -> str:
     if "\0" in value or not os.path.isabs(value):
-        raise Blocked(f"{name} 必须是绝对路径")
+        raise Blocked(f"{name} must be an absolute path")
     resolved = os.path.abspath(value)
     if os.path.dirname(resolved) == resolved:
-        raise Blocked(f"{name} 不能是磁盘根目录")
+        raise Blocked(f"{name} cannot be the root of a drive")
     return resolved
 
 
@@ -51,5 +54,5 @@ def resolve_data_paths(env: Mapping[str, str] | None = None, home: str | None = 
     # A host that names the user but not the directory has forgotten the directory: falling back to a folder shared by everybody
     # would let that user's batches and CLS login be reached by the next one.
     if (env.get(OPEN_ID_ENV) or "").strip():
-        raise Blocked(f"{OPEN_ID_ENV} 已设置但没有 {USER_DIR_ENV}：拒绝回落到共享目录")
-    return _layout("standalone", os.path.join(home, ".requirement-auto", "default"))
+        raise Blocked(f"{OPEN_ID_ENV} is set without {USER_DIR_ENV}: refusing to fall back to a shared directory")
+    return _layout("standalone", os.path.join(home, *DEFAULT_USER_DIR, "requirement-auto"))

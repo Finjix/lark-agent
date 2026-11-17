@@ -1,4 +1,4 @@
-"""Tickets put on rows appended without one, rows taken over from the sheet, the batch list (gof-ticket.test.ts)."""
+"""Tickets put on rows appended without one, rows taken over from the sheet, the batch list."""
 
 from __future__ import annotations
 
@@ -86,12 +86,12 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(operation(directory, "01", "save_draft", CATALOG, OBSERVATIONS)["expected"]["link"], "无")
         # Anything else still has to be a Feishu document.
         none["groups"][0]["script_url"] = "没有"
-        self.assertEqual(reason(lambda: normalize_request(none)), "脚本链接必须是当前确认的飞书文档；没有文档时写「无」")
+        self.assertEqual(reason(lambda: normalize_request(none)), 'script_url must be a company Feishu document link, or "无" when there is none')
 
     def test_ticket_afterwards(self) -> None:
         """Rows appended without a ticket get one afterwards, and then go through the CLS stage like any group."""
         directory, verify_now = appended(self)
-        self.assertEqual(reason(lambda: attach_ticket(directory, "01", TICKET, CATALOG, True)), "这一批的行还没有追加并验收，不能补需求单")
+        self.assertEqual(reason(lambda: attach_ticket(directory, "01", TICKET, CATALOG, True)), "this batch's rows are not appended and verified yet: no ticket can be attached")
         verify_now()
         self.assertEqual(reason(lambda: record(directory, "cls_started", "01")), NO_TICKET)
 
@@ -107,13 +107,13 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(status(directory)["groups"]["01"], [])
 
         # Only the link and the CLS fields can be added; the rows stay as they were appended.
-        self.assertEqual(reason(lambda: attach_ticket(directory, "01", {**TICKET, "supplier": "供应商甲"}, CATALOG)), "需求单只接受 script_url、cls、label")
-        self.assertEqual(reason(lambda: attach_ticket(directory, "01", {**TICKET, "cls": {}}, CATALOG)), "缺少 CLS 字段（创意方向、任务类型）")
-        self.assertEqual(reason(lambda: attach_ticket(directory, "01", {"cls": TICKET["cls"]}, CATALOG)), "缺少脚本内容：需求文档链接，没有文档时写「无」")
+        self.assertEqual(reason(lambda: attach_ticket(directory, "01", {**TICKET, "supplier": "供应商甲"}, CATALOG)), "a ticket takes only script_url, cls, label")
+        self.assertEqual(reason(lambda: attach_ticket(directory, "01", {**TICKET, "cls": {}}, CATALOG)), "the CLS fields (direction, task_type) are missing")
+        self.assertEqual(reason(lambda: attach_ticket(directory, "01", {"cls": TICKET["cls"]}, CATALOG)), 'script_url is missing: the requirement document link, or "无" when there is none')
         self.assertEqual(reason(lambda: attach_ticket(directory, "01", {**TICKET, "script_url": "https://example.com/x"}, CATALOG)),
-                         "脚本链接必须是当前确认的飞书文档；没有文档时写「无」")
+                         'script_url must be a company Feishu document link, or "无" when there is none')
         self.assertEqual(reason(lambda: attach_ticket(directory, "01", {**TICKET, "cls": {"direction": "方向二", "task_type": "creative_a"}}, CATALOG)),
-                         "创意方向 不存在或匹配不唯一，需在计划前澄清")
+                         "CLS direction: nothing matches; settle it before the plan")
 
         # Attached, and corrected once more before the CLS stage: the last one counts.
         first = attach_ticket(directory, "01", {**TICKET, "label": "迭代"}, CATALOG)
@@ -122,7 +122,7 @@ class TicketTests(unittest.TestCase):
         self.assertNotEqual(second["csv"], first["csv"])
         self.assertEqual(read_text(second["csv"]), csv_text(names, "无"))
         record(directory, "cls_started", "01")
-        self.assertEqual(reason(lambda: attach_ticket(directory, "01", TICKET, CATALOG)), "这一组已开始建单，需求单不能再改")
+        self.assertEqual(reason(lambda: attach_ticket(directory, "01", TICKET, CATALOG)), "this group's CLS stage has started: its ticket can no longer change")
 
         # The CLS operations take the attached ticket: its link (here 无) and its CSV.
         save = operation(directory, "01", "save_draft", CATALOG, OBSERVATIONS)
@@ -157,7 +157,7 @@ class TicketTests(unittest.TestCase):
         full = prepare(make_plan(base, REQUEST), base, output_root=tmp())["batch"]
         record(full, "append_started", None)
         record(full, "append_verified", None, {}, Snapshot(fixture("applied-complete.xlsx")))
-        self.assertEqual(reason(lambda: attach_ticket(full, "01", TICKET, CATALOG, True)), "这一组获批时已带需求单，按原计划建单")
+        self.assertEqual(reason(lambda: attach_ticket(full, "01", TICKET, CATALOG, True)), "this group was approved with a ticket: create it as planned")
 
         directory, verify_now = appended(self)
         verify_now()
@@ -169,7 +169,7 @@ class TicketTests(unittest.TestCase):
         # … and no longer once it has changed: the same record is refused.
         with open(attached["csv"], "a", encoding="utf-8") as handle:
             handle.write("x")
-        self.assertRegex(reason(lambda: record(directory, "ticket_attached", "02", recorded)), "需求单的 CSV 与本组的行不符")
+        self.assertRegex(reason(lambda: record(directory, "ticket_attached", "02", recorded)), "the ticket's CSV does not match this group's rows")
 
     def test_list(self) -> None:
         """The batches of the user are listed newest first, and found by a material number."""
@@ -194,9 +194,9 @@ class TicketTests(unittest.TestCase):
         """Rows already in the sheet but in no batch are taken over as they are, and then get their ticket like reserved rows."""
         root = tmp()
         sheet = Snapshot(fixture("applied-complete.xlsx"))
-        self.assertEqual(reason(lambda: adopt(sheet, [1011, 1014], output_root=root)), "进度表里没有这些编号的行：GOFCN1014")
+        self.assertEqual(reason(lambda: adopt(sheet, [1011, 1014], output_root=root)), "the progress sheet has no rows with these numbers: GOFCN1014")
         self.assertEqual(reason(lambda: adopt(sheet, [1011, 1012, 1013], output_root=root)),
-                         "这些行的设计师供应商不一致（供应商丙、供应商甲）：用 --supplier 指明这张需求单的设计师供应商")
+                         "the rows' 设计师供应商 differ (供应商丙, 供应商甲): give the ticket's 设计师供应商 with --supplier")
         self.assertEqual(os.listdir(root), [])
 
         # In any order; the sheet decides the names, the supplier and the reviewer.
@@ -206,7 +206,7 @@ class TicketTests(unittest.TestCase):
                                    "last_number": 1012, "first": "GOFCN1011_玩法_卖点_视频_新爆点", "last": "GOFCN1012_玩法_卖点_视频_新爆点",
                                    "supplier": "供应商丙", "reviewer": "张三"})
         self.assertTrue(status(directory)["append_verified"])
-        self.assertEqual(reason(lambda: adopt(sheet, [1012, 1013], output_root=root)), f"GOFCN1012 已在批次 {directory} 里：用这一批继续（gof batch list --number 1012）")
+        self.assertEqual(reason(lambda: adopt(sheet, [1012, 1013], output_root=root)), f"GOFCN1012 is in batch {directory} already: continue with that one (gof batch list --number 1012)")
 
         # Nothing to append or read back.
         self.assertEqual(reason(lambda: record(directory, "append_started", None)), ADOPTED)
@@ -249,7 +249,7 @@ class TicketTests(unittest.TestCase):
         verified_root = tmp()
         _, appended_now = appended(self, verified_root)
         appended_now()
-        self.assertRegex(reason(lambda: adopt(sheet, [1011], output_root=verified_root)), r"^GOFCN1011 已在批次 .+ 里：用这一批继续")
+        self.assertRegex(reason(lambda: adopt(sheet, [1011], output_root=verified_root)), r"^GOFCN1011 is in batch .+ already: continue with that one")
 
     def test_take_over_unverifiable(self) -> None:
         """A batch whose write went out but can never be verified gives its rows to adopt once every cell it wrote is in place, and goes no further."""
@@ -257,26 +257,26 @@ class TicketTests(unittest.TestCase):
         directory, _ = appended(self, root)
         # The write went out, its verification failed (a colleague's edit moved the revision during the export), and the batch was blocked.
         record(directory, "append_started", None)
-        record(directory, "blocked", None, {"reason": "导出期间出现并发变化"})
+        record(directory, "blocked", None, {"reason": "the spreadsheet changed during the export"})
         # Then a colleague filled in a cell the plugin leaves empty in a new row: every verification is a conflict from now on.
         now = Snapshot(fixture("applied-occupied-optional.xlsx"))
         verdict = verify(directory, now)
         self.assertEqual([verdict["status"], verdict["matched_cells"], verdict["expected_cells"]], ["conflict", 24, 24])
         # A cell it wrote that is not as written keeps the rows where they are.
         self.assertRegex(reason(lambda: adopt(Snapshot(fixture("applied-bad-value.xlsx")), [1011, 1012], output_root=root)),
-                         r"^GOFCN1011 在批次 .+ 里，那一批的写入发出后没有核对通过，表里 D6 和它写的不一样")
+                         r"^GOFCN1011 is in batch .+, whose write was sent and never verified, and D6 in the sheet differ from what it wrote")
         self.assertNotIn("taken_over", status(directory))
         taken = adopt(now, [1011, 1012], output_root=root)
         self.assertEqual([taken["status"], taken["taken_over"], taken["first"]], ["rows_adopted", [directory], "GOFCN1011_玩法_卖点_视频_新爆点"])
         # The old batch goes no further, so the rows cannot get a ticket there as well; the new batch gets theirs.
         self.assertEqual(status(directory)["taken_over"], taken["batch"])
-        self.assertRegex(reason(lambda: record(directory, "resumed", None, {"confirmed": True, "reason": "继续"}, now)), r"^这一批的行已由批次 .+ 接管")
-        self.assertRegex(reason(lambda: attach_ticket(directory, "01", TICKET, CATALOG, True)), r"^这一批的行已由批次 .+ 接管")
+        self.assertRegex(reason(lambda: record(directory, "resumed", None, {"confirmed": True, "reason": "继续"}, now)), r"^this batch's rows were taken over by batch .+")
+        self.assertRegex(reason(lambda: attach_ticket(directory, "01", TICKET, CATALOG, True)), r"^this batch's rows were taken over by batch .+")
         self.assertEqual(attach_ticket(taken["batch"], "01", TICKET, CATALOG, True)["requirement_name"], "GOFCN1011-GOFCN1012")
         self.assertEqual(next(b for b in list_batches(root, 1011)["batches"] if b["batch"] == directory)["taken_over"], taken["batch"])
         # Its other rows are free to be taken over as well, and appending the same rows again is still refused.
         self.assertEqual(adopt(now, [1013], output_root=root)["status"], "rows_adopted")
-        self.assertRaisesRegex(Blocked, "已有一批写入发出、尚未核对", prepare, make_plan(now, reserved()), now, output_root=root)
+        self.assertRaisesRegex(Blocked, "an earlier batch of this request was sent and never verified", prepare, make_plan(now, reserved()), now, output_root=root)
 
     def test_gapped_batch(self) -> None:
         """A batch is found by a number it holds, not by one between its first and last; a ticket is for one run of numbers."""
@@ -304,7 +304,7 @@ class TicketTests(unittest.TestCase):
         # 1012 is in no batch: it can be taken over. A run with a gap cannot be one ticket (its name would be GOFCN1011-GOFCN1013).
         self.assertEqual(adopt(sheet, [1012], output_root=root)["status"], "rows_adopted")
         self.assertEqual(reason(lambda: adopt(sheet, [1011, 1013], output_root=tmp(), supplier="供应商甲", reviewer="李四")),
-                         "编号要连成一段：GOFCN1011 之后是 GOFCN1013。一张需求单的名称是 GOFCN首号-GOFCN末号，不连续的编号分段各接管一次")
+                         "the numbers must be one run: GOFCN1011 is followed by GOFCN1013. A ticket is named GOFCN<first>-GOFCN<last>, so take over each run of numbers on its own")
 
     def test_rows_by_hand(self) -> None:
         """Rows typed by hand are taken over as they are, though a new row could not be named like them."""
@@ -319,7 +319,7 @@ class TicketTests(unittest.TestCase):
         attached = attach_ticket(taken["batch"], "01", TICKET, CATALOG)
         self.assertEqual(read_text(attached["csv"]), csv_text([taken["first"], taken["last"]], LINK))
         # A new row still has to be one a name can be made of.
-        self.assertRaisesRegex(Blocked, r"不能含 / 或", normalize_request,
+        self.assertRaisesRegex(Blocked, r"cannot contain / or", normalize_request,
                                {"groups": [{"supplier": "供应商丙", "reviewer": "张三", "primary_tag": "玩法", "secondary_tag": "卖点", "quantity": 1, "keyword": "横版/竖版"}]})
 
 

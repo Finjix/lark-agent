@@ -1,4 +1,4 @@
-"""A read-only model of an .xlsx (xlsx.ts).
+"""A read-only model of an .xlsx.
 
 It holds exactly what the append checks compare: cell values and kinds, the content of cell styles, comments and links, merged ranges,
 row/column settings, the auto filter, sheet protection and the dropdown rules. Nothing is ever written back, so there is no round trip
@@ -16,7 +16,7 @@ from . import js
 from .a1 import CellRange, column_letter, coord_of, parse_coord, translate_formula
 from .util import canonical, digest, need
 from .xmlparse import XmlNode, child, children_of, parse_xml, to_data
-from .zipread import ZipReader
+from .unzip import ZipReader
 
 
 @dataclass
@@ -177,7 +177,7 @@ _ROW_KEYS = ("ht", "hidden", "outlineLevel", "collapsed", "customHeight", "custo
 
 def _read_sheet(zip_: ZipReader, file: str, name: str, state: str, styles: _Styles, shared: list[str]) -> SheetData:
     root = parse_xml(zip_.text(file))
-    need(root.name == "worksheet", f"{name} 不是有效的工作表")
+    need(root.name == "worksheet", f"{name} is not a valid worksheet")
     rels = _relationships(zip_, posixpath.join(posixpath.dirname(file), "_rels", f"{posixpath.basename(file)}.rels"))
     directory = posixpath.dirname(file)
     cells: dict[str, CellData] = {}
@@ -199,7 +199,7 @@ def _read_sheet(zip_: ZipReader, file: str, name: str, state: str, styles: _Styl
     for row_node in children_of(child(root, "sheetData"), "row"):
         a = row_node.attrs
         row_index = js.number(a["r"]) if "r" in a else row_cursor + 1
-        need(js.is_int(row_index) and 1 <= row_index <= 1048576, f"{name} 的行号无效")
+        need(js.is_int(row_index) and 1 <= row_index <= 1048576, f"{name} has an invalid row number")
         row_index = int(row_index)
         row_cursor = row_index
         if any(k in a for k in _ROW_KEYS):
@@ -223,14 +223,14 @@ def _read_sheet(zip_: ZipReader, file: str, name: str, state: str, styles: _Styl
                         shared_formulas[key] = (coord, text)
                     else:
                         master = shared_formulas.get(key)
-                        need(master, f"{name}!{coord} 的共享公式缺少主单元格")
+                        need(master, f"the shared formula of {name}!{coord} has no master cell")
                         text = translate_formula(master[1], master[0], coord)
                 cell.value = f"={text}"
                 cell.kind = "f"
             elif t == "s":
                 if v is not None and v != "":
                     text = js.index_of(shared, js.number(v))
-                    need(text is not None, f"{name}!{coord} 引用了不存在的共享字符串")
+                    need(text is not None, f"{name}!{coord} refers to a shared string that does not exist")
                     cell.value = text
                     cell.kind = "s"
             elif t == "inlineStr":
@@ -252,7 +252,7 @@ def _read_sheet(zip_: ZipReader, file: str, name: str, state: str, styles: _Styl
     for col in children_of(child(root, "cols"), "col"):
         lo = js.number(col.attrs.get("min", js.UNDEFINED))
         hi = js.number(col.attrs.get("max", js.UNDEFINED))
-        need(js.is_int(lo) and js.is_int(hi) and lo >= 1 and hi >= lo and hi <= 16384, f"{name} 的列设置无效")
+        need(js.is_int(lo) and js.is_int(hi) and lo >= 1 and hi >= lo and hi <= 16384, f"{name} has invalid column settings")
         columns[column_letter(int(lo))] = [int(lo), int(hi), col.attrs.get("width"), _truthy(col.attrs.get("hidden")),
                                            js.num(col.attrs.get("outlineLevel", 0)), _truthy(col.attrs.get("collapsed")),
                                            _dimension_style(styles, col.attrs.get("style"))]
@@ -286,7 +286,7 @@ def _read_sheet(zip_: ZipReader, file: str, name: str, state: str, styles: _Styl
         rel = rels.get(link.attrs["id"]) if link.attrs.get("id") else None
         value = [rel["target"] if rel else None, link.attrs.get("location")]
         area = CellRange(link.attrs.get("ref", ""))
-        need((area.max_col - area.min_col + 1) * (area.max_row - area.min_row + 1) <= 10_000, f"{name} 的超链接范围过大")
+        need((area.max_col - area.min_col + 1) * (area.max_row - area.min_row + 1) <= 10_000, f"{name} has a hyperlink range that is too large")
         for r in range(area.min_row, area.max_row + 1):
             for c in range(area.min_col, area.max_col + 1):
                 ensure(coord_of(c, r)).link = value
@@ -304,7 +304,7 @@ def _read_sheet(zip_: ZipReader, file: str, name: str, state: str, styles: _Styl
 def read_workbook(file: str) -> WorkbookData:
     with open(file, "rb") as handle:
         zip_ = ZipReader(handle.read())
-    need(zip_.has("xl/workbook.xml"), "不是有效的 XLSX：缺少 xl/workbook.xml")
+    need(zip_.has("xl/workbook.xml"), "not a valid XLSX: xl/workbook.xml is missing")
     book = parse_xml(zip_.text("xl/workbook.xml"))
     rels = _relationships(zip_, "xl/_rels/workbook.xml.rels")
     shared = [_rich_text(si) for si in children_of(parse_xml(zip_.text("xl/sharedStrings.xml")), "si")] if zip_.has("xl/sharedStrings.xml") else []
@@ -314,12 +314,12 @@ def read_workbook(file: str) -> WorkbookData:
     for s in children_of(child(book, "sheets"), "sheet"):
         name = s.attrs.get("name")
         rel = rels.get(s.attrs["id"]) if s.attrs.get("id") else None
-        need(name and rel and not rel["external"], "工作簿的工作表清单无效")
-        need(not any(x.name == name for x in sheets), f"工作表名称重复：{name}")
+        need(name and rel and not rel["external"], "the workbook's list of sheets is invalid")
+        need(not any(x.name == name for x in sheets), f"duplicate sheet name: {name}")
         sheet = _read_sheet(zip_, _resolve("xl", rel["target"]), name, s.attrs.get("state", "visible"), styles, shared)
-        need(sheet.max_row * sheet.max_col <= MAX_CELLS, f"{name} 的扫描范围过大，不能证明安全")
+        need(sheet.max_row * sheet.max_col <= MAX_CELLS, f"{name} is too large to check completely")
         cells += len(sheet.cells)
         sheets.append(sheet)
-    need(len(sheets) > 0, "XLSX 没有工作表")
-    need(cells <= MAX_CELLS, "XLSX 单元格过多，不能证明安全")
+    need(len(sheets) > 0, "the XLSX has no worksheet")
+    need(cells <= MAX_CELLS, "the XLSX has too many cells to check completely")
     return WorkbookData(sheets)

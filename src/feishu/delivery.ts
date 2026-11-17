@@ -37,14 +37,15 @@ export async function ownedArtifact(workspace:string,candidate:string){
  * by its creation time). No dotfiles or symlinks, a few levels deep, capped so a stray tree cannot flood the chat.
  */
 // The attachments the user sent live in the workspace's input/ and are not the agent's output.
-const MAX_UNLINKED=10,SLACK_MS=2000,INPUT_DIR='input';
+const MAX_UNLINKED=10,SLACK_MS=2000,INPUT_DIR='input',OVERFLOW=/^lark-result-.+\.md$/;
 export async function outputFiles(root:string,window?:{from:number;to:number}){
   const found:string[]=[];
   const walk=async(directory:string,depth:number):Promise<void>=>{
     let entries;try{entries=await fs.readdir(directory,{withFileTypes:true});}catch{return;}
     for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
       if(found.length>=MAX_UNLINKED)return;
-      if(entry.name.startsWith('.'))continue;
+      // Hidden files, and the long replies this service itself wrote as files (another task's, written once that task had ended).
+      if(entry.name.startsWith('.')||OVERFLOW.test(entry.name))continue;
       const full=path.join(directory,entry.name);
       if(entry.isFile()){
         // A file that went away since the listing (a temporary file of something still running) or cannot be read is not a deliverable; it must not hold back the reply.

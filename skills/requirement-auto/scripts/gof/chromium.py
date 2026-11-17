@@ -1,10 +1,10 @@
-"""A minimal Chromium driver (chromium.ts).
+"""A minimal Chromium driver.
 
 Find the Chrome or Edge that is already installed, start it with its own profile folder and speak the DevTools protocol to it over a
 WebSocket. No download, no third-party package, no UI automation: it exists so that a person can log in to a web site in an ordinary
 browser and the login can then be observed.
 
-lark-agent's Feishu module drives the same profile (its Feishu web session is what CLS signs in with) with its own copy of this code. The two share
+The feishu skill drives the same profile (its Feishu web session is what CLS signs in with) with its own copy of this code. The two share
 the profile through the lock below (a file beside the profile, `browser-profile.lock`: {"pid","at","token"}) and the DevToolsActivePort file
 in it, so those two must stay the same in both: change them together or not at all.
 """
@@ -29,8 +29,8 @@ from urllib.parse import urlsplit
 
 from .util import Blocked
 
-#: Environment variable that names the browser executable to use instead of searching for one. requirement-auto's older name is read
-#: too: this skill and lark-agent's Feishu module must start the same browser on the profile they share, or the Feishu web session would not carry over.
+#: Environment variable that names the browser executable to use instead of searching for one, the feishu skill's too: both skills must
+#: start the same browser on the profile they share, or the Feishu web session would not carry over.
 BROWSER_ENV = "FEISHU_BROWSER"
 
 
@@ -81,11 +81,11 @@ class _WebSocket:
         while b"\r\n\r\n" not in head:
             chunk = self._sock.recv(4096)
             if not chunk:
-                raise ConnectionError("DevTools 连接失败")
+                raise ConnectionError("DevTools connection failed")
             head += chunk
         status, _, rest = head.partition(b"\r\n\r\n")
         if b" 101 " not in status.split(b"\r\n", 1)[0] + b" ":
-            raise ConnectionError("DevTools 连接失败")
+            raise ConnectionError("DevTools connection failed")
         self._buffer = rest
 
     def _read(self, n: int) -> bytes:
@@ -190,9 +190,9 @@ class Cdp:
         try:
             return Cdp(_WebSocket(url, timeout_ms / 1000))
         except socket.timeout:
-            raise CdpError("DevTools 连接超时") from None
+            raise CdpError("DevTools connection timed out") from None
         except (OSError, ConnectionError):
-            raise CdpError("DevTools 连接失败") from None
+            raise CdpError("DevTools connection failed") from None
 
     def _read_loop(self) -> None:
         while True:
@@ -209,7 +209,7 @@ class Cdp:
                 if waiting is None:
                     continue
                 if message.get("error"):
-                    waiting.put((False, str((message["error"] or {}).get("message") or "DevTools 命令失败")))
+                    waiting.put((False, str((message["error"] or {}).get("message") or "DevTools command failed")))
                 else:
                     waiting.put((True, message.get("result") or {}))
             elif isinstance(message.get("method"), str):
@@ -228,7 +228,7 @@ class Cdp:
             pending = list(self._pending.values())
             self._pending.clear()
         for waiting in pending:
-            waiting.put((False, "DevTools 连接已关闭"))
+            waiting.put((False, "DevTools connection closed"))
         for closer in list(self._closers):
             try:
                 closer()
@@ -237,7 +237,7 @@ class Cdp:
 
     def send(self, method: str, params: Optional[dict] = None, session_id: Optional[str] = None, timeout_ms: int = 30_000) -> dict:
         if self.closed:
-            raise CdpError("DevTools 连接已关闭")
+            raise CdpError("DevTools connection closed")
         reply: "queue.Queue[tuple[bool, Any]]" = queue.Queue(1)
         with self._lock:
             ident = self._next_id
@@ -251,13 +251,13 @@ class Cdp:
         except OSError:
             with self._lock:
                 self._pending.pop(ident, None)
-            raise CdpError("DevTools 连接已关闭") from None
+            raise CdpError("DevTools connection closed") from None
         try:
             ok, value = reply.get(timeout=timeout_ms / 1000)
         except queue.Empty:
             with self._lock:
                 self._pending.pop(ident, None)
-            raise CdpError(f"DevTools 命令超时：{method}") from None
+            raise CdpError(f"DevTools command timed out: {method}") from None
         if not ok:
             raise CdpError(value)
         return value
@@ -373,7 +373,7 @@ def _join_browser(profile_dir: str) -> Optional[BrowserHandle]:
         try:
             cdp = Cdp.connect(url, 15_000)
         except CdpError:
-            raise Blocked("这个用户的浏览器在运行，但调试接口没有响应；请稍后再试") from None
+            raise Blocked("this user's browser is running but its DevTools port does not answer; try again a little later") from None
 
     def close() -> None:
         try:
@@ -563,7 +563,7 @@ def lock_profile(profile_dir: str, wait_ms: int = LOCK_WAIT_MS) -> Callable[[], 
                             pass
                 continue
         if _now_ms() > deadline:
-            raise Blocked("这个用户的浏览器正被另一个命令使用：同一时间只能运行一个用到浏览器的命令（登录、检查登录、截图、素材上传），请等它结束后再运行")
+            raise Blocked("this user's browser is in use by another command: only one browser command (login, login check, screenshot, upload) can run at a time; run this one after it has finished")
         time.sleep(0.25)
 
 
@@ -687,7 +687,7 @@ def launch_browser(exe: str, profile_dir: str, detach: bool = False, env: Option
                 raise error
     except OSError as error:
         start_failure = str(error)
-        raise Blocked(f"浏览器没有启动成功（{start_failure}）；确认已安装 Chrome 或 Edge，或用 {BROWSER_ENV} 指定浏览器路径") from None
+        raise Blocked(f"the browser did not start ({start_failure}); make sure Chrome or Edge is installed, or set {BROWSER_ENV} to the browser's absolute path") from None
     if not detach:
         _kill_with_this_process(child.pid)
     found = None
@@ -701,13 +701,13 @@ def launch_browser(exe: str, profile_dir: str, detach: bool = False, env: Option
     if not found:
         if child.poll() is None:
             _kill_tree(child.pid)
-        raise Blocked(f"浏览器没有启动成功；确认已安装 Chrome 或 Edge，或用 {BROWSER_ENV} 指定浏览器路径")
+        raise Blocked(f"the browser did not start; make sure Chrome or Edge is installed, or set {BROWSER_ENV} to the browser's absolute path")
     port, endpoint = found
     try:
         cdp = Cdp.connect(f"ws://127.0.0.1:{port}{endpoint}")
     except CdpError as error:
         _kill_tree(child.pid)
-        raise Blocked(f"无法连接浏览器的调试接口：{error}") from None
+        raise Blocked(f"cannot connect to the browser's DevTools port: {error}") from None
     _close_spare_blank_tabs(cdp)
 
     def close() -> None:

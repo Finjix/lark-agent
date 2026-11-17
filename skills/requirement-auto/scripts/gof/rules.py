@@ -1,4 +1,4 @@
-"""The dropdown rules as the Feishu API reports them, compared the same way the XLSX rules are (rules.ts)."""
+"""The dropdown rules as the Feishu API reports them, compared the same way the XLSX rules are."""
 
 from __future__ import annotations
 
@@ -91,13 +91,13 @@ def dropdowns(plan: dict, sheet_id: str, records: list[dict]) -> list[dict]:
                 rect = CellRange(raw)
                 if rect.min_col <= col <= rect.max_col and rect.min_row < area.min_row:
                     found.append((min(rect.max_row, area.min_row - 1), rule))
-        need(len(found) > 0, f"{spec['field']} 缺少可保留模式/颜色的原规则")
+        need(len(found) > 0, f"{spec['field']} has no existing rule whose mode and colors can be kept")
         nearest = max(end for end, _ in found)
         choices: dict[str, dict] = {}
         for end, r in found:
             if end == nearest:
                 choices[canonical(_rule_body(r))] = r
-        need(len(choices) == 1, "最近下拉规则冲突，需要澄清")
+        need(len(choices) == 1, "the nearest dropdown rules conflict: settle it")
         rule = list(choices.values())[0]
         # Only the values this request asks for are added to the rule being kept. The XLSX export is not a reliable source of a column's
         # options (it can attribute a stray rule on a few old cells to the whole column), so spec.options is not used here.
@@ -105,7 +105,7 @@ def dropdowns(plan: dict, sheet_id: str, records: list[dict]) -> list[dict]:
         options = [*rule["options"], *[v for v in wanted if v not in rule["options"]]]
         colors = [rule["colors"].get(v) if rule["colors"].get(v) is not None else PALETTE[i % len(PALETTE)] for i, v in enumerate(options)]
         # Existing highlighted options must have an actual color, never a guessed replacement.
-        need(not rule["highlight"] or all(v in rule["colors"] for v in rule["options"]), "原下拉配色未完整读取")
+        need(not rule["highlight"] or all(v in rule["colors"] for v in rule["options"]), "the existing dropdown colors were not read completely")
         result.append({"field": spec["field"], "range": spec["range"], "options": options, "mode": "multiple" if rule["multiple"] else "single",
                        "highlight": rule["highlight"], "colors": colors, "missing": [v for v in options if v not in rule["options"]]})
     return result
@@ -114,10 +114,10 @@ def dropdowns(plan: dict, sheet_id: str, records: list[dict]) -> list[dict]:
 def build_writes(plan: dict, context: dict) -> list[dict]:
     """One write per non-empty column, every one with allow_overwrite=false."""
     check_seal(context, "api_plan_id")
-    need(context.get("batch_plan_id") == plan["plan_id"] and context.get("baseline_digest") == plan["baseline_digest"], "接口计划与批次不匹配")
+    need(context.get("batch_plan_id") == plan["plan_id"] and context.get("baseline_digest") == plan["baseline_digest"], "the API plan does not match the batch")
     check_target(context.get("target"))
     area = CellRange(plan["range"])
-    need(area.max_row - area.min_row + 1 <= 5000, "单批超出官方写入行数上限，请先拆分计划")
+    need(area.max_row - area.min_row + 1 <= 5000, "the batch has more rows than one write allows: split the plan")
     validation = {CellRange(d["range"]).min_col: d for d in context["dropdowns"]}
     writes: list[dict] = []
     for col in range(area.min_col, area.max_col + 1):
@@ -125,7 +125,7 @@ def build_writes(plan: dict, context: dict) -> list[dict]:
         values = [row["values"].get(f"{letter}{row['row']}") for row in plan["rows"]]
         if all(v is None for v in values):
             continue  # Never send nulls/clears into unused fields.
-        need(all(v is not None for v in values), "写入列有空洞，不允许混合清空操作")
+        need(all(v is not None for v in values), "a written column has gaps; clearing cells is not allowed")
         cells = []
         for value in values:
             cell: dict[str, Any] = {"formula": value} if isinstance(value, str) and value.startswith("=") else {"value": value}
@@ -139,8 +139,8 @@ def build_writes(plan: dict, context: dict) -> list[dict]:
                     cell["multiple_values"] = [{"value": value}]
             cells.append([cell])
         writes.append({"sheet_id": context["sheet_id"], "range": f"{letter}{area.min_row}:{letter}{area.max_row}", "cells": cells, "allow_overwrite": False})
-    need(0 < len(writes) <= 100, "追加写入范围数不支持")
-    need(sum(len(w["cells"]) for w in writes) <= 50000, "单批超过单元格预算，请先拆分计划")
+    need(0 < len(writes) <= 100, "unsupported number of write ranges")
+    need(sum(len(w["cells"]) for w in writes) <= 50000, "the batch has more cells than one write allows: split the plan")
     return writes
 
 
@@ -151,9 +151,9 @@ def _check_new_rules(records: list[dict], sheet_id: str, dropdown_specs: list[di
             coord = coord_of(rect.min_col, row)
             matching = [r for r in records if r["sheet_id"] == sheet_id and any(CellRange(a).contains(coord) for a in r["ranges"])]
             if verified_against == "fresh":
-                need(len({canonical(_rule_body(r)) for r in matching}) == 1, "新增下拉规则缺失/冲突")
+                need(len({canonical(_rule_body(r)) for r in matching}) == 1, "a new row's dropdown rule is missing or conflicting")
             else:
-                need(len(matching) > 0, "新增规则验收失败")
+                need(len(matching) > 0, "the new rows' dropdown rules did not verify")
 
             def same(r: dict) -> bool:
                 return (canonical(r["options"]) == canonical(spec["options"]) and r["multiple"] == (spec["mode"] == "multiple")
@@ -161,9 +161,9 @@ def _check_new_rules(records: list[dict], sheet_id: str, dropdown_specs: list[di
                         and (not spec["highlight"] or canonical([r["colors"].get(v, js.UNDEFINED) for v in r["options"]]) == canonical(spec["colors"])))
 
             if verified_against == "fresh":
-                need(same(matching[0]), "新增下拉选项/颜色/模式不匹配")
+                need(same(matching[0]), "a new dropdown's options, colors or mode differ")
             else:
-                need(all(same(r) for r in matching), "新增规则验收失败")
+                need(all(same(r) for r in matching), "the new rows' dropdown rules did not verify")
 
 
 def _append_column_rules(records: list[dict], sheet_id: str, range_: str) -> list:
@@ -179,7 +179,7 @@ def rule_proof(file: str, fresh: Any, records: list[dict], context: dict, plan: 
     """After a write: the old rules of the written columns must be unchanged and the new rows must carry the planned dropdowns. Writes the proof file."""
     sid = context["sheet_id"]
     need(canonical(_append_column_rules(context["rules"], sid, plan["range"])) == canonical(_append_column_rules(records, sid, plan["range"])),
-         "API 检测到历史下拉规则/颜色/模式变化")
+         "the API shows that existing dropdown rules, colors or modes changed")
     _check_new_rules(records, sid, context["dropdowns"], "fresh")
     proof = seal({"transport": "feishu_api", "api_plan_id": context["api_plan_id"], "snapshot_digest": fresh.fingerprint, "rules": records}, "proof_id")
     write_json_new(file, proof)
@@ -191,20 +191,20 @@ def validate_rule_evidence(directory: str, fresh: Any, evidence: dict) -> list[d
     from .batch import load_batch
 
     batch_path, manifest = load_batch(directory)
-    need("api-plan.json" in manifest["artifacts"], "缺少不可变接口计划")
+    need("api-plan.json" in manifest["artifacts"], "the sealed API plan is missing")
     context = read_json(os.path.join(batch_path, "api-plan.json"))
     check_seal(context, "api_plan_id")
-    need(isinstance(evidence, dict) and evidence.get("transport") == "feishu_api", "接口批次需要 API 规则验收证据")
+    need(isinstance(evidence, dict) and evidence.get("transport") == "feishu_api", "an API batch needs the API rule evidence")
     proof_path = os.path.abspath(js.to_str(evidence.get("proof", "")) if evidence.get("proof") is not None else "")
-    need(is_inside(batch_path, proof_path) and os.path.isfile(proof_path), "规则验收记录不在本批目录内")
+    need(is_inside(batch_path, proof_path) and os.path.isfile(proof_path), "the rule proof is not inside the batch directory")
     proof = read_json(proof_path)
     check_seal(proof, "proof_id")
-    need(proof.get("api_plan_id") == context["api_plan_id"] and proof.get("snapshot_digest") == fresh.fingerprint, "规则证据与接口计划/当前 XLSX 不匹配")
+    need(proof.get("api_plan_id") == context["api_plan_id"] and proof.get("snapshot_digest") == fresh.fingerprint, "the rule evidence does not match the API plan or this XLSX")
     # Recompute all comparisons without writing another proof.
     plan = manifest["plan"]
     sid = context["sheet_id"]
     need(canonical(_append_column_rules(context["rules"], sid, plan["range"])) == canonical(_append_column_rules(proof["rules"], sid, plan["range"])),
-         "历史下拉规则发生变化")
+         "existing dropdown rules changed")
     _check_new_rules(proof["rules"], sid, context["dropdowns"], "proof")
     return context["dropdowns"]
 
@@ -215,12 +215,12 @@ def acceptance(receipt: str, bridge_version: str) -> dict:
     check_seal(data, "receipt_id")
     need(data.get("bridge_version") == bridge_version and data.get("identity") == "user" and data.get("schema") == 2 and data.get("probe_workbook")
          and canonical(data.get("passed")) == canonical(["occupied_value", "empty_formula", "repeated_occupancy"]),
-         "飞书防覆盖行为尚未通过隔离实测，禁止接口追加")
-    need(data.get("probe_workbook") != data.get("production_token"), "安全探测不能使用进度表")
+         "the overwrite receipt is not valid for this bridge: appends are disabled")
+    need(data.get("probe_workbook") != data.get("production_token"), "the probe cannot use the progress sheet")
     expected = [["KEEP_EXISTING", '=IF(1=1,"","")']]
     observations = data.get("observations") or []
     need(len(observations) == 3 and canonical([o.get("case") for o in observations]) == canonical(data.get("passed"))
          and all(o.get("rejection") == "non_empty" and canonical(o.get("before")) == canonical(expected) and canonical(o.get("after")) == canonical(expected)
                  for o in observations),
-         "安全记录缺少每次拒写及原值/公式回读")
+         "the receipt lacks a refusal and read-back for every probe case")
     return data

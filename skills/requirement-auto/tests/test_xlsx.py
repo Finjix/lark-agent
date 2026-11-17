@@ -1,4 +1,4 @@
-"""The workbook reader, A1 arithmetic and sheet periods (gof-xlsx.test.ts)."""
+"""The workbook reader, A1 arithmetic and sheet periods."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from gof.snapshot import Snapshot, sheet_period, validation_projection
 from gof.util import Blocked
 from gof.xlsx import read_workbook
 from gof.xmlparse import parse_xml
-from gof.zipread import ZipReader
+from gof.unzip import ZipReader
 
 
 def zip_files(files: dict[str, str], deflate: bool = True) -> bytes:
@@ -152,10 +152,10 @@ class WorkbookTests(unittest.TestCase):
         data = bytearray(zip_files({"xl/workbook.xml": "x" * 10}))
         at = data.index(bytes([0x50, 0x4B, 0x01, 0x02])) + 24
         data[at:at + 4] = struct.pack("<I", 0x7FFFFFFF)
-        self.assertRaisesRegex(Blocked, "过大", ZipReader(bytes(data)).read, "xl/workbook.xml")
+        self.assertRaisesRegex(Blocked, "too large", ZipReader(bytes(data)).read, "xl/workbook.xml")
         self.assertEqual(ZipReader(zip_files({"a.txt": "hello"}, False)).text("a.txt"), "hello")
-        self.assertRaisesRegex(Blocked, "标签不匹配", parse_xml, "<a><b></a>")
-        self.assertRaisesRegex(Blocked, "未闭合", parse_xml, "<a>")
+        self.assertRaisesRegex(Blocked, "tags do not match", parse_xml, "<a><b></a>")
+        self.assertRaisesRegex(Blocked, "not closed", parse_xml, "<a>")
         self.assertEqual(parse_xml('<a x="&lt;1&#65;&#x42;">&amp;<![CDATA[<z>]]></a>').attrs["x"], "<1AB")
         self.assertEqual(parse_xml('<!DOCTYPE a [<!ENTITY e "boom">]><a>&e;</a>').text, "&e;", "custom entities are not expanded")
 
@@ -171,7 +171,7 @@ class WorkbookTests(unittest.TestCase):
         self.assertEqual(translate_formula(formula, "C5", "C8"),
                          '=CONCATENATE("GOFCN",A8,"_A1_",$D8,"_",E$5,"_",$F$5,LOG10(B8),"x""A9",\'Sheet 1\'!C8)')
         self.assertEqual(translate_formula("=A1+B2", "C3", "D5"), "=B3+C4")
-        self.assertRaisesRegex(Blocked, "越界", translate_formula, "=A1", "B2", "A1")
+        self.assertRaisesRegex(Blocked, "out of the sheet", translate_formula, "=A1", "B2", "A1")
 
     def test_sheet_period(self) -> None:
         """A sheet name gives the month it ends in, the year rolling over when the span crosses January."""

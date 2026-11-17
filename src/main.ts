@@ -14,7 +14,7 @@ import {FeishuClient} from './feishu/client.js';
 import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
 import {Delivery} from './feishu/delivery.js';
-import {housekeeping} from './service/maintenance.js';
+import {housekeeping,skillPrunes} from './service/maintenance.js';
 import {accessConfigured} from './users/access.js';
 import {clockOffset} from './feishu/clock.js';
 
@@ -27,7 +27,7 @@ const ROUTINE_MS=60*60000;
  * A long connection the routine check finds not connected is looked at again this often until it is; this many failed looks in a row and it
  * is built afresh, whatever the SDK's own retries are doing.
  */
-const FEISHU_RETRY_MS=30000,FEISHU_FAILURES=3;
+const FEISHU_RETRY_MS=30000,FEISHU_FAILURES=3,AGENT_RETRY_MS=10000;
 /** Housekeeping (see maintenance.ts): at the start, then every 72 hours. */
 const HOUSEKEEPING_MS=72*3600000;
 const COMMANDS='start、setup、login [device]、logout、doctor、stop、backup、retry-delivery';
@@ -36,20 +36,18 @@ async function doctor(agent:AgentRunner){
   const store=new Store(config.database);
   const shell=(()=>{try{return {ok:true,path:getShellConfig().shell};}catch(e){return {ok:false,error:safeError(e)};}})();
   await agent.probe();
-  const skills=agent.loadSkills(),{jobs,invalid}=await declaredJobs();
+  const skills=agent.loadSkills(),{jobs,invalid}=await declaredJobs(),prunes=await skillPrunes();
   const checks:any={
     runtime:{ok:Number(process.versions.node.split('.')[0])>=24,version:process.version,executable:process.execPath},
     sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length},
     agent:{ready:agent.ready,pi:agent.version,model:`${agent.provider}/${agent.modelId}`,thinking:agent.thinking,home:config.agentHome,...(agent.error?{error:agent.error}:{})},
     shell,python:await pythonStatus(),
-    // The agent's own Feishu tools (the user's login, documents) and the bridge the skills reach Feishu through.
-    feishuModule:{ok:await fs.stat(config.feishu).then(s=>s.isFile(),()=>false),path:path.relative(config.root,config.feishu)},
-    skills:skills.map(s=>({name:s.name,path:path.relative(config.root,s.baseDir)})),
+    skills:skills.map(s=>({name:s.name,path:path.relative(config.root,s.baseDir),...(prunes.some(p=>p.skill===s.name)?{prune:true}:{})})),
     jobs:[...jobs.map(j=>({name:j.name,everyMinutes:j.everyMinutes})),...invalid.map(reason=>({invalid:reason}))],
   };
   if(checks.configuration.credentials){try{const info=await new FeishuClient().raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
   store.close();console.log(JSON.stringify(checks,null,2));
-  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.feishuModule.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
+  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
 }
 
 async function main(){
@@ -80,7 +78,7 @@ async function main(){
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
-  let stopping=false;let poll:NodeJS.Timeout|undefined,feishuRetry:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
+  let stopping=false;let agentRetry:NodeJS.Timeout|undefined,poll:NodeJS.Timeout|undefined,feishuRetry:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
   // Housekeeping is told to stop and awaited on shutdown, so it never meets a closed database.
   const halt=new AbortController();let sweeping:Promise<void>=Promise.resolve();
   const housekeep=()=>{sweeping=housekeeping(store,halt.signal);};
@@ -107,10 +105,11 @@ async function main(){
       feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
-    if(stopping)return;stopping=true;clearInterval(poll);clearTimeout(feishuRetry);clearInterval(maintain);halt.abort();server.close();
+    if(stopping)return;stopping=true;clearInterval(poll);clearInterval(agentRetry);clearTimeout(feishuRetry);clearInterval(maintain);halt.abort();server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
     // The agent runs in this service and ends with it: the tasks are finished as failed, and one last delivery pass finishes their cards.
-    service.stop();await jobs.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
+    // Nothing new starts once stopping: the scheduler first, then what runs is stopped.
+    await scheduler.stop();service.stop();await jobs.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
     feishu.close();agent.close();store.close();
     await fs.rm(path.join(config.data,'control.token'),{force:true});log.info('服务已安全停止');clearTimeout(forced);
     // The last lines still go to the console; one that has stalled must not keep the process from ending.
@@ -144,18 +143,23 @@ async function main(){
     started=true;const names=agent.skills.map(s=>s.name);
     log.console(`启动成功，技能：${names.length?names.join('、'):'无'}${accessConfigured()?'':'（未配置开放的企业或用户，任务不会执行）'}`);
   };
+  /** Whether the agent can run (the ChatGPT login, the model): at every routine check, and every AGENT_RETRY_MS while it cannot. */
+  const checkAgent=async()=>{
+    const was=agent.ready;await agent.probe();
+    if(agent.ready&&!was){log.info({pi:agent.version,model:`${agent.provider}/${agent.modelId}`},'智能体已就绪');lastAgentError='';announceStarted();}
+    else if(!agent.ready&&agent.error!==lastAgentError){lastAgentError=agent.error;log.warn({error:agent.error},'等待智能体就绪');}
+    if(!agent.ready&&agent.error)waiting(agent.error);
+  };
   /** The routine check, every ROUTINE_MS: the long connection, the skills' jobs, the clock, the ChatGPT login, and a line in the log that the service is alive. */
   let checking=false;
   const routine=async()=>{
     if(checking||stopping)return;checking=true;
     try{
+      // The agent first: messages the connection brings in are refused while it is not ready.
+      await checkAgent();
       await connection().catch(e=>log.error({error:safeError(e)},'飞书长连接检查失败'));
       await readJobs().catch(e=>log.warn({error:safeError(e)},'读取定时任务失败'));
       void clockOffset().then(offset=>{service.clockOffsetMs=offset;if(Math.abs(offset)>5000)log.warn({offsetMs:Math.round(offset)},'本机时钟与飞书相差较大，已按飞书时间判断消息是否过期，请校准系统时间');}).catch(e=>log.debug({error:safeError(e)},'读取飞书时间失败'));
-      const was=agent.ready;await agent.probe();
-      if(agent.ready&&!was){log.info({pi:agent.version,model:`${agent.provider}/${agent.modelId}`},'智能体已就绪');lastAgentError='';}
-      else if(!agent.ready&&agent.error!==lastAgentError){lastAgentError=agent.error;log.warn({error:agent.error},'等待智能体就绪');}
-      if(!agent.ready&&agent.error)waiting(agent.error);
       log.info({feishu:feishu.state,agent:agent.ready,running:service.running,rssMB:Math.round(process.memoryUsage().rss/1048576)},'服务运行中');
       announceStarted();
     }finally{checking=false;lastPoll=Date.now();}
@@ -197,6 +201,8 @@ async function main(){
   };
   poll=setInterval(()=>{void routine().catch(e=>log.error({error:safeError(e)},'例行检查失败'));},ROUTINE_MS);
   maintain=setInterval(housekeep,HOUSEKEEPING_MS);
+  // A login made while the service runs (start.cmd login), or a passing failure of the check, is picked up within seconds, not at the next hour.
+  agentRetry=setInterval(()=>{if(!agent.ready&&!stopping)void checkAgent().catch(e=>log.debug({error:safeError(e)},'检查智能体失败'));},AGENT_RETRY_MS);agentRetry.unref();
   log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书机器人已启动');
   if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭；未获授权的人发消息时，机器人会回复他的 Open ID 和租户');
   await routine();

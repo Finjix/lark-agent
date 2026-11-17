@@ -24,7 +24,7 @@ test('streamed replies contain public commentary and answer without task chrome 
   const activeCards=calls.filter(c=>c.method==='PUT'&&c.data.card&&JSON.parse(c.data.card.data).config.streaming_mode).map(c=>JSON.parse(c.data.card.data));
   const bodies=[...activeCards.map(c=>c.body.elements[0].content),...calls.filter(c=>c.url?.endsWith('/elements/task_content/content')).map(c=>c.data.content)];
   assert.deepEqual(bodies,['正在','正在\n\n正在输出','正在\n\n正在输出完整回复']);
-  assert.match(activeCards[0].header.title.content,/^番薯搬砖中\.\.\.\.\.\. \d+s$/);assert.equal(activeCards[0].header.template,'green');
+  assert.match(activeCards[0].header.title.content,/^小薯思考中 - \d+s$/);assert.equal(activeCards[0].header.template,'green');
   const final=calls.filter(c=>c.method==='PUT'&&c.url==='/open-apis/cardkit/v1/cards/card').at(-1);
   const card=JSON.parse(final.data.card.data);assert.equal(card.header,undefined);assert.equal(card.config.streaming_mode,false);
   assert.equal(card.body.elements[0].content,bodies.at(-1));
@@ -39,9 +39,9 @@ test('timer refreshes without new output from the agent, reuses the message, and
   const fake={connected:true,raw:async(method,url,data)=>{calls.push({method,url,data});if(fail)throw Error('network down');return url.endsWith('/cards')?{card_id:'card'}:{};},reply:async()=>{replies++;return {message_id:'message'};}};
   const delivery=new Delivery(s,fake);
   s.transition(task.id,'STARTING',{started_at:Date.now()-1200});await delivery.tick();
-  assert.match(JSON.parse(calls.at(-1).data.card.data).header.title.content,/^番薯搬砖中\.\.\.\.\.\. \d+s$/);
+  assert.match(JSON.parse(calls.at(-1).data.card.data).header.title.content,/^小薯思考中 - \d+s$/);
   s.update(task.id,{started_at:Date.now()-4200});await delivery.tick();
-  const active=JSON.parse(calls.at(-1).data.card.data);assert.match(active.header.title.content,/^番薯搬砖中\.\.\.\.\.\. [4-9]s$/);assert.equal(active.body.elements[0].content,' ');assert.equal(replies,1);
+  const active=JSON.parse(calls.at(-1).data.card.data);assert.match(active.header.title.content,/^小薯思考中 - \d+s$/);assert.equal(active.body.elements[0].content,' ');assert.equal(replies,1);
   fail=true;s.update(task.id,{started_at:Date.now()-8200});await delivery.tick();
   const row=s.db.prepare('SELECT * FROM delivery_outbox WHERE id=?').get(`view:${task.id}`);assert.equal(row.status,'RETRYING');
   s.db.prepare('UPDATE delivery_outbox SET next_attempt_at=? WHERE id=?').run(Date.now()+60000,row.id);

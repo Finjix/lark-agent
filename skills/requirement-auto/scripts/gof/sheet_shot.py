@@ -1,4 +1,4 @@
-"""The picture of the 创意进度表 the user gets after the requirement flow (sheet-shot.ts).
+"""The picture of the 创意进度表 the user gets after the requirement flow.
 
 The progress sheet's tab, opened in this user's hidden browser on the rows that were appended, and photographed once the sheet has drawn.
 The browser is the one the Feishu and CLS logins live in (a Feishu scan logs in the web page too), so the sheet opens as the user. Nothing

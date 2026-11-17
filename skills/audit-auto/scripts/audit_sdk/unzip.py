@@ -1,10 +1,9 @@
-"""The zip a user sends instead of a folder (port of zip.ts; Feishu does not let a bot download a folder).
+"""The zip a user sends instead of a folder (a chat app does not let a bot download a folder).
 
 Material zips are large, so entries are streamed from the file to disk, never held in memory; zip64, stored and deflated entries and
 the name encodings zips are made with in practice (UTF-8, or GBK from Chinese Windows tools, without the UTF-8 flag) are understood,
-and every entry is checked against its size and CRC-32. (The reader is requirement-auto's src/gof/unzip.ts; unpacking differs: folders
-inside the zip are kept as part of the name, since materials often come as 横版/ and 竖版/.) Named unzip.py so as not to shadow the
-built-in zip().
+and every entry is checked against its size and CRC-32. Folders inside the zip are kept as part of the name, since materials often
+come as 横版/ and 竖版/ (landscape, portrait). Named unzip.py so as not to shadow the built-in zip().
 
 Python's zipfile is not used: it reads GBK names as cp437, knows nothing of the Info-ZIP Unicode path, and its errors are not the
 reasons the user is told here.
@@ -46,7 +45,7 @@ def _read_at(handle: BinaryIO, position: int, length: int) -> bytes:
 
 def _big(buffer: bytes, at: int) -> int:
     value = struct.unpack_from("<Q", buffer, at)[0]
-    need(value <= _SAFE_MAX, "压缩包过大")
+    need(value <= _SAFE_MAX, "The zip is too large")
     return value
 
 
@@ -74,22 +73,22 @@ def list_zip(file: str) -> list[ZipEntry]:
             if tail[i:i + 4] == b"PK\x05\x06":
                 eocd = i
                 break
-        need(eocd >= 0, "不是有效的 zip 压缩包")
+        need(eocd >= 0, "Not a valid zip file")
         count = struct.unpack_from("<H", tail, eocd + 10)[0]
         dir_size = struct.unpack_from("<I", tail, eocd + 12)[0]
         dir_start = struct.unpack_from("<I", tail, eocd + 16)[0]
         if count == 0xFFFF or dir_size == 0xFFFFFFFF or dir_start == 0xFFFFFFFF:
             # zip64: the locator just before the end record points at the zip64 end record.
-            need(eocd >= 20 and tail[eocd - 20:eocd - 16] == b"PK\x06\x07", "zip64 压缩包结构损坏")
+            need(eocd >= 20 and tail[eocd - 20:eocd - 16] == b"PK\x06\x07", "The zip64 structure is damaged")
             record = _read_at(handle, _big(tail, eocd - 20 + 8), 56)
-            need(len(record) == 56 and record[:4] == b"PK\x06\x06", "zip64 压缩包结构损坏")
+            need(len(record) == 56 and record[:4] == b"PK\x06\x06", "The zip64 structure is damaged")
             count, dir_size, dir_start = _big(record, 32), _big(record, 40), _big(record, 48)
-        need(dir_size <= MAX_DIRECTORY and dir_start + dir_size <= size, "压缩包目录损坏或过大")
+        need(dir_size <= MAX_DIRECTORY and dir_start + dir_size <= size, "The zip's directory is damaged or too large")
         directory = _read_at(handle, dir_start, dir_size)
     entries: list[ZipEntry] = []
     pos = 0
     for _ in range(count):
-        need(pos + 46 <= len(directory) and directory[pos:pos + 4] == b"PK\x01\x02", "压缩包目录损坏")
+        need(pos + 46 <= len(directory) and directory[pos:pos + 4] == b"PK\x01\x02", "The zip's directory is damaged")
         flags, method = struct.unpack_from("<HH", directory, pos + 8)
         crc, csize, usize = struct.unpack_from("<III", directory, pos + 16)
         name_length, extra_length, comment_length = struct.unpack_from("<HHH", directory, pos + 28)
@@ -123,15 +122,15 @@ def list_zip(file: str) -> list[ZipEntry]:
 
 def extract_entry(file: str, entry: ZipEntry, target: str) -> None:
     """Streams one entry into a new file and checks its size and CRC-32."""
-    need((entry.flags & 1) == 0, f"压缩包里的文件加了密码，无法读取：{entry.name}")
-    need(entry.method in (0, 8), f"压缩包里的文件用了不支持的压缩方式：{entry.name}")
+    need((entry.flags & 1) == 0, f"A file in the zip is password-protected: {entry.name}")
+    need(entry.method in (0, 8), f"A file in the zip uses an unsupported compression method: {entry.name}")
     size = 0
     crc = 0
     created = False
     try:
         with open(file, "rb") as source:
             local = _read_at(source, entry.offset, 30)
-            need(len(local) == 30 and local[:4] == b"PK\x03\x04", f"压缩包条目损坏：{entry.name}")
+            need(len(local) == 30 and local[:4] == b"PK\x03\x04", f"A zip entry is damaged: {entry.name}")
             start = entry.offset + 30 + struct.unpack_from("<H", local, 26)[0] + struct.unpack_from("<H", local, 28)[0]
             source.seek(start)
             inflate = zlib.decompressobj(-15) if entry.method == 8 else None
@@ -146,14 +145,14 @@ def extract_entry(file: str, entry: ZipEntry, target: str) -> None:
                     data = inflate.decompress(chunk) if inflate else chunk
                     size += len(data)
                     if size > entry.usize:
-                        raise Blocked(f"压缩包条目比记录的大：{entry.name}")
+                        raise Blocked(f"A zip entry is larger than recorded: {entry.name}")
                     crc = zlib.crc32(data, crc)
                     out.write(data)
                 if inflate:
                     data = inflate.flush()
                     size += len(data)
                     if size > entry.usize:
-                        raise Blocked(f"压缩包条目比记录的大：{entry.name}")
+                        raise Blocked(f"A zip entry is larger than recorded: {entry.name}")
                     crc = zlib.crc32(data, crc)
                     out.write(data)
     except Blocked:
@@ -163,10 +162,10 @@ def extract_entry(file: str, entry: ZipEntry, target: str) -> None:
     except Exception:  # noqa: BLE001 - a broken stream is a broken entry
         if created:
             _remove(target)
-        raise Blocked(f"压缩包里的文件解压失败：{entry.name}") from None
+        raise Blocked(f"A file in the zip could not be unpacked: {entry.name}") from None
     if size != entry.usize or (crc & 0xFFFFFFFF) != (entry.crc & 0xFFFFFFFF):
         _remove(target)
-        raise Blocked(f"压缩包里的文件已损坏（大小或校验不符）：{entry.name}")
+        raise Blocked(f"A file in the zip is damaged (its size or checksum does not match): {entry.name}")
 
 
 def _remove(target: str) -> None:
@@ -202,7 +201,7 @@ def unpack_zip(file: str, directory: str, keep: Callable[[str], str | None], max
     for entry in entries:
         parts = [p for p in entry.name.split("/") if p]
         if entry.name.startswith("/") or re.match(r"^[a-z]:", entry.name, re.IGNORECASE) or ".." in parts:
-            result.skipped.append({"file": label(entry.name), "reason": "路径不安全，没有解压"})
+            result.skipped.append({"file": label(entry.name), "reason": "Unsafe path: not unpacked"})
             continue
         refused = keep(parts[-1])
         if refused:
@@ -210,8 +209,8 @@ def unpack_zip(file: str, directory: str, keep: Callable[[str], str | None], max
             continue
         total += entry.usize
         chosen.append(entry)
-    need(len(chosen) <= max_files, f"压缩包里的素材超过 {max_files} 个，请分批发")
-    need(total <= max_bytes, "压缩包解压后太大（超过 10 GB），请分批发")
+    need(len(chosen) <= max_files, f"The zip holds more than {max_files} materials: send them in batches")
+    need(total <= max_bytes, f"The zip unpacks to more than {max_bytes // 1024 ** 3} GB: send it in batches")
     os.makedirs(directory, exist_ok=True)
     for i, entry in enumerate(chosen):
         base = _UNSAFE_CHARS.sub("_", posixpath.basename(entry.name))

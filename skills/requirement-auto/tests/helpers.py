@@ -1,4 +1,4 @@
-"""Shared test helpers: temporary folders, hand-made zips and workbooks, a clock (test/helpers/*.ts)."""
+"""Shared test helpers: temporary folders, hand-made zips and workbooks, a clock."""
 
 from __future__ import annotations
 
@@ -159,7 +159,7 @@ def find_browser() -> Optional[str]:
 
 
 def py_script(directory: str, name: str, source: str) -> str:
-    """A small Python script written to a file, for stand-ins of other programs (lark-agent's feishu.py)."""
+    """A small Python script written to a file, for stand-ins of other programs (the feishu skill's feishu.py)."""
     return write_file(os.path.join(directory, name), source)
 
 

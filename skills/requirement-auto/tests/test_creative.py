@@ -1,4 +1,4 @@
-"""The material upload: scanning, the request, the plan from the progress sheet, the run against a fake CLS (creative.test.ts)."""
+"""The material upload: scanning, the request, the plan from the progress sheet, the run against a fake CLS."""
 
 from __future__ import annotations
 
@@ -124,11 +124,11 @@ class OfflineTests(unittest.TestCase):
         found, skipped = scan_materials([directory])
         self.assertEqual(sorted([m["name"], m["kind"], m["number"] or 0] for m in found), sorted([["GOFCN66367_片头_竖版", "video", 66367], ["封面", "image", 0]]))
         reasons = {os.path.basename(s["file"]): s["reason"] for s in skipped}
-        self.assertRegex(reasons["notes.txt"], "不支持这种格式")
-        self.assertRegex(reasons["pack.zip"], "压缩包")
-        self.assertEqual(reasons[".hidden.mp4"], "隐藏文件")
-        self.assertEqual(reasons["empty.mp4"], "空文件")
-        self.assertRegex(reasons["sub"], "不可嵌套")
+        self.assertRegex(reasons["notes.txt"], "does not take this format")
+        self.assertRegex(reasons["pack.zip"], "zip")
+        self.assertEqual(reasons[".hidden.mp4"], "hidden file")
+        self.assertEqual(reasons["empty.mp4"], "empty file")
+        self.assertRegex(reasons["sub"], "folder inside the folder")
         self.assertEqual(creative_name("a\u202ab\u202cc.mp4"), "abc", "the marks the page strips are stripped")
         self.assertIsNone(material_number("GOFCNIM14462_图片"), "another numbering series is no material number")
         self.assertIsNone(material_number("GOFCN20261019002_需求"), "a requirement number is no material number")
@@ -136,29 +136,29 @@ class OfflineTests(unittest.TestCase):
 
     def test_request(self) -> None:
         """The request takes only the known fields, each in its form."""
-        self.assertRaisesRegex(Blocked, "未知字段：tags", normalize_upload_request, {"files": ["a.mp4"], "tags": []})
+        self.assertRaisesRegex(Blocked, "unknown fields in the upload request: tags", normalize_upload_request, {"files": ["a.mp4"], "tags": []})
         self.assertRaisesRegex(Blocked, "files", normalize_upload_request, {"files": []})
         self.assertRaisesRegex(Blocked, "producers", normalize_upload_request, {"files": ["a.mp4"], "producers": "丁杰"})
-        self.assertRaisesRegex(Blocked, "未知字段：creater", normalize_upload_request, {"files": ["a.mp4"], "items": [{"file": "a.mp4", "creater": "x"}]})
+        self.assertRaisesRegex(Blocked, "unknown fields: creater", normalize_upload_request, {"files": ["a.mp4"], "items": [{"file": "a.mp4", "creater": "x"}]})
         self.assertEqual(normalize_upload_request({"files": ["a.mp4"], "progress": False}), {"files": ["a.mp4"], "progress": False})
         self.assertEqual(normalize_upload_request({"files": ["a.mp4"]}), {"files": ["a.mp4"], "progress": True}, "the progress sheet is read unless the request says not to")
         self.assertEqual([i["number"] for i in normalize_upload_request({"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": "GOFCN67680"}, {"file": "b.mp4", "number": 67681}]})["items"]], [67680, 67681])
-        self.assertRaisesRegex(Blocked, "GOFCN 素材编号", normalize_upload_request, {"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": "GOFCN20261022001"}]})
+        self.assertRaisesRegex(Blocked, "GOFCN material number", normalize_upload_request, {"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": "GOFCN20261022001"}]})
         for bad in (20261022001, 67680.5, 0, -3, "企鹅保龄球"):
-            self.assertRaisesRegex(Blocked, "GOFCN 素材编号", normalize_upload_request, {"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": bad}]})
+            self.assertRaisesRegex(Blocked, "GOFCN material number", normalize_upload_request, {"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": bad}]})
         self.assertEqual(normalize_upload_request({"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": 1001, "name": "新名称"}]})["items"][0]["name"], "新名称")
         self.assertEqual(normalize_upload_request({"files": ["a.mp4"], "items": [{"file": "a.mp4", "number": 1001, "sheet": "26年3月-GOFCN"}]})["items"][0]["sheet"], "26年3月-GOFCN")
         self.assertEqual(normalize_upload_request({"files": ["a.mp4"], "progress": False, "items": [{"file": "a.mp4", "name": "新名称"}]})["items"][0]["name"], "新名称")
-        self.assertRaisesRegex(Blocked, "只在按进度表上传时有用", normalize_upload_request, {"files": ["a.mp4"], "progress": False, "items": [{"file": "a.mp4", "number": 67680}]})
+        self.assertRaisesRegex(Blocked, "only work with the progress sheet", normalize_upload_request, {"files": ["a.mp4"], "progress": False, "items": [{"file": "a.mp4", "number": 67680}]})
 
     def test_numbers(self) -> None:
         """Material numbers on the command line: single, ranges as CLS names them, with or without GOFCN."""
         self.assertEqual(parse_numbers("67680-67683,67690"), [67680, 67681, 67682, 67683, 67690])
         self.assertEqual(parse_numbers("GOFCN67680-GOFCN67682 GOFCN67680"), [67680, 67681, 67682])
         self.assertEqual(parse_numbers("67682、67680"), [67682, 67680])
-        self.assertRaisesRegex(Blocked, "范围不对", parse_numbers, "67683-67680")
-        self.assertRaisesRegex(Blocked, "范围不对", parse_numbers, "1-1000")
-        self.assertRaisesRegex(Blocked, "看不懂的编号", parse_numbers, "企鹅")
+        self.assertRaisesRegex(Blocked, "invalid number range", parse_numbers, "67683-67680")
+        self.assertRaisesRegex(Blocked, "invalid number range", parse_numbers, "1-1000")
+        self.assertRaisesRegex(Blocked, "cannot read the number", parse_numbers, "企鹅")
 
     def test_formulas(self) -> None:
         """Naming formulas read as the sheet shows them: CONCATENATE with empty arguments, SUBSTITUTE around it, a cell of another row."""
@@ -183,8 +183,8 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(find_directory(DIRS, "双端共用-视频"), {"id": 1585089, "path": "无尽冬日 - NEW / 常规素材 / 双端共用-视频"})
         self.assertEqual(find_directory(DIRS, "常规素材/图片")["id"], 1573621)
         self.assertEqual(find_directory(DIRS, "1585181")["id"], 1585181)
-        self.assertRaisesRegex(Blocked, "不唯一", find_directory, DIRS, "图片")
-        self.assertRaisesRegex(Blocked, "没有上传目录", find_directory, DIRS, "不存在的目录")
+        self.assertRaisesRegex(Blocked, "is not unique", find_directory, DIRS, "图片")
+        self.assertRaisesRegex(Blocked, "has no upload directory", find_directory, DIRS, "不存在的目录")
 
     def test_plan_basics(self) -> None:
         """The plan: the default directory, 素材类型 by file kind, short names matched to CLS people, a file setting over the request."""
@@ -206,8 +206,8 @@ class OfflineTests(unittest.TestCase):
         """The people of files not registered yet are matched to CLS before any plan: each name to its CLS name, or what is wrong with it."""
         self.assertEqual(match_people(OPTIONS, {"creator": "金莉", "producers": ["丁杰", "廿十一"]}), {
             "creator": {"wanted": "金莉", "id": 2001, "name": "金莉"},
-            "producers": [{"wanted": "丁杰", "id": 663, "name": "北京柒曦文化传媒有限公司（丁杰）"}, {"wanted": "廿十一", "problem": "制作人“廿十一” 不存在或匹配不唯一，需在计划前澄清"}]})
-        self.assertEqual(match_people(OPTIONS, {"creator": "李晨阳"}), {"creator": {"wanted": "李晨阳", "problem": "创意人“李晨阳” 不存在或匹配不唯一，需在计划前澄清"}})
+            "producers": [{"wanted": "丁杰", "id": 663, "name": "北京柒曦文化传媒有限公司（丁杰）"}, {"wanted": "廿十一", "problem": "CLS 制作人 \"廿十一\": nothing matches; settle it before the plan"}]})
+        self.assertEqual(match_people(OPTIONS, {"creator": "李晨阳"}), {"creator": {"wanted": "李晨阳", "problem": "CLS 创意人 \"李晨阳\": 2 matches; settle it before the plan"}})
         self.assertEqual(match_people(OPTIONS, {"creator": "492", "producers": ["长沙廿拾一文化传媒有限公司"]}),
                          {"creator": {"wanted": "492", "id": 492, "name": "李晨阳"}, "producers": [{"wanted": "长沙廿拾一文化传媒有限公司", "id": 2002, "name": "长沙廿拾一文化传媒有限公司"}]})
         self.assertEqual(match_people(OPTIONS, {}), {})
@@ -216,7 +216,7 @@ class OfflineTests(unittest.TestCase):
         try:
             offered = upload_options(online(fake), creator="金莉", producers=["廿十一"], deps=deps_for())
             self.assertEqual(offered["people"], {"creator": {"wanted": "金莉", "id": 2001, "name": "金莉"},
-                                                 "producers": [{"wanted": "廿十一", "problem": "制作人“廿十一” 不存在或匹配不唯一，需在计划前澄清"}]})
+                                                 "producers": [{"wanted": "廿十一", "problem": "CLS 制作人 \"廿十一\": nothing matches; settle it before the plan"}]})
             self.assertNotIn("people", upload_options(online(fake), deps=deps_for()))
         finally:
             fake.close()
@@ -232,12 +232,12 @@ class OfflineTests(unittest.TestCase):
 
         with self.assertRaises(Blocked) as caught:
             build({"producers": ["丁杰"]})
-        self.assertTrue("创意人未定" in caught.exception.message and "同一个创意名称“x”" in caught.exception.message)
-        self.assertRaisesRegex(Blocked, "李晨阳.*不唯一", build, {"creator": "李晨阳", "producers": ["丁杰"], "items": [{"file": "x.png", "skip": True}]})
+        self.assertTrue("创意人 not decided" in caught.exception.message and "the same creative name \"x\"" in caught.exception.message)
+        self.assertRaisesRegex(Blocked, "李晨阳.*2 matches", build, {"creator": "李晨阳", "producers": ["丁杰"], "items": [{"file": "x.png", "skip": True}]})
         by_id = build({"creator": "492", "producers": ["丁杰"], "items": [{"file": "x.png", "skip": True}]})
         self.assertTrue(all(i["creator"]["id"] == 492 for i in by_id["items"]), "a CLS user ID picks one of two people with the same name")
-        self.assertTrue(any(s["reason"] == "按要求不上传" for s in by_id["skipped"]))
-        self.assertRaisesRegex(Blocked, "CLS 已有同名创意.*：a$", build, {"creator": "张天伟", "producers": ["丁杰"], "items": [{"file": "x.png", "skip": True}]}, {"a"})
+        self.assertTrue(any(s["reason"] == "skipped as asked" for s in by_id["skipped"]))
+        self.assertRaisesRegex(Blocked, "CLS has a creative of this name already.*: a$", build, {"creator": "张天伟", "producers": ["丁杰"], "items": [{"file": "x.png", "skip": True}]}, {"a"})
         renamed = build({"creator": "张天伟", "producers": ["丁杰"], "items": [{"file": "x.png", "name": "x_封面"}]})
         self.assertEqual(sorted(i["name"] for i in renamed["items"]), ["a", "x", "x_封面"])
         cover = next(i for i in renamed["items"] if i["name"] == "x_封面")
@@ -263,7 +263,7 @@ class OfflineTests(unittest.TestCase):
         def request(items: Optional[list] = None) -> dict:
             return normalize_upload_request({"files": [directory], "progress": True, **({"items": items} if items else {})})
 
-        self.assertRaisesRegex(Blocked, r"文件名里的 GOFCN1004 那一行的素材名称是.*和文件名不同.*用 items\[\]\.number 写明", build_upload_plan,
+        self.assertRaisesRegex(Blocked, r"the row of GOFCN1004 \(the number in the file name\) has the 素材名称 .*not the file's name.*give it in items\[\]\.number", build_upload_plan,
                                {"request": request(), "options": people, "materials": found, "skipped": skipped, "existing": set(), "progress": rows})
         plan = build_upload_plan({"request": request([{"file": "GOFCN1004_成片.mp4", "number": 1004}]), "options": people, "materials": found, "skipped": skipped,
                                   "existing": set(), "progress": rows})
@@ -273,8 +273,8 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual([item["source"]["progress_row"]["row"], item["source"]["progress_row"]["by"]], [2, "item"])
         self.assertEqual(item["name"], rows[1004][0]["name"], "a file named otherwise goes up as its row is named")
         self.assertEqual([item["renamed_from"], item["upload_name"]], ["GOFCN1004_成片", f"{rows[1004][0]['name']}.mp4"])
-        for file, items, pattern in (("GOFCN1001_x.mp4", [{"file": "GOFCN1001_x.mp4", "number": 1001}], "有 2 行，内容不同.*同一个分表里重号"),
-                                     ("GOFCN9999_x.mp4", None, r"进度表里没有 GOFCN9999（编号取自文件名）"), ("无编号.mp4", None, "也不带 GOFCN 编号")):
+        for file, items, pattern in (("GOFCN1001_x.mp4", [{"file": "GOFCN1001_x.mp4", "number": 1001}], "is on 2 progress-sheet rows that differ.*a number repeated within one tab"),
+                                     ("GOFCN9999_x.mp4", None, r"the progress sheet has no GOFCN9999 \(the number in the file name\)"), ("无编号.mp4", None, "has no GOFCN number")):
             other = materials({file: "b"})
             found_other, skipped_other = hashed([other])
             self.assertRaisesRegex(Blocked, pattern, build_upload_plan, {"request": normalize_upload_request({"files": [other], "progress": True, **({"items": items} if items else {})}),
@@ -294,9 +294,9 @@ class OfflineTests(unittest.TestCase):
                                       "existing": existing or set(), "progress": progress})
 
         # As they come out of the zip, none of the names is a 素材名称 and none carries a GOFCN number: all four are asked about at once.
-        self.assertRaisesRegex(Blocked, r"也不带 GOFCN 编号.*g44065_gf_v90\.mp4、g44065_v90\.mp4、g56890_a_v15\.mp4、g56890_c_v21\.mp4", build, {})
+        self.assertRaisesRegex(Blocked, r"has no GOFCN number.*g44065_gf_v90\.mp4, g44065_v90\.mp4, g56890_a_v15\.mp4, g56890_c_v21\.mp4", build, {})
         # The sheet's supplier is not CLS's name for it: the refusal says so and how to name it.
-        self.assertRaisesRegex(Blocked, r"制作人“廿十一”.*进度表 GOFCN6768[0-9] 的设计师供应商.*producers 写明 CLS 的名字", build, {"items": FINAL_CUT_ITEMS})
+        self.assertRaisesRegex(Blocked, r"制作人 \"廿十一\".*this is the 设计师供应商 of GOFCN6768[0-9] in the progress sheet.*give the CLS name in this file's items\[\]\.producers", build, {"items": FINAL_CUT_ITEMS})
         plan = build({"producers": ["长沙廿拾一文化传媒有限公司"], "items": FINAL_CUT_ITEMS})
         by = {i["file_name"]: i for i in plan["items"]}
         self.assertEqual({f: [i["name"], i["upload_name"]] for f, i in by.items()}, {
@@ -310,11 +310,11 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(summary["renamed"], 4)
         self.assertEqual(next(i for i in summary["items"] if i["file"] == "g44065_gf_v90.mp4"),
                          {"file": "g44065_gf_v90.mp4", "name": "GOFCN67683_AI生成_设定3.0_3D_围炉煮冰", "renamed": True, "type": "视频", "creator": "金莉",
-                          "producers": ["长沙廿拾一文化传媒有限公司"], "progress_row": "26年1月-GOFCN 第 7 行", "row_from": "request"})
+                          "producers": ["长沙廿拾一文化传媒有限公司"], "progress_row": "26年1月-GOFCN row 7", "row_from": "request"})
         # Rows without a 设计师供应商: finished materials were made by someone, so the 制作人 is asked for, never CLS's 待定供应商.
         open_rows = {n: [{**r, "supplier": ""} for r in found_rows] for n, found_rows in rows.items()}
         options = {**OPTIONS, "producers": [*OPTIONS["producers"], {"id": 51, "name": "待定供应商"}]}
-        self.assertRaisesRegex(Blocked, "制作人未定（进度表 GOFCN67680 的设计师供应商为空，供应商就是审核人本人时进度表留空：问用户素材是谁做的", build,
+        self.assertRaisesRegex(Blocked, r"制作人 not decided \(the 设计师供应商 of GOFCN67680 in the progress sheet is empty, as it is when the supplier is the reviewer: ask the user who made the material", build,
                                {"items": FINAL_CUT_ITEMS}, None, open_rows, options)
         named = build({"producers": ["廿拾一文化"], "items": FINAL_CUT_ITEMS}, None, open_rows, options)
         self.assertTrue(all(",".join(p["name"] for p in i["producers"]) == "长沙廿拾一文化传媒有限公司" and i["source"]["producers"] == "request" for i in named["items"]))
@@ -328,21 +328,21 @@ class OfflineTests(unittest.TestCase):
             return build_upload_plan({"request": normalize_upload_request({"files": ["unused"], "producers": ["长沙廿拾一文化传媒有限公司"], **request}), "options": OPTIONS,
                                       "materials": found, "skipped": skipped, "existing": set(existing), "progress": rows})
 
-        self.assertRaisesRegex(Blocked, r"两个文件对应进度表同一行 GOFCN67682（a\.mp4、b\.mp4）", plan, {"a.mp4": "1", "b.mp4": "2"},
+        self.assertRaisesRegex(Blocked, r"two files are the same progress-sheet row GOFCN67682 \(a\.mp4, b\.mp4\)", plan, {"a.mp4": "1", "b.mp4": "2"},
                                {"items": [{"file": "a.mp4", "number": 67682}, {"file": "b.mp4", "number": 67682}]})
-        self.assertRaisesRegex(Blocked, r"进度表里没有 GOFCN67999：a\.mp4", plan, {"a.mp4": "1"}, {"items": [{"file": "a.mp4", "number": 67999}]})
+        self.assertRaisesRegex(Blocked, r"the progress sheet has no GOFCN67999: a\.mp4", plan, {"a.mp4": "1"}, {"items": [{"file": "a.mp4", "number": 67999}]})
         # Named like the 终稿库 headings, the number is the original the piece builds on (GOFCN56890).
         original = "GOFCN56890_汉化_竞争对抗_3D_火车运输御敌-斜"
         for existing in ((original,), (), ("GOFCN56890_火车运输_终版",)):
-            self.assertRaisesRegex(Blocked, r"这个编号可能是它参考的初版.*：GOFCN56890_企鹅保龄球_V15\.mp4", plan, {"GOFCN56890_企鹅保龄球_V15.mp4": "p"}, {}, existing)
+            self.assertRaisesRegex(Blocked, r"the number may be the earlier piece it builds on.*: GOFCN56890_企鹅保龄球_V15\.mp4", plan, {"GOFCN56890_企鹅保龄球_V15.mp4": "p"}, {}, existing)
         bound = plan({"GOFCN56890_企鹅保龄球_V15.mp4": "p"}, {"items": [{"file": "GOFCN56890_企鹅保龄球_V15.mp4", "number": 67680}]}, (original,))
         self.assertEqual(bound["items"][0]["name"], "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "the row the request names wins over the number in the file name")
-        self.assertRaisesRegex(Blocked, "CLS 已有这一行的创意", plan, {"x.mp4": "p"}, {"items": [{"file": "x.mp4", "number": 67680}]}, ("GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球",))
+        self.assertRaisesRegex(Blocked, "CLS has this row's creative already", plan, {"x.mp4": "p"}, {"items": [{"file": "x.mp4", "number": 67680}]}, ("GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球",))
         right = plan({"GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘.mp4": "f"}, {})
         self.assertEqual(right["items"][0]["name"], "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘")
         self.assertTrue("renamed_from" not in right["items"][0] and "upload_name" not in right["items"][0])
         self.assertNotIn("renamed", upload_plan_summary(right, "p.json"))
-        self.assertRaisesRegex(Blocked, "这个文件像是已经传过", plan, {"GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘.mp4": "f"}, {}, ("GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘",))
+        self.assertRaisesRegex(Blocked, "looks uploaded before", plan, {"GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘.mp4": "f"}, {}, ("GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘",))
 
     def test_rows_without_names(self) -> None:
         """Rows the sheet cannot name: alike duplicates are one row, items[].sheet picks a tab, and only a row without a usable name takes items[].name."""
@@ -362,16 +362,16 @@ class OfflineTests(unittest.TestCase):
                                       "materials": found, "skipped": skipped, "existing": set(), "progress": rows})
 
         self.assertEqual(plan([{"file": "a.mp4", "number": 66909}])["items"][0]["name"], "GOFCN66909_AI生成_设定3.0_2D_饮料睡袋", "carried into the next month alike: one row")
-        self.assertRaisesRegex(Blocked, r"GOFCN66910 有 2 行，内容不同.*用 items\[\]\.sheet 写明", plan, [{"file": "a.mp4", "number": 66910}])
+        self.assertRaisesRegex(Blocked, r"GOFCN66910 is on 2 progress-sheet rows that differ.*name the tab with items\[\]\.sheet", plan, [{"file": "a.mp4", "number": 66910}])
         picked = plan([{"file": "a.mp4", "number": 66910, "sheet": "26年2月-GOFCN"}])
         self.assertEqual([picked["items"][0]["source"]["progress_row"]["sheet"], picked["items"][0]["name"]], ["26年2月-GOFCN", "GOFCN66910_AI生成_设定3.0_2D_冰雕"])
-        self.assertRaisesRegex(Blocked, "分表“25年12月-GOFCN”里没有 GOFCN66910（它在 26年1月-GOFCN、26年2月-GOFCN）", plan, [{"file": "a.mp4", "number": 66910, "sheet": "25年12月-GOFCN"}])
-        self.assertRaisesRegex(Blocked, r"GOFCN66913.*素材名称为空或算不出来：请用户在进度表补正后重新做计划，或确认一个名称后用 items\[\]\.name 写明", plan, [{"file": "a.mp4", "number": 66913}])
+        self.assertRaisesRegex(Blocked, r"the progress-sheet tab \"25年12月-GOFCN\" has no GOFCN66910 \(it is on 26年1月-GOFCN, 26年2月-GOFCN\)", plan, [{"file": "a.mp4", "number": 66910, "sheet": "25年12月-GOFCN"}])
+        self.assertRaisesRegex(Blocked, r"GOFCN66913.*is empty or cannot be worked out: the user fixes the progress sheet and the upload is planned again, or the user confirms a name, given in items\[\]\.name", plan, [{"file": "a.mp4", "number": 66913}])
         confirmed = plan([{"file": "a.mp4", "number": 66913, "name": "GOFCN66913_AI生成_设定3.0_2D_丁杰的片子"}])
         self.assertEqual([confirmed["items"][0]["name"], confirmed["items"][0]["source"]["name"]], ["GOFCN66913_AI生成_设定3.0_2D_丁杰的片子", "item"])
-        self.assertRaisesRegex(Blocked, r"素材名称含 / 或 \\", plan, [{"file": "a.mp4", "number": 66914}])
+        self.assertRaisesRegex(Blocked, r"contains / or \\", plan, [{"file": "a.mp4", "number": 66914}])
         self.assertEqual(plan([{"file": "a.mp4", "number": 66914, "name": "GOFCN66914_AI生成_横版竖版"}])["items"][0]["name"], "GOFCN66914_AI生成_横版竖版")
-        self.assertRaisesRegex(Blocked, r"名称以进度表为准：去掉 items\[\]\.name", plan, [{"file": "a.mp4", "number": 66909, "name": "另起的名字"}])
+        self.assertRaisesRegex(Blocked, r"which is the name: drop items\[\]\.name", plan, [{"file": "a.mp4", "number": 66909, "name": "另起的名字"}])
 
     def test_two_zips(self) -> None:
         """Files of the same name in two zips are told apart by zip, and a refusal names every file that needs a row."""
@@ -387,7 +387,7 @@ class OfflineTests(unittest.TestCase):
             return build_upload_plan({"request": normalize_upload_request({"files": [a, b], "producers": ["长沙廿拾一文化传媒有限公司"], "items": items}), "options": OPTIONS,
                                       "materials": found, "skipped": scan_skipped, "existing": set(), "progress": rows})
 
-        self.assertRaisesRegex(Blocked, r"items 里的“01\.mp4”对应多个文件（供应商A\.zip：01\.mp4、供应商B\.zip：01\.mp4），写成其中一个", plan, [{"file": "01.mp4", "number": 67680}])
+        self.assertRaisesRegex(Blocked, r"items names \"01\.mp4\", which matches several files \(供应商A\.zip：01\.mp4, 供应商B\.zip：01\.mp4\): name one of them", plan, [{"file": "01.mp4", "number": 67680}])
         with self.assertRaises(Blocked) as caught:
             plan([])
         self.assertTrue(all(f in caught.exception.message for f in ("供应商A.zip：01.mp4", "供应商B.zip：01.mp4", "供应商B.zip：12.mp4")) and "等 " not in caught.exception.message,
@@ -410,10 +410,10 @@ class OfflineTests(unittest.TestCase):
         listed = find_rows(SheetBridge(final_cut_sheet(), exports), [67680, 67681], [], True, UploadDeps(tmp_dir=temp_dir("rows-tmp-")))
         self.assertEqual(listed["status"], "progress_rows")
         self.assertEqual([[r["number"], r["name"], r["where"]] for r in listed["rows"]], [
-            [67680, "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "26年1月-GOFCN 第 4 行"], [67681, "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘", "26年1月-GOFCN 第 5 行"]])
+            [67680, "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "26年1月-GOFCN row 4"], [67681, "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘", "26年1月-GOFCN row 5"]])
         self.assertEqual(len(exports), 1)
         self.assertFalse(os.path.exists(exports[0]), "the export is removed again")
-        self.assertRaisesRegex(Blocked, "--numbers 或 --find", find_rows, SheetBridge(final_cut_sheet()), [], [])
+        self.assertRaisesRegex(Blocked, "--numbers or --find", find_rows, SheetBridge(final_cut_sheet()), [], [])
 
     def test_files_check(self) -> None:
         """files --check: a file named with its number is found in the progress sheet, or said to differ from its row, or to have none."""
@@ -425,15 +425,15 @@ class OfflineTests(unittest.TestCase):
         def row(name: str) -> Any:
             return next(f for f in listed["files"] if f["name"] == name).get("row")
 
-        self.assertEqual(row("GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球"), {"status": "registered", "rows": [{"number": 67680, "name": "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "where": "26年1月-GOFCN 第 4 行"}]})
-        self.assertEqual(row("GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘_竖版"), {"status": "variant", "rows": [{"number": 67681, "name": "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘", "where": "26年1月-GOFCN 第 5 行"}]})
+        self.assertEqual(row("GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球"), {"status": "registered", "rows": [{"number": 67680, "name": "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "where": "26年1月-GOFCN row 4"}]})
+        self.assertEqual(row("GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘_竖版"), {"status": "variant", "rows": [{"number": 67681, "name": "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘", "where": "26年1月-GOFCN row 5"}]})
         self.assertEqual(row("GOFCN67682_AI生成_设定3.0_3D_企鹅保龄球"), {"status": "differs",
-                                                                    "rows": [{"number": 67682, "name": "GOFCN67682_AI生成_设定3.0_3D_围炉煮冰", "where": "26年1月-GOFCN 第 6 行"}],
-                                                                    "same_name_rows": [{"number": 67680, "name": "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "where": "26年1月-GOFCN 第 4 行"}]})
+                                                                    "rows": [{"number": 67682, "name": "GOFCN67682_AI生成_设定3.0_3D_围炉煮冰", "where": "26年1月-GOFCN row 6"}],
+                                                                    "same_name_rows": [{"number": 67680, "name": "GOFCN67680_AI生成_设定3.0_3D_企鹅保龄球", "where": "26年1月-GOFCN row 4"}]})
         self.assertEqual(row("GOFCN99999_AI生成_设定3.0_3D_冻鱼飞盘"), {"status": "not_found",
-                                                                  "same_name_rows": [{"number": 67681, "name": "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘", "where": "26年1月-GOFCN 第 5 行"}]})
+                                                                  "same_name_rows": [{"number": 67681, "name": "GOFCN67681_AI生成_设定3.0_3D_冻鱼飞盘", "where": "26年1月-GOFCN row 5"}]})
         self.assertIsNone(row("01"), "a file without a number is not looked for")
-        self.assertEqual([listed["progress_source"], listed["registered"], listed["to_verify"]], ["插件进度表", 1, 3])
+        self.assertEqual([listed["progress_source"], listed["registered"], listed["to_verify"]], ["the skill's progress sheet", 1, 3])
         self.assertEqual(len(exports), 1)
         # GOFCNxxxxx_… files are found by their name without the number; without --check nothing is read.
         pending = list_files([materials(PENDING)], UploadDeps(tmp_dir=temp_dir("files-tmp-")), {"bridge": SheetBridge(registered_sheet()), "progress": True})
@@ -534,10 +534,10 @@ class PendingAndVariantTests(unittest.TestCase):
             return build_upload_plan({"request": normalize_upload_request({"files": ["unused"], "producers": ["长沙廿拾一文化传媒有限公司"], "items": items}), "options": OPTIONS,
                                       "materials": found, "skipped": skipped, "existing": set(), "progress": by_number, "named": by_body})
 
-        self.assertRaisesRegex(Blocked, "进度表里还没有素材名称为“GOFCN<编号>_AI玩法优化_转斧杀熊烤肉_杀熊订单_国风配乐_竖版”的行：这批素材要先登记", plan,
+        self.assertRaisesRegex(Blocked, "the progress sheet has no row whose 素材名称 is \"GOFCN<number>_AI玩法优化_转斧杀熊烤肉_杀熊订单_国风配乐_竖版\": register these materials first", plan,
                                {"GOFCNxxxxx_AI玩法优化_转斧杀熊烤肉_杀熊订单_国风配乐_竖版.mp4": "g"})
         twice = {"GOFCNxxxxx_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版.mp4": "ice"}
-        self.assertRaisesRegex(Blocked, r"有 2 行的素材名称是“GOFCN<编号>_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版”（GOFCN67738、GOFCN67741）：用 items\[\]\.number 写明", plan, twice)
+        self.assertRaisesRegex(Blocked, r"2 progress-sheet rows have the 素材名称 \"GOFCN<number>_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版\" \(GOFCN67738, GOFCN67741\): name the row with items\[\]\.number", plan, twice)
         picked = plan(twice, [{"file": "GOFCNxxxxx_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版.mp4", "number": 67741}])
         self.assertEqual([picked["items"][0]["name"], picked["items"][0]["source"]["progress_row"]["by"]], ["GOFCN67741_AI玩法优化_搂冰块抢资源_割资源冰块对抗_竖版", "item"])
 
@@ -573,7 +573,7 @@ class PendingAndVariantTests(unittest.TestCase):
             with self.assertRaises(Blocked) as caught:
                 plan_upload(online(fake), SheetBridge(variant_sheet()), off, os.path.join(os.path.dirname(off), "plan.json"), deps)
             message = caught.exception.message
-            self.assertTrue("这个编号可能是它参考的初版" in message and "还没有素材名称为“GOFCN<编号>_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼_竖版”的行" in message and "变体" not in message)
+            self.assertTrue("the number may be the earlier piece it builds on" in message and "has no row whose 素材名称 is \"GOFCN<number>_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼_竖版\"" in message and "variant" not in message)
         finally:
             fake.close()
 
@@ -592,7 +592,7 @@ class PendingAndVariantTests(unittest.TestCase):
 
         own = plan({"GOFCNxxxxx_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼_竖版.mp4": "f"})
         self.assertEqual([own["items"][0]["name"], own["items"][0].get("variant")], ["GOFCN67751_AI玩法优化_火车运输御敌_兵临城下塔防_冻鱼_竖版", None], "registered under its own name before")
-        self.assertRaisesRegex(Blocked, r"可以是进度表几行的变体（GOFCN67752_AI剧情_短剧表达_原生家庭WM_剧情衔接；GOFCN67076_AI剧情_短剧表达_原生家庭WM）：用 items\[\]\.number 写明", plan,
+        self.assertRaisesRegex(Blocked, r"can be a variant of several progress-sheet rows \(GOFCN67752_AI剧情_短剧表达_原生家庭WM_剧情衔接; GOFCN67076_AI剧情_短剧表达_原生家庭WM\): name the row with items\[\]\.number", plan,
                                {"GOFCNxxxxx_AI剧情_短剧表达_原生家庭WM_剧情衔接_竖版.mp4": "a"})
         picked = plan({"GOFCNxxxxx_AI剧情_短剧表达_原生家庭WM_剧情衔接_竖版.mp4": "a"}, [{"file": "GOFCNxxxxx_AI剧情_短剧表达_原生家庭WM_剧情衔接_竖版.mp4", "number": 67076}])
         self.assertEqual([picked["items"][0]["name"], picked["items"][0]["variant"]], ["GOFCN67076_AI剧情_短剧表达_原生家庭WM_剧情衔接_竖版", "剧情衔接_竖版"])
@@ -600,22 +600,22 @@ class PendingAndVariantTests(unittest.TestCase):
         both = Snapshot(variant_sheet([(67753, ("AI剧情", "短剧表达"), "得加钱WM熔炉版")]))
         furnace, none = hashed([materials({"GOFCNxxxxx_AI剧情_短剧表达_得加钱WM熔炉版_剧情叙事_竖版.mp4": "x"})])
         body = "AI剧情_短剧表达_得加钱WM熔炉版_剧情叙事_竖版"
-        self.assertRaisesRegex(Blocked, "可以是进度表几行的变体（GOFCN67753_AI剧情_短剧表达_得加钱WM熔炉版；GOFCN67146_AI剧情_短剧表达_得加钱WM）", build_upload_plan,
+        self.assertRaisesRegex(Blocked, r"can be a variant of several progress-sheet rows \(GOFCN67753_AI剧情_短剧表达_得加钱WM熔炉版; GOFCN67146_AI剧情_短剧表达_得加钱WM\)", build_upload_plan,
                                {"request": normalize_upload_request({"files": ["unused"], "producers": ["长沙廿拾一文化传媒有限公司"], "variants": True}), "options": OPTIONS,
                                 "materials": furnace, "skipped": none, "existing": set(), "progress": {}, "named": lookup_rows(both, [], [body, *variant_bases(body)])[1]})
-        self.assertRaisesRegex(Blocked, "还没有素材名称为“GOFCN<编号>_AI剧情_短剧表达_爆款WM_剧情衔接_竖版”或它开头部分", plan, {"GOFCNxxxxx_AI剧情_短剧表达_爆款WM_剧情衔接_竖版.mp4": "a"})
-        self.assertRaisesRegex(Blocked, "和文件名不同，文件名也不以它开头（不是它的变体）", plan, {"GOFCN67076_AI剧情_短剧表达_最大功率WM_剧情衔接_竖版.mp4": "a"})
-        self.assertRaisesRegex(Blocked, r"两个文件会得到同一个创意名称“GOFCN67076_AI剧情_短剧表达_原生家庭WM”（01\.mp4、02\.mp4）：同一行的几个变体要各有变体名称", plan,
+        self.assertRaisesRegex(Blocked, "has no row whose 素材名称 is \"GOFCN<number>_AI剧情_短剧表达_爆款WM_剧情衔接_竖版\" or its start", plan, {"GOFCNxxxxx_AI剧情_短剧表达_爆款WM_剧情衔接_竖版.mp4": "a"})
+        self.assertRaisesRegex(Blocked, r"not the file's name, and the file name does not start with it \(no variant of it\)", plan, {"GOFCN67076_AI剧情_短剧表达_最大功率WM_剧情衔接_竖版.mp4": "a"})
+        self.assertRaisesRegex(Blocked, r"two files would get the same creative name \"GOFCN67076_AI剧情_短剧表达_原生家庭WM\" \(01\.mp4, 02\.mp4\): each variant of a row needs its own variant name", plan,
                                {"01.mp4": "1", "02.mp4": "2"}, [{"file": "01.mp4", "number": 67076}, {"file": "02.mp4", "number": 67076}])
         told = plan({"01.mp4": "1", "02.mp4": "2"}, [{"file": "01.mp4", "number": 67076, "variant": "剧情叙事"}, {"file": "02.mp4", "number": 67076}])
         self.assertEqual([i["name"] for i in told["items"]], ["GOFCN67076_AI剧情_短剧表达_原生家庭WM_剧情叙事", "GOFCN67076_AI剧情_短剧表达_原生家庭WM"], "a file without a variant is the row itself")
-        self.assertRaisesRegex(Blocked, "两个文件对应进度表同一行 GOFCN67076", plan, {"01.mp4": "1", "02.mp4": "2"}, [{"file": "01.mp4", "number": 67076}, {"file": "02.mp4", "number": 67076}], False)
-        self.assertRaisesRegex(Blocked, r"只在合并变体名称（variants: true）时有用", normalize_upload_request, {"files": ["a"], "items": [{"file": "a", "variant": "x"}]})
-        self.assertRaisesRegex(Blocked, "progress 不能是 false", normalize_upload_request, {"files": ["a"], "progress": False, "variants": True})
-        self.assertRaisesRegex(Blocked, "name 和 variant 只能写一个", normalize_upload_request, {"files": ["a"], "variants": True, "items": [{"file": "a", "name": "n", "variant": "x"}]})
+        self.assertRaisesRegex(Blocked, "two files are the same progress-sheet row GOFCN67076", plan, {"01.mp4": "1", "02.mp4": "2"}, [{"file": "01.mp4", "number": 67076}, {"file": "02.mp4", "number": 67076}], False)
+        self.assertRaisesRegex(Blocked, r"only works with variants: true", normalize_upload_request, {"files": ["a"], "items": [{"file": "a", "variant": "x"}]})
+        self.assertRaisesRegex(Blocked, "progress cannot be false", normalize_upload_request, {"files": ["a"], "progress": False, "variants": True})
+        self.assertRaisesRegex(Blocked, "takes name or variant, not both", normalize_upload_request, {"files": ["a"], "variants": True, "items": [{"file": "a", "name": "n", "variant": "x"}]})
         for bad in ("_竖版", "竖版_", "剧情__竖版", "横/竖"):
-            self.assertRaisesRegex(Blocked, "不能以 _ 开头或结尾", normalize_upload_request, {"files": ["a"], "variants": True, "items": [{"file": "a", "variant": bad}]})
-        self.assertRaisesRegex(Blocked, "variants 只能是 true/false", normalize_upload_request, {"files": ["a"], "variants": "yes"})
+            self.assertRaisesRegex(Blocked, "cannot start or end with _", normalize_upload_request, {"files": ["a"], "variants": True, "items": [{"file": "a", "variant": bad}]})
+        self.assertRaisesRegex(Blocked, "variants is true or false", normalize_upload_request, {"files": ["a"], "variants": "yes"})
 
 
 class RunTests(unittest.TestCase):
@@ -627,7 +627,7 @@ class RunTests(unittest.TestCase):
             plan = plan_of(file)
             plan["items"][0]["creator"] = {"id": 1104, "name": "雷佳威"}
             write_file(file, json.dumps(plan, ensure_ascii=False))
-            self.assertRaisesRegex(Blocked, "摘要不匹配", load_upload_plan, file)
+            self.assertRaisesRegex(Blocked, "digest does not match", load_upload_plan, file)
         finally:
             fake.close()
 
@@ -750,12 +750,12 @@ class RunTests(unittest.TestCase):
                 result = run_upload(online(fake), file, deps)
                 self.assertEqual(result["status"], expected, result)
                 if expected == "blocked":
-                    self.assertRegex(result["reason"], "业务码 403，素材处理失败")
+                    self.assertRegex(result["reason"], "business code 403, 素材处理失败")
                     self.assertEqual(writes(fake, "multiple-edit"), 0)
                 else:
                     self.assertEqual([[u["name"], u["verified"]] for u in result["uploaded"]], [["a", True]])
                     self.assertEqual([n["name"] for n in result["not_created"]], ["b"])
-                    self.assertRegex(result["not_created"][0]["reason"], "拒绝创建")
+                    self.assertRegex(result["not_created"][0]["reason"], "refused to create")
                 fake.create_mode = "normal"
                 run_upload(online(fake), file, deps)
                 self.assertEqual(writes(fake, "multiple-upload"), 1, "a refused create is not sent again either")
@@ -794,12 +794,12 @@ class RunTests(unittest.TestCase):
             directory = materials({"a.mp4": "approved"})
             file = approved_plan(fake, deps, {"files": [directory], "creator": "张天伟", "producers": ["丁杰"]})
             write_file(os.path.join(directory, "a.mp4"), "replaced!")
-            self.assertRaisesRegex(Blocked, "批准后", run_upload, online(fake), file, deps)
+            self.assertRaisesRegex(Blocked, "since the plan was approved", run_upload, online(fake), file, deps)
             write_file(os.path.join(directory, "a.mp4"), "approved")
             fake.creatives[7] = {"id": 7, "name": "a", "upload_user_id": 653, "confirmed": True, "materials": []}
-            self.assertRaisesRegex(Blocked, "同名创意：a", run_upload, online(fake), file, deps)
+            self.assertRaisesRegex(Blocked, "creatives of these names: a", run_upload, online(fake), file, deps)
             del fake.creatives[7]
-            self.assertRaisesRegex(Blocked, "不是计划里的", run_upload, online(fake, {"id": 2, "name": "别人"}), file, deps)
+            self.assertRaisesRegex(Blocked, "is not the plan's", run_upload, online(fake, {"id": 2, "name": "别人"}), file, deps)
             self.assertEqual(len([r for r in fake.requests if r["method"] != "GET"]), 0)
         finally:
             fake.close()
@@ -809,13 +809,13 @@ class RunTests(unittest.TestCase):
         fake = FakeCreative()
         try:
             api = CreativeAdapter(fake.origin, "Bearer good", upload_host=LOCAL, allow_http_upload=True)
-            self.assertRaisesRegex(ClsError, "没有这个文件的上传链接", api.put, "a/a.mp4", __file__, 1)
+            self.assertRaisesRegex(ClsError, "no upload link for this file", api.put, "a/a.mp4", __file__, 1)
             fake.sign_elsewhere = True
-            self.assertRaisesRegex(ClsError, r"不是对象存储（evil\.example\.com）", api.sign, 94, ["a/a.mp4"])
+            self.assertRaisesRegex(ClsError, r"is not object storage \(evil\.example\.com\)", api.sign, 94, ["a/a.mp4"])
             self.assertFalse(any(hasattr(api, name) for name in ("delete", "publish", "confirm")))
             production = CreativeAdapter(fake.origin, "Bearer good")
             fake.sign_elsewhere = False
-            self.assertRaisesRegex(ClsError, "不是对象存储", production.sign, 94, ["a/a.mp4"])
+            self.assertRaisesRegex(ClsError, "is not object storage", production.sign, 94, ["a/a.mp4"])
         finally:
             fake.close()
 
@@ -823,12 +823,12 @@ class RunTests(unittest.TestCase):
         """An account without the upload permission gets no plan."""
         fake = FakeCreative(can_upload=False)
         try:
-            self.assertRaisesRegex(Blocked, "没有上传创意的权限", approved_plan, fake, deps_for(), {"files": [materials({"a.mp4": "x"})], "creator": "张天伟", "producers": ["丁杰"]})
+            self.assertRaisesRegex(Blocked, "may not upload creatives", approved_plan, fake, deps_for(), {"files": [materials({"a.mp4": "x"})], "creator": "张天伟", "producers": ["丁杰"]})
         finally:
             fake.close()
 
     def test_zipped_folder(self) -> None:
-        """A zipped folder (how a folder reaches lark-agent) is planned and uploaded by the files inside it."""
+        """A zipped folder (how a chat hands over a folder) is planned and uploaded by the files inside it."""
         fake = FakeCreative()
         try:
             deps = deps_for()
@@ -838,7 +838,7 @@ class RunTests(unittest.TestCase):
             write_file(os.path.join(directory, "request.json"), json.dumps({"files": [zip_], "progress": False, "creator": "张天伟", "producers": ["丁杰"]}, ensure_ascii=False))
             summary = plan_upload(online(fake), None, os.path.join(directory, "request.json"), os.path.join(directory, "plan.json"), deps)
             self.assertEqual(sorted([i["name"], i["type"]] for i in summary["items"]), [["P01", "视频"], ["封面", "图片"]])
-            self.assertEqual(summary["skipped"], [{"file": "新建文件夹.zip：新建文件夹/说明.txt", "reason": "CLS 不支持这种格式（.txt）"}])
+            self.assertEqual(summary["skipped"], [{"file": "新建文件夹.zip：新建文件夹/说明.txt", "reason": "CLS does not take this format (.txt)"}])
             result = run_upload(online(fake), summary["plan"], deps)
             self.assertEqual(result["status"], "uploaded", result)
             self.assertEqual(sorted(next(r for r in fake.requests if r["path"] == "/api/qcloud/signed-url")["body"]["files"]), ["P01/P01.mp4", "封面/封面.png"])
@@ -883,7 +883,7 @@ class RunTests(unittest.TestCase):
             request = {"files": [directory], "creator": "张天伟", "producers": ["丁杰"]}
             with self.assertRaises(Blocked) as caught:
                 approved_plan(fake, deps, request)
-            self.assertTrue("内容完全相同" in caught.exception.message and "01 - 副本.mp4" in caught.exception.message and "01.mp4" in caught.exception.message)
+            self.assertTrue("the same content as" in caught.exception.message and "01 - 副本.mp4" in caught.exception.message and "01.mp4" in caught.exception.message)
             file = approved_plan(fake, deps, {**request, "items": [{"file": "01 - 副本.mp4", "skip": True}]})
             result = run_upload(online(fake), file, deps)
             self.assertEqual(result["status"], "uploaded", result)
@@ -937,11 +937,11 @@ class RunTests(unittest.TestCase):
         try:
             deps = deps_for()
             directory = materials({"封面.png": "p", "b.mp4": "b"})
-            self.assertRaisesRegex(Blocked, "CLS 已有同名创意.*：封面", approved_plan, fake, deps, {"files": [directory], "creator": "张天伟", "producers": ["丁杰"]})
+            self.assertRaisesRegex(Blocked, "CLS has a creative of this name already.*: 封面", approved_plan, fake, deps, {"files": [directory], "creator": "张天伟", "producers": ["丁杰"]})
             # No 创意人 as well: both in the same refusal, not one after the other.
             with self.assertRaises(Blocked) as caught:
                 approved_plan(fake, deps, {"files": [directory], "producers": ["丁杰"]})
-            self.assertTrue("创意人未定" in caught.exception.message and "CLS 已有同名创意" in caught.exception.message)
+            self.assertTrue("创意人 not decided" in caught.exception.message and "CLS has a creative of this name already" in caught.exception.message)
         finally:
             fake.close()
 
@@ -985,7 +985,7 @@ class RunTests(unittest.TestCase):
                 return real_fetch(url, **kwargs)
 
             flaky = UploadDeps(adapter={**base.adapter, "fetch": flaky_fetch}, batch_root=base.batch_root, tmp_dir=base.tmp_dir, sleep=base.sleep, reconcile_tries=1)
-            self.assertRaisesRegex(Blocked, "CLS 暂时无法访问，还没有创建任何创意", run_upload, online(other), file, flaky)
+            self.assertRaisesRegex(Blocked, "CLS cannot be reached for now and no creative was created", run_upload, online(other), file, flaky)
             self.assertEqual([writes(other, "multiple-upload"), upload_status(file, flaky)["create_sent"]], [0, False])
             state["outage"] = False
             self.assertEqual(run_upload(online(other), file, flaky)["status"], "uploaded")

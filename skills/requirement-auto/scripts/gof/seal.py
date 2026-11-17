@@ -1,4 +1,4 @@
-"""Seals on records, and the refusal of any record that carries a credential (seal.ts)."""
+"""Seals on records, and the refusal of any record that carries a credential."""
 
 from __future__ import annotations
 
@@ -19,11 +19,11 @@ def reject_secrets(value: Any) -> None:
         for v in value:
             reject_secrets(v)
     elif isinstance(value, dict):
-        need(not any(_SECRET_KEYS.search(str(k)) for k in value.keys()), "记录中禁止包含认证凭据")
+        need(not any(_SECRET_KEYS.search(str(k)) for k in value.keys()), "records must not contain credentials")
         for v in value.values():
             reject_secrets(v)
     elif isinstance(value, str):
-        need(not _BEARER.search(value), "记录中禁止包含认证凭据")
+        need(not _BEARER.search(value), "records must not contain credentials")
 
 
 def seal(value: dict, key: str) -> dict:
@@ -35,7 +35,7 @@ def seal(value: dict, key: str) -> dict:
 
 
 def check_seal(value: dict, key: str) -> None:
-    need(isinstance(value, dict), "接口记录摘要不匹配")
+    need(isinstance(value, dict), "the record's digest does not match")
     rest = {k: v for k, v in value.items() if k != key}
-    need(value.get(key) == digest(rest), "接口记录摘要不匹配")
+    need(value.get(key) == digest(rest), "the record's digest does not match")
     reject_secrets(value)

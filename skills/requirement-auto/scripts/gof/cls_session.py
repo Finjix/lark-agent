@@ -1,4 +1,4 @@
-"""The CLS login (cls-session.ts).
+"""The CLS login.
 
 CLS sits behind the company's single sign-on and offers no device flow or callback, so the one way to obtain a session is for a person to log
 in on the normal web page. This module opens that page in a browser with this user's profile folder (so each user keeps their own login),
@@ -20,15 +20,14 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional
-from urllib.parse import urlsplit
 
 from .chromium import BROWSER_ENV, BrowserHandle, Cdp, CdpError, find_browser, open_browser
-from .util import Blocked
+from .util import Blocked, parse_url
 from .web import FetchError, Fetcher, fetch as default_fetch
 
 CLS_ORIGIN = "https://creative.centurygames.cn"
 ENTRY = "/requirements"
-NO_BROWSER = f"没有找到 Chrome 或 Edge：请安装其一，或用环境变量 {BROWSER_ENV} 指定浏览器的绝对路径"
+NO_BROWSER = f"no Chrome or Edge found: install one, or set {BROWSER_ENV} to the browser's absolute path"
 
 
 @dataclass
@@ -84,34 +83,24 @@ def account_names(name: str) -> list[str]:
     return list(dict.fromkeys(p for p in parts if len(p) >= 2))
 
 
-def _parse_url(text: Any) -> Any:
-    try:
-        parts = urlsplit(text)
-        if not parts.scheme:
-            return None
-        return parts
-    except (ValueError, TypeError):
-        return None
-
-
 def approve_consent(cdp: Cdp, session_id: str, options: ConsentOptions, before_click: Callable[[], None] = lambda: None) -> dict:
     probe = cdp.send("Runtime.evaluate", {"expression": CONSENT_PROBE, "returnByValue": True}, session_id)
     page = (probe.get("result") or {}).get("value")
     if not isinstance(page, dict) or not page.get("button"):
         return {"state": "not_ready"}  # not a consent page (it also shows the sign-in code), or not drawn yet
     # The page may have moved on since the targets were listed: look at where it is now.
-    here = _parse_url(page.get("href"))
+    here = parse_url(page.get("href"))
     if here is None:
         return {"state": "not_ready"}
     if not (options.is_consent_page or _feishu_consent_page)(here):
         return {"state": "not_ready"}
     text = str(page.get("text") or "")
     if options.app and options.app not in text:
-        return {"state": "refused", "reason": f"飞书授权页请求的不是 {options.app}，没有点击；请用户自己查看这个授权请求"}
+        return {"state": "refused", "reason": f"the Feishu consent page asks for another app than {options.app}: nothing was clicked; the user has to look at that request themselves"}
     if options.unnamed_pin:
-        return {"state": "refused", "reason": "已绑定的 CLS 账号没有名称，无法核对授权页上的账号，没有点击；请管理员处理账号绑定"}
+        return {"state": "refused", "reason": "the bound CLS account has no name, so the account on the consent page cannot be checked: nothing was clicked; an administrator has to fix the binding"}
     if options.account and not any(name in text for name in account_names(options.account)):
-        return {"state": "refused", "reason": f"飞书授权页上的账号不是已绑定的“{options.account}”，没有点击；请用绑定的账号扫码"}
+        return {"state": "refused", "reason": f"the account on the Feishu consent page is not the bound \"{options.account}\": nothing was clicked; scan with the bound account"}
     x, y = page["button"]["x"], page["button"]["y"]
     before_click()  # from here on this login counts as approved once, whatever the click does
     try:
@@ -161,7 +150,7 @@ def _cls_trouble(origin: str) -> Optional[str]:
         response = default_fetch(f"{origin}/api/userinfo", method="GET", timeout=10.0, redirect="manual")
         return f"HTTP {response.status}" if response.status >= 500 or response.status in (429, 408) else None
     except FetchError as error:
-        return "请求超时" if error.timeout else "连接失败"
+        return "timed out" if error.timeout else "connection failed"
 
 
 def _lower(headers: Any, name: str) -> Optional[str]:
@@ -277,7 +266,7 @@ def _watch(browser: BrowserHandle, origin: str, wait_ms: int, consent: Optional[
         elif kind == "failed":
             if (params.get("type") == "Document" and not params.get("canceled") and params.get("errorText") != "net::ERR_ABORTED"
                     and own_page(urls.get(str(params.get("requestId"))))):
-                trouble[0] = str(params.get("errorText") or "页面打不开")
+                trouble[0] = str(params.get("errorText") or "the page did not open")
         elif kind == "response":
             response = params.get("response") or {}
             if params.get("type") == "Document" and own_page(response.get("url")):
@@ -301,7 +290,7 @@ def _watch(browser: BrowserHandle, origin: str, wait_ms: int, consent: Optional[
             for target in infos:
                 if target.get("type") != "page":
                     continue
-                url = _parse_url(target.get("url"))
+                url = parse_url(target.get("url"))
                 if url is None or not (consent.is_consent_page or _feishu_consent_page)(url):
                     continue
                 result = approve_consent(cdp, attach(target["targetId"]), consent, lambda t=target["targetId"]: clicked.add(t))
@@ -372,7 +361,7 @@ def _watch(browser: BrowserHandle, origin: str, wait_ms: int, consent: Optional[
             handle(kind, params)
     if good[0] is not None:
         return {"state": "ok", **good[0]}
-    why = "CLS 没有回答登录核对" if unsettled else trouble[0] if trouble[0] is not None else (None if tried else _cls_trouble(origin))
+    why = "CLS did not answer the login check" if unsettled else trouble[0] if trouble[0] is not None else (None if tried else _cls_trouble(origin))
     return {"state": "unreachable", "reason": why} if why else {"state": "login_required"}
 
 
@@ -416,7 +405,7 @@ def capture_login_qr(profile_dir: str, origin: Optional[str] = None, exe: Option
                 entries = history.get("entries") or []
                 index = history.get("currentIndex")
                 url = entries[index]["url"] if isinstance(index, int) and 0 <= index < len(entries) else ""
-                return _parse_url(url)
+                return parse_url(url)
             except (CdpError, KeyError, TypeError):
                 return None
 
@@ -465,7 +454,7 @@ def capture_login_qr(profile_dir: str, origin: Optional[str] = None, exe: Option
 
 def cls_profile_dir(env: Optional[Mapping[str, str]] = None) -> str:
     """
-    The browser this user's CLS login lives in. It is lark-agent's Feishu module's (under the user's own directory): CLS signs in through the company's
+    The browser this user's CLS login lives in. It is the feishu skill's (under the user's own directory): CLS signs in through the company's
     Feishu single sign-on, and that browser holds the user's Feishu web session from the Feishu login, so the user scans once for both.
     """
     from .agent_feishu import browser_profile_dir
@@ -489,7 +478,7 @@ def cls_account_file(env: Optional[Mapping[str, str]] = None) -> str:
 
 def unreachable_reason(why: str) -> str:
     """What a command says when CLS could not be asked whether the login is good."""
-    return f"CLS 暂时无法访问（{why}）：这不说明登录失效，不要让用户扫码，稍后再试"
+    return f"CLS cannot be reached for now ({why}): the login has not lapsed, so ask for no scan; try again a little later"
 
 
 def open_session(profile_dir: Optional[str] = None, wait_ms: Optional[int] = None, origin: Optional[str] = None, exe: Optional[str] = None,
@@ -502,5 +491,5 @@ def open_session(profile_dir: Optional[str] = None, wait_ms: Optional[int] = Non
     if result["state"] == "unreachable":
         raise Blocked(unreachable_reason(result["reason"]))
     if result["state"] != "ok":
-        raise Blocked("CLS 未登录或登录已过期：先运行 gof cls login --qr <png文件> 生成登录二维码，交给用户用飞书手机端扫码")
+        raise Blocked("CLS is not logged in or the login has expired: run gof cls login --qr <file.png> and give the QR image to the user to scan with the Feishu mobile app")
     return {"authorization": result["authorization"], "account": result["account"], "origin": origin}

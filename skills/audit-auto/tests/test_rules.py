@@ -26,7 +26,7 @@ def empty_book(project: str = "GOF") -> dict:
 
 
 def setup() -> tuple[str, FakeLark]:
-    # As the host lays it out: <LARK_AGENT_SHARED_DIR>/audit-auto.
+    # As the host lays it out: <AGENT_SHARED_DIR>/audit-auto.
     shared = os.path.join(temp_dir("host-"), "audit-auto")
     lark = FakeLark()
     lark.messages += [
@@ -101,12 +101,10 @@ class RulesTest(unittest.TestCase):
         shared, lark = setup()
         model = FakeModel(lambda _r, _n: {"operations": [{"op": "add", "category": "字幕和口播", "rule": "「上头」算防沉迷，字幕口播都不能写", "fix": "换个说法", "messages": [1, 2]}]})
         ctx = ctx_of(lark, model, shared, now=lambda: NOW)
-        with self.assertRaisesRegex(Blocked, "把机器人拉进审核群"):
+        with self.assertRaisesRegex(Blocked, "private chat"):
             watch(PROJECTS["GOF"], None, Turn(chat="oc_p2p", chat_type="p2p"), ctx)
-        with self.assertRaisesRegex(Blocked, "不知道这条消息来自哪个群"):
+        with self.assertRaisesRegex(Blocked, "No chat to listen to: pass --chat"):
             watch(PROJECTS["GOF"], None, Turn(), ctx)
-        with self.assertRaisesRegex(Blocked, "看不出这里是不是群聊"):
-            watch(PROJECTS["GOF"], None, Turn(chat="oc_x"), ctx)
 
         result = watch(PROJECTS["GOF"], None, GROUP, ctx)
         self.assertEqual(result, {"status": "watching", "project": "GOF", "read": 4, "considered": 3, "added": 1, "updated": 0, "removed": 0, "pending": False,
@@ -115,11 +113,11 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(len(model.calls), 1)
         call = model.calls[0]
         transcript = text_of(call)
-        self.assertIn("#1 [2026-10-30 16:00] 王审核: 这条被巨量拒了，理由是「上头」算防沉迷\n#2 [2026-10-30 16:01] 李剪辑: 以后「上头」都别写了\n#3 [2026-10-31 16:00] 王审核:  [图片 #3-1]", transcript)
+        self.assertIn("#1 [2026-10-30 16:00] 王审核: 这条被巨量拒了，理由是「上头」算防沉迷\n#2 [2026-10-30 16:01] 李剪辑: 以后「上头」都别写了\n#3 [2026-10-31 16:00] 王审核:  [picture #3-1]", transcript)
         self.assertNotRegex(transcript, "很久以前|审片结果", "older than the start, and the bot's own message, are not read")
         self.assertEqual(call.parts[-1]["inlineData"]["mimeType"], "image/png", "the picture goes with the transcript")
         self.assertIn("Today is 2026-11-02", call.system)
-        self.assertIn("# Fixed spec\n# GOF（无尽冬日）", call.system)
+        self.assertIn("# Fixed spec\n# GOF (无尽冬日) ad material review spec", call.system)
         self.assertRegex(call.system, r"# Dynamic spec now\nEach rule .*\n\(empty\)")
 
         book = load_book(shared, "GOF")
@@ -142,15 +140,15 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(hourly["groups"], [{"chat": "oc_review", "project": "GOF", "read": 1, "considered": 1, "added": 1, "updated": 1, "removed": 0, "pending": False}])
         second = text_of(model.calls[1])
         # The messages read before come along (the one it replies to among them), so that the new one makes sense; their pictures stay behind.
-        self.assertTrue(second.startswith("New messages from the review group (1), with 3 from earlier readings (marked 之前的消息):\n\n"
-                                          "#1 [2026-10-30 16:00] 王审核（之前的消息）: 这条被巨量拒了，理由是「上头」算防沉迷\n"
-                                          "#2 [2026-10-30 16:01] 李剪辑（之前的消息）: 以后「上头」都别写了\n"
-                                          "#3 [2026-10-31 16:00] 王审核（之前的消息）: [图片]\n"
-                                          "#4 [2026-11-02 16:01] 王审核（回复 #1）: 更正"), second)
+        self.assertTrue(second.startswith("New messages from the review group (1), with 3 from earlier readings (marked (earlier)):\n\n"
+                                          "#1 [2026-10-30 16:00] 王审核 (earlier): 这条被巨量拒了，理由是「上头」算防沉迷\n"
+                                          "#2 [2026-10-30 16:01] 李剪辑 (earlier): 以后「上头」都别写了\n"
+                                          "#3 [2026-10-31 16:00] 王审核 (earlier): [picture]\n"
+                                          "#4 [2026-11-02 16:01] 王审核 (reply to #1): 更正"), second)
         self.assertNotIn("审片结果", second)
         self.assertFalse(any("inlineData" in p for p in model.calls[1].parts), "no pictures from before")
         # The rules come with the words they rest on.
-        self.assertIn("- D1〔字幕和口播〕「上头」算防沉迷，字幕口播都不能写 怎么改：换个说法（2026-11-02；依据：王审核「这条被巨量拒了，理由是「上头」算防沉迷」；李剪辑「以后「上头」都别写了」）",
+        self.assertIn("- D1 [字幕和口播] 「上头」算防沉迷，字幕口播都不能写 Fix: 换个说法 (2026-11-02; based on: 王审核「这条被巨量拒了，理由是「上头」算防沉迷」; 李剪辑「以后「上头」都别写了」)",
                       model.calls[1].system)
         # An operation that rests only on what was read before is not taken: its ruling is in the spec already.
         self.assertEqual([r["rule"] for r in load_book(shared, "GOF")["rules"]], ["「上头」算防沉迷，字幕、口播、剧情台词都不能写", "BOSS 写成首领"])
@@ -159,7 +157,7 @@ class RulesTest(unittest.TestCase):
         sync_all(ctx_of(lark, model, shared, now=lambda: NOW + 7_200_000))
         self.assertEqual(len(model.calls), 2)
 
-        with self.assertRaisesRegex(Blocked, "本群已经在给 GOF 整理动态规范"):
+        with self.assertRaisesRegex(Blocked, "already listened to for GOF"):
             watch(PROJECTS["GOT"], None, GROUP, ctx)
         self.assertTrue(watch(PROJECTS["GOF"], None, GROUP, ctx)["already"])
 
@@ -169,14 +167,14 @@ class RulesTest(unittest.TestCase):
             {"op": "add", "category": "字幕和口播", "rule": "「上头」不能写", "messages": [1]}, {"op": "add", "category": "画面和界面", "rule": "拒审截图里的箭头不能用", "messages": [3]},
         ]})
         workspace = temp_dir("workspace-")
-        env = {"LARK_AGENT_SHARED_DIR": os.path.dirname(shared), "LARK_AGENT_CHAT_ID": "oc_review", "LARK_AGENT_CHAT_TYPE": "group", "LARK_AGENT_USER_OPEN_ID": "ou_bob"}
+        env = {"AGENT_SHARED_DIR": os.path.dirname(shared), "AGENT_CHAT_ID": "oc_review", "AGENT_CHAT_TYPE": "group", "AGENT_USER_OPEN_ID": "ou_bob"}
 
         def run(*args: str) -> dict:
             return main(list(args), Context(env=env, lark=lark, model=model, now=lambda: NOW, log=lambda _l: None))[0]
 
-        self.assertEqual(run("rules", "watch")["reason"], "缺少 --project：先问用户这个群是 GOF 还是 GOT 的审核群")
+        self.assertEqual(run("rules", "watch")["reason"], "--project is missing: ask the user whether the group reviews GOF or GOT material")
         self.assertIn("YYYY-MM-DD", run("rules", "watch", "--project", "GOF", "--since", "2026/09/01")["reason"])
-        self.assertIn("不是有效的日期", run("rules", "watch", "--project", "GOF", "--since", "2026-02-30")["reason"], "not taken for 03-02")
+        self.assertIn("not a valid date", run("rules", "watch", "--project", "GOF", "--since", "2026-02-30")["reason"], "not taken for 03-02")
         watched, code = main(["rules", "watch", "--project", "GOF", "--since", "2026-10-29"], Context(env=env, lark=lark, model=model, now=lambda: NOW, log=lambda _l: None))
         self.assertEqual(code, 0)
         self.assertEqual(watched["since"], "2026-10-29")
@@ -184,7 +182,7 @@ class RulesTest(unittest.TestCase):
         with open(os.path.join(shared, "jobs.json"), encoding="utf-8") as handle:
             job = json.load(handle)["jobs"][0]
         self.assertEqual((job["name"], job["everyMinutes"], job["command"], job["args"][1:]), ("audit-rules-sync", 4320, "python", ["rules", "sync"]),
-                         "listening to a group asks the host for the daily reading")
+                         "listening to a group asks a host for the periodic sync")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, job["args"][0])), "run in the skill's folder, the script is there")
 
         listed = run("rules", "status")
@@ -196,30 +194,60 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(run("rules", "show", "--project", "GOF", "--output", target)["file"], os.path.join(workspace, "动态审片规范-GOF (2).md"),
                          "an existing file is not overwritten")
 
-        self.assertIn("没有 D7", run("rules", "remove", "--project", "GOF", "--id", "D7")["reason"])
+        self.assertIn("has no D7", run("rules", "remove", "--project", "GOF", "--id", "D7")["reason"])
         removed = run("rules", "remove", "--project", "GOF", "--id", "d2")
         self.assertEqual(removed["removed"], [{"id": "D2", "rule": "拒审截图里的箭头不能用"}])
-        self.assertEqual(load_book(shared, "GOF")["removed"][0]["reason"], "用户删除（ou_bob）")
+        self.assertEqual(load_book(shared, "GOF")["removed"][0]["reason"], "deleted by a user (ou_bob)")
 
         self.assertEqual(run("rules", "unwatch"), {"status": "stopped", "project": "GOF", "rules": 1})
-        self.assertFalse(os.path.exists(os.path.join(shared, "jobs.json")), "with no group left, there is nothing to read every day")
-        self.assertIn("本群没有在监听", run("rules", "unwatch")["reason"])
-        self.assertIn("本群没有在监听", run("rules", "sync", "--here")["reason"])
-        nowhere = main(["rules", "sync", "--here"], Context(env={"LARK_AGENT_SHARED_DIR": os.path.dirname(shared)}, lark=lark, model=model, now=lambda: NOW, log=lambda _l: None))[0]
-        self.assertIn("不知道这条消息来自哪个群", nowhere["reason"], 'without a chat, "here" is not every group')
-        self.assertIn("rules 需要", run("rules", "nope")["reason"])
+        self.assertFalse(os.path.exists(os.path.join(shared, "jobs.json")), "with no group left, there is nothing to sync")
+        self.assertIn("not listened to", run("rules", "unwatch")["reason"])
+        self.assertIn("not listened to", run("rules", "sync", "--here")["reason"])
+        nowhere = main(["rules", "sync", "--here"], Context(env={"AGENT_SHARED_DIR": os.path.dirname(shared)}, lark=lark, model=model, now=lambda: NOW, log=lambda _l: None))[0]
+        self.assertIn("--here needs the chat", nowhere["reason"], 'without a chat, "here" is not every group')
+        self.assertIn("rules needs", run("rules", "nope")["reason"])
 
-    def test_one_writer_at_a_time_the_daily_job_gives_way_a_dead_holders_lock_is_taken_over(self) -> None:
+    def test_without_a_chat_from_the_host_every_chat_command_takes_one_with_chat(self) -> None:
+        shared, lark = setup()
+        model = FakeModel(lambda _r, _n: {"operations": [{"op": "add", "category": "字幕和口播", "rule": "「上头」不能写", "messages": [1]}]})
+        host = os.path.dirname(shared)
+
+        def run(*args: str, env: dict | None = None) -> dict:
+            return main(list(args), Context(env={"AGENT_SHARED_DIR": host, **(env or {})}, lark=lark, model=model, now=lambda: NOW, log=lambda _l: None))[0]
+
+        self.assertIn("No chat to listen to: pass --chat", run("rules", "watch", "--project", "GOF")["reason"])
+        self.assertIn("Feishu chat id", run("rules", "watch", "--project", "GOF", "--chat", "review group")["reason"])
+        watched = run("rules", "watch", "--project", "GOF", "--chat", "oc_review")
+        self.assertEqual((watched["status"], watched["added"]), ("watching", 1))
+        self.assertEqual(lark.asked[0]["chat"], "oc_review")
+        self.assertEqual(read_json(os.path.join(shared, "groups.json"))["groups"][0]["chat"], "oc_review")
+        self.assertEqual(run("rules", "status")["here"], None, "no chat: none is this one")
+        listed = run("rules", "status", "--chat", "oc_review")
+        self.assertEqual((listed["here"], listed["groups"][0].get("here")), ("GOF", True))
+        lark.messages.append(message(NOW + 60_000, {"text": "「赚米」也不能写"}))
+        synced = run("rules", "sync", "--chat", "oc_review")
+        self.assertEqual([(g["chat"], g.get("here")) for g in synced["groups"]], [("oc_review", True)])
+        self.assertIn("not listened to", run("rules", "sync", "--chat", "oc_other")["reason"])
+        # The host's chat is a private one: refused for it, but a group named with --chat is that group.
+        private = {"AGENT_CHAT_ID": "oc_private", "AGENT_CHAT_TYPE": "p2p", "AGENT_USER_OPEN_ID": "ou_bob"}
+        self.assertIn("private chat", run("rules", "watch", "--project", "GOF", env=private)["reason"])
+        self.assertIn("private chat", run("rules", "watch", "--project", "GOF", "--chat", "oc_private", env=private)["reason"])
+        self.assertTrue(run("rules", "watch", "--project", "GOF", "--chat", "oc_review", env=private)["already"])
+        self.assertEqual(run("rules", "unwatch", "--chat", "oc_review"), {"status": "stopped", "project": "GOF", "rules": 1})
+        self.assertFalse(os.path.exists(os.path.join(shared, "jobs.json")))
+        self.assertIn("No chat to stop listening to", run("rules", "unwatch")["reason"])
+
+    def test_one_writer_at_a_time_the_periodic_job_gives_way_a_dead_holders_lock_is_taken_over(self) -> None:
         shared, lark = setup()
         model = FakeModel(lambda _r, _n: {"operations": []})
-        env = {"LARK_AGENT_SHARED_DIR": os.path.dirname(shared)}
+        env = {"AGENT_SHARED_DIR": os.path.dirname(shared)}
         inside = []
 
         def held() -> None:
             inside.append(True)
             job, code = main(["rules", "sync"], Context(env=env, lark=lark, model=model, log=lambda _l: None))
             self.assertEqual((code, job["status"]), (0, "busy"), "the job (no chat) does not wait and does not fail")
-            with self.assertRaisesRegex(Blocked, "正在更新"):
+            with self.assertRaisesRegex(Blocked, "being updated"):
                 sync_all(ctx_of(lark, model, shared))
 
         with_lock(shared, held)
@@ -235,7 +263,7 @@ class RulesTest(unittest.TestCase):
         # 70 messages of 2000 characters (as long as one gets): 19 to a model call.
         for i in range(70):
             lark.messages.append(message(NOW - DAY + i * 60_000, {"text": f"第 {i} 条：{'很长的讨论' * 400}"}))
-        failure = Blocked("AI 网关暂时不可用（HTTP 503），稍后再试")
+        failure = Blocked("The AI gateway is unavailable (HTTP 503): try again later")
         model = FakeModel(lambda _r, n: failure if n == 2 else {"operations": []})
         ctx = ctx_of(lark, model, shared, now=lambda: NOW, max_chunks=2)
         first = watch(PROJECTS["GOF"], None, GROUP, ctx)
@@ -256,10 +284,11 @@ class RulesTest(unittest.TestCase):
         model = FakeModel(lambda _r, _n: {"operations": []})
         lark.fail_with = LarkError(99991672, "Access denied", ["im:message.group_msg"])
         result = watch(PROJECTS["GOT"], None, GROUP, ctx_of(lark, model, shared, now=lambda: NOW))
-        self.assertEqual(result["error"], "机器人缺少飞书权限（im:message.group_msg）：请管理员在飞书开放平台给应用开通并发布新版本")
+        self.assertEqual(result["error"], "The bot lacks a Feishu permission (im:message.group_msg): an administrator must grant it to the app on the Feishu "
+                                          "open platform and publish a new version")
         lark.fail_with = LarkError(230002, "Bot is not in the chat")
         synced = sync_all(ctx_of(lark, model, shared))
-        self.assertIn("机器人不在这个群里", synced["groups"][0]["error"])
+        self.assertIn("not a member of this chat", synced["groups"][0]["error"])
 
 
 if __name__ == "__main__":

@@ -1,17 +1,16 @@
-"""The dynamic spec: review rules that come out of a project's review groups (port of rules.ts).
+"""The dynamic spec: review rules that come out of a project's review groups.
 
-Someone @-mentions the bot in a group with 「监听本群更新审片规范」 (watch); from then on the group's messages are read (the last year
-once, then every three days what is new, see references/scheduled-sync.md) and Gemini turns the rulings in them into changes of the
-project's dynamic spec: add, update or remove a rule. Each rule keeps the messages it rests on. The reviews of the project apply it
-together with the fixed spec.
+A user asks the bot in a group to listen to it (「监听本群更新审片规范」: `rules watch`); from then on the group's messages are read
+(the last year at once, then what is new at every `rules sync`, see references/scheduled-sync.md) and Gemini turns the rulings in them
+into changes of the project's dynamic spec: add, update or remove a rule. Each rule keeps the messages it rests on. The reviews of the
+project apply it together with the fixed spec.
 
-Kept in the shared folder (<LARK_AGENT_SHARED_DIR>/audit-auto), the same for every user, in the very format the TypeScript version
-wrote (both read each other's files):
+Kept in the shared folder (<AGENT_SHARED_DIR>/audit-auto), the same for every user:
   groups.json      the groups listened to: project, from when, how far they have been read
   rules/<P>.json   the dynamic spec of project P, and rules/<P>.md, the same for people
   names.json       members' display names, looked up once
-  lock             one writer at a time (a user's watch and the sync every three days)
-  jobs.json        the reading every three days, for lark-agent to run, while a group is listened to
+  lock             one writer at a time (a user's watch and the periodic sync)
+  jobs.json        the periodic sync, for a host that runs jobs.json, while a group is listened to
 
 A rule is {id, category, rule, fix?, example?, sources: [{chat, message, at, by?, text?}], created, updated}; a removed one adds
 {removed, reason, by: 'chat'|'user'}; a book is {version: 1, project, next, rules, removed, updated}. A group is {chat, project, since,
@@ -48,7 +47,8 @@ Book = dict[str, Any]
 Group = dict[str, Any]
 Source = dict[str, Any]
 
-#: The parts of a spec a rule belongs to: the sections of the fixed specs.
+#: The parts of a spec a rule belongs to, the sections of the fixed specs (stored in Chinese): red lines, subtitles and voice-over,
+#: picture and UI, matching the game, by material type, naming, quality of the finished video, other.
 CATEGORIES = ["红线", "字幕和口播", "画面和界面", "和游戏对得上", "按素材类型", "命名", "成片质量", "其他"]
 TYPES = re.compile(r"素材类型|3D|玩法|解说|迭代|真人|实拍|AI|明星|KOL", re.IGNORECASE)
 DAY = 24 * 60 * 60_000
@@ -93,7 +93,7 @@ def read_json(file: str, fallback: T) -> T:
     try:
         return json.loads(text[1:] if text.startswith(_BOM) else text)
     except ValueError:
-        raise Blocked(f"动态规范的数据文件坏了（{os.path.basename(file)}），请联系管理员") from None
+        raise Blocked(f"A data file of the dynamic spec is damaged ({os.path.basename(file)}): ask the administrator") from None
 
 
 def dump(value: Any, pretty: bool = True) -> str:
@@ -150,8 +150,8 @@ def jobs_file(shared: str) -> str:
     return os.path.join(shared, "jobs.json")
 
 
-#: The reading of the groups listened to every three days (references/scheduled-sync.md), for lark-agent to run: it reads jobs.json in this skill's
-#: shared folder and runs the job in the skill's folder.
+#: The periodic sync of the groups listened to (references/scheduled-sync.md), for a host that runs the jobs.json in a skill's shared
+#: folder: every three days, in the skill's folder.
 SYNC_JOB = {"jobs": [{"name": "audit-rules-sync", "everyMinutes": 4320, "timeoutMinutes": 30, "command": "python",
                       "args": ["scripts/audit.py", "rules", "sync"]}]}
 
@@ -162,7 +162,7 @@ def save_groups(shared: str, groups: dict[str, Any]) -> None:
 
 
 def keep_sync_job(shared: str, listening: bool) -> None:
-    """The reading every three days is wanted while a group is listened to: jobs.json is there exactly then (written as SYNC_JOB is now)."""
+    """The periodic sync is wanted while a group is listened to: jobs.json is there exactly then (written as SYNC_JOB is now)."""
     file = jobs_file(shared)
     if not listening:
         _remove(file)
@@ -280,7 +280,7 @@ def with_lock(shared: str, fn: Callable[[], T], wait_ms: int = 5 * 60_000) -> T:
                 _take_over(file, stale)
                 continue
             if now_ms() >= deadline:
-                raise Busy("动态规范正在更新（另一个任务正在读群消息），过几分钟再试") from None
+                raise Busy("The dynamic spec is being updated (another run is reading group messages): try again in a few minutes") from None
             time.sleep(2)
     # The heartbeat and the release touch the lock only while it is still this run's.
     stop = threading.Event()
@@ -313,7 +313,7 @@ def _sources_text(sources: list[Source]) -> str:
 
 def _said_text(sources: list[Source]) -> str:
     """The words of the newest messages a rule rests on: 王审核「以后「上头」都别写了」."""
-    return "；".join(f"{s.get('by') or '成员'}「{s['text']}」" for s in [s for s in sources if s.get("text")][-2:])
+    return "; ".join(f"{s.get('by') or 'member'}「{s['text']}」" for s in [s for s in sources if s.get("text")][-2:])
 
 
 def prompt_rules(book: Book, with_sources: bool = False) -> str:
@@ -322,16 +322,16 @@ def prompt_rules(book: Book, with_sources: bool = False) -> str:
     lines = []
     for r in book["rules"]:
         said = _said_text(r.get("sources") or []) if with_sources else ""
-        lines.append(f"- {r['id']}〔{r['category']}〕{r['rule']}{' 怎么改：' + r['fix'] if r.get('fix') else ''}"
-                     f"{' 例：' + r['example'] if r.get('example') else ''}（{day(r['updated'])}{'；依据：' + said if said else ''}）")
+        lines.append(f"- {r['id']} [{r['category']}] {r['rule']}{' Fix: ' + r['fix'] if r.get('fix') else ''}"
+                     f"{' Example: ' + r['example'] if r.get('example') else ''} ({day(r['updated'])}{'; based on: ' + said if said else ''})")
     return "\n".join(lines)
 
 
 def render_book(book: Book) -> str:
-    """The dynamic spec for people."""
+    """The dynamic spec for people, in Chinese as its readers write and read it."""
     lines = [
         f"# {book['project']} 动态审片规范", "",
-        "从审核群的聊天记录自动整理：机器人每天读一次群里的新消息，有新的审核结论就更新这里。审片时和固定规范一起用；说法和固定规范不一样的，以这里为准（这里更新）。", "",
+        "从审核群的聊天记录自动整理：机器人定期读群里的新消息，有新的审核结论就更新这里。审片时和固定规范一起用；说法和固定规范不一样的，以这里为准（这里更新）。", "",
         f"更新于 {stamp(book['updated']) if book.get('updated') else '—'} · 共 {len(book['rules'])} 条",
     ]
     if not book["rules"]:
@@ -364,9 +364,9 @@ def distill_system(project: Project, fixed: str, current: str, today: str) -> st
         f"You keep the dynamic review spec of the mobile game {project.name}: rules for its advertising material that come out of its review group's chat, on top of its fixed spec (the review standard). Read the new messages from the group and say how the dynamic spec changes. Today is {today} (China time).",
         "",
         "# What counts as a rule",
-        "A rule says what the project's ad material may or may not contain, or how it has to be made, to pass review: a platform's rejection and its reason, a reviewer's ruling (\"X 不能用\", \"Y 可以用了\", \"Z 要写成 W\"), a new requirement, a correction or withdrawal of an earlier rule, a number or wording made precise. Leave out everything else: chatter, thanks, scheduling, who does what, where files are uploaded or delivered, questions nobody answered, and decisions about one particular material that set no rule for others.",
+        "A rule says what the project's ad material may or may not contain, or how it has to be made, to pass review: a platform's rejection and its reason, a reviewer's ruling (\"X 不能用\": X is not allowed, \"Y 可以用了\": Y is allowed now, \"Z 要写成 W\": write Z as W), a new requirement, a correction or withdrawal of an earlier rule, a number or wording made precise. Leave out everything else: chatter, thanks, scheduling, who does what, where files are uploaded or delivered, questions nobody answered, and decisions about one particular material that set no rule for others.",
         "Weigh the messages: a platform's rejection or the ruling of whoever reviews counts; a guess or a question does not, until someone answers it. A reply belongs to the message it answers: a question and its answer make one ruling. Pictures (attached after the transcript, labelled with their message number) count as messages: a screenshot of a rejection notice gives its reason.",
-        "Messages marked 之前的消息 were read at an earlier reading: the last ones before the new messages, and earlier ones a new message replies to. They are there so that the new messages can be understood (\"那个也不行\" refers to what came just before); whatever they ruled is in the dynamic spec already. Give operations for what the new messages say, citing earlier messages only together with new ones.",
+        "Messages marked (earlier) were read at an earlier reading: the last ones before the new messages, and earlier ones a new message replies to. They are there so that the new messages can be understood (\"那个也不行\", that one is not allowed either, refers to what came just before); whatever they ruled is in the dynamic spec already. Give operations for what the new messages say, citing earlier messages only together with new ones.",
         "",
         "# Operations",
         "Go through the messages in order and give one operation for every ruling in them; several rulings in one message are several operations.",
@@ -387,7 +387,7 @@ def distill_system(project: Project, fixed: str, current: str, today: str) -> st
         fixed or "(none yet)",
         "",
         "# Dynamic spec now",
-        "Each rule with the date it last changed and the words of the messages it rests on (依据).",
+        "Each rule with the date it last changed and the words of the messages it rests on (based on).",
         current or "(empty)",
     ])
 
@@ -513,7 +513,7 @@ def apply(book: Book, operations: list[Operation], refs: dict[int, Source], now:
                 continue
             gone = book["rules"].pop(at)
             book["removed"].append({**gone, "sources": _merge(gone["sources"], sources), "removed": now,
-                                    "reason": op.get("reason") or "群里撤回或被新规则取代", "by": "chat"})
+                                    "reason": op.get("reason") or "withdrawn in the group, or replaced by a newer rule", "by": "chat"})
             changes["removed"].append(gone["id"])
     book["removed"] = book["removed"][-200:]
     if changes["added"] or changes["updated"] or changes["removed"]:
@@ -616,7 +616,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
                         raw.append(message)
             except Exception as error:  # noqa: BLE001 - read again next time
                 unread.add(thread)
-                ctx.log(f"话题读取失败，下次再读：{explain_lark(error)}")
+                ctx.log(f"A thread could not be read, it is read next time: {explain_lark(error)}")
         raw.sort(key=_time)
         if not raw:
             group["pending"] = False
@@ -631,7 +631,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
             try:
                 context += [m for m in ctx.lark.recent(group["chat"], group["cursor"] // 1000, CONTEXT + 10) if before(m)]
             except Exception as error:  # noqa: BLE001 - read without it
-                ctx.log(f"读不到之前的消息，这次不带上：{explain_lark(error)}")
+                ctx.log(f"The earlier messages could not be read, this reading goes without them: {explain_lark(error)}")
         shown_before = {m["message_id"] for m in context}
 
         carried: dict[str, list[FeishuMessage]] = {}
@@ -657,7 +657,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
                 name = ctx.lark.user_name(person)
                 if name:
                     names[person] = name
-        entry_context = EntryContext(app_id=ctx.lark.app_id, name=lambda i: names.get(i) or f"成员{i[-4:]}", forwarded=carried)
+        entry_context = EntryContext(app_id=ctx.lark.app_id, name=lambda i: names.get(i) or f"member-{i[-4:]}", forwarded=carried)
         bot = {m["message_id"] for m in [*raw, *parents.values(), *context]
                if (m.get("sender") or {}).get("sender_type") == "app" and (m.get("sender") or {}).get("id") == ctx.lark.app_id}
         # Context goes short and without its pictures, leaving the chunk to what is new (a picture that matters is usually replied to,
@@ -665,7 +665,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
         shown: list[Entry] = []
         for e in entries_of(context, entry_context)[-CONTEXT:]:
             text = f"{e['text'][:CONTEXT_CHARS]}…" if len(e["text"]) > CONTEXT_CHARS else e["text"]
-            shown.append({**e, "earlier": True, "pictures": [], "text": f"{text} [图片]".strip() if e["pictures"] else text})
+            shown.append({**e, "earlier": True, "pictures": [], "text": f"{text} [picture]".strip() if e["pictures"] else text})
         entries = [*shown, *_with_parents(entries_of(raw, entry_context), parents, entry_context)]
         result["considered"] = sum(1 for e in entries if not e.get("earlier"))
 
@@ -678,7 +678,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
         def ask(part: list[Entry], pictures: bool) -> Any:
             fresh = sum(1 for e in part if not e.get("earlier"))
             head = f"New messages from the review group ({fresh})" + (
-                f", with {len(part) - fresh} from earlier readings (marked 之前的消息)" if fresh < len(part) else "")
+                f", with {len(part) - fresh} from earlier readings (marked (earlier))" if fresh < len(part) else "")
             # A picture that does not come along (too large, left out, or one Feishu does not hand over: those of a forwarded chat) is
             # marked as missing in the transcript, not labelled for an image that never follows.
             media: list[Part] = []
@@ -691,7 +691,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
                         continue
                     size += len(picture.data)
                     attached.add(f"{i + 1}-{j + 1}")
-                    media += [{"text": f"[图片 #{i + 1}-{j + 1}]"},
+                    media += [{"text": f"[picture #{i + 1}-{j + 1}]"},
                               {"inlineData": {"mimeType": picture.mime, "data": base64.b64encode(picture.data).decode("ascii")}}]
             parts: list[Part] = [{"text": f"{head}:\n\n{render_chunk(part, earlier, bot, attached)}"}, *media]
             return ctx.model.json(JsonRequest(system=distill_system(project, fixed, prompt_rules(book, True), day(now)), parts=parts,
@@ -720,7 +720,7 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
                 break
             calls += 1
             if len(parts_all) > 1:
-                ctx.log(f"整理 {project.id} 动态规范：第 {k + 1}/{len(parts_all)} 段（{len(part)} 条消息）")
+                ctx.log(f"Building the {project.id} dynamic spec: part {k + 1}/{len(parts_all)} ({len(part)} messages)")
             reply = None
             try:
                 reply = ask(part, True)
@@ -748,13 +748,13 @@ def sync_group(group: Group, ctx: RulesContext, persist: Callable[[], None]) -> 
                     group["skipped"] = [*(group.get("skipped") or []),
                                         {"from": stamp(fresh[0]["at"]), "to": stamp(fresh[-1]["at"]), "reason": last.message}][-20:]
                     group.pop("stuck", None)
-                    ctx.log(f"有一段消息整理了 {STUCK_TRIES} 次都失败，已跳过：{last.message}")
+                    ctx.log(f"A stretch of messages failed {STUCK_TRIES} readings in a row and is skipped: {last.message}")
                     done(part)
                     continue
             group.pop("stuck", None)
             refs: dict[int, Source] = {}
             for i, e in enumerate(part):
-                words = _SPACES.sub(" ", e["text"]).strip()[:60] or ("[图片]" if e["pictures"] else "")
+                words = _SPACES.sub(" ", e["text"]).strip()[:60] or ("[picture]" if e["pictures"] else "")
                 refs[i + 1] = {"chat": group["chat"], "message": e["id"], "at": e["at"], "by": e["by"], **({"text": words} if words else {})}
             earlier_ones = {i + 1 for i, e in enumerate(part) if e.get("earlier")}
             changes = apply(book, operations_of(reply.data), refs, now, earlier_ones)
@@ -805,8 +805,8 @@ def _summary(r: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-#: How long a user's watch reads before answering (the rest is read by the next sync), and how long the sync every three days reads: the job is
-#: ended at 30 minutes too, so a call started just before the time is up (one can take 10) may be cut off: what was read before it is kept,
+#: How long a user's watch reads before answering (the rest is read by the next sync), and how long a sync reads: a host's periodic job
+#: is ended at 30 minutes too, so a call started just before the time is up (one can take 10) may be cut off: what was read before it is kept,
 #: and that part is read again at the next sync.
 WATCH_MINUTES = 30
 SYNC_MINUTES = 30
@@ -814,18 +814,18 @@ SYNC_MINUTES = 30
 
 def watch(project: Project, since: int | None, turn: Turn, ctx: RulesContext) -> dict[str, Any]:
     """Starts listening to the turn's group for `project` (or reads it again from an earlier date), and reads its history right away."""
-    need(turn.chat, "不知道这条消息来自哪个群：请在审核群里 @机器人 再说一次")
-    need(turn.chat_type != "p2p", "要在审核群里开始：把机器人拉进审核群，在群里 @机器人 说「监听本群更新审片规范」")
-    need(turn.chat_type == "group", "看不出这里是不是群聊：请在审核群里 @机器人 再说一次")
+    need(turn.chat, "No chat to listen to: pass --chat <chat_id> (the review group's Feishu chat id, oc_…), or ask in the review group")
+    need(turn.chat_type != "p2p", "This is a private chat: add the bot to the project's review group and ask there (「监听本群更新审片规范」)")
     now = ctx.current()
     start = since if since is not None else now - HISTORY_DAYS * DAY
-    need(start < now, "开始日期不能晚于今天")
+    need(start < now, "The start date cannot be later than today")
 
     def locked() -> dict[str, Any]:
         groups = load_groups(ctx.shared)
         group = next((g for g in groups["groups"] if g["chat"] == turn.chat), None)
         need(not group or group["project"] == project.id,
-             f"本群已经在给 {group['project'] if group else None} 整理动态规范；要改成 {project.id}，先说「停止监听本群」，再重新开始")
+             f"This group is already listened to for {group['project'] if group else None}: to switch it to {project.id}, stop listening "
+             f"to it (`rules unwatch`), then start again")
         before = group is not None
         if group is None:
             group = {"chat": turn.chat, "project": project.id, "since": start, "cursor": 0, "cursorIds": []}
@@ -852,12 +852,12 @@ def watch(project: Project, since: int | None, turn: Turn, ctx: RulesContext) ->
 
 
 def unwatch(turn: Turn, shared: str) -> dict[str, Any]:
-    need(turn.chat, "不知道这条消息来自哪个群：请在要停止的群里 @机器人 再说一次")
+    need(turn.chat, "No chat to stop listening to: pass --chat <chat_id> (oc_…), or ask in that group")
 
     def locked() -> dict[str, Any]:
         groups = load_groups(shared)
         at = next((i for i, g in enumerate(groups["groups"]) if g["chat"] == turn.chat), -1)
-        need(at >= 0, "本群没有在监听")
+        need(at >= 0, "This group is not listened to")
         group = groups["groups"].pop(at)
         save_groups(shared, groups)
         return {"status": "stopped", "project": group["project"], "rules": len(load_book(shared, group["project"])["rules"])}
@@ -870,12 +870,12 @@ def _rule_counts(shared: str) -> dict[str, int]:
 
 
 def sync_all(ctx: RulesContext, chat: str | None = None, wait_ms: int = 0) -> dict[str, Any]:
-    """Reads what is new in every group listened to (or in one), the job every three days. `wait_ms` 0: give up at once when another holds the lock."""
+    """Reads what is new in every group listened to (or in one): the periodic job. `wait_ms` 0: give up at once when another holds the lock."""
     def locked() -> dict[str, Any]:
         groups = load_groups(ctx.shared)
         # The group read longest ago goes first: when time runs out, the others are first the next time.
         targets = sorted((g for g in groups["groups"] if not chat or g["chat"] == chat), key=lambda g: g.get("lastSync") or 0)
-        need(not chat or targets, "本群没有在监听：先 @机器人 说「监听本群更新审片规范」")
+        need(not chat or targets, "This group is not listened to: start with `rules watch` (in the group: 「监听本群更新审片规范」)")
         deadline = ctx.deadline if ctx.deadline is not None else now_ms() + SYNC_MINUTES * 60_000
         results: list[dict[str, Any]] = []
         for group in targets:
@@ -893,7 +893,7 @@ def sync_all(ctx: RulesContext, chat: str | None = None, wait_ms: int = 0) -> di
                 group.pop("lastError", None)
             save_groups(ctx.shared, groups)
             results.append({"chat": group["chat"], **({"here": True} if group["chat"] == chat else {}), **_summary(synced)})
-        # Every group failing is a failure (the host logs the job as failed); some failing is in their `error`.
+        # Every group failing is a failure (exit 2, so a host logs the job as failed); some failing is in their `error`.
         failed = bool(results) and all(r.get("error") for r in results)
         return {"status": "failed" if failed else "synced", "groups": results, "rules": _rule_counts(ctx.shared)}
 
@@ -931,8 +931,8 @@ def _free_name(file: str) -> str:
 
 def show(shared: str, project: Project, output: str | None = None) -> dict[str, Any]:
     """The project's dynamic spec as Markdown: a file for the user (`output`, next to which a free name is taken when it exists), or,
-    without one, in the answer itself, for reading it without leaving a file in the workspace (the host sends new files there to the
-    user)."""
+    without one, in the answer itself, for reading it without leaving a file in the working directory (a host may send new files there
+    to the user)."""
     book = load_book(shared, project.id)
     facts = {"project": project.id, "rules": len(book["rules"]), "updated": stamp(book["updated"]) if book.get("updated") else None}
     if not output:
@@ -947,17 +947,17 @@ def show(shared: str, project: Project, output: str | None = None) -> dict[str, 
 def remove_rules(project: Project, ids: list[str], turn: Turn, shared: str, now: Callable[[], int] | None = None) -> dict[str, Any]:
     """Takes rules out of the dynamic spec at a user's request (they stay on record, with who and when)."""
     wanted = list(dict.fromkeys(i.strip().upper() for i in ids if i.strip()))
-    need(wanted, "要删哪几条？给出规范编号（如 D3）")
+    need(wanted, "Which rules? Give their ids (e.g. --id D3)")
 
     def locked() -> dict[str, Any]:
         book = load_book(shared, project.id)
         missing = [i for i in wanted if not any(r["id"] == i for r in book["rules"])]
-        need(not missing, f"{project.id} 的动态规范里没有 {'、'.join(missing)}")
+        need(not missing, f"The {project.id} dynamic spec has no {', '.join(missing)}")
         at = now() if now else now_ms()
         removed = []
         for rule_id in wanted:
             gone = book["rules"].pop(next(i for i, r in enumerate(book["rules"]) if r["id"] == rule_id))
-            book["removed"].append({**gone, "removed": at, "reason": f"用户删除{'（' + turn.user + '）' if turn.user else ''}", "by": "user"})
+            book["removed"].append({**gone, "removed": at, "reason": f"deleted by a user{' (' + turn.user + ')' if turn.user else ''}", "by": "user"})
             removed.append({"id": gone["id"], "rule": gone["rule"]})
         book["updated"] = at
         save_book(shared, book)

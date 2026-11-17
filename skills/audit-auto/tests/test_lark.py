@@ -84,13 +84,13 @@ class LarkTest(unittest.TestCase):
         with Feishu({"/im/v1/messages": denied}) as api:
             with self.assertRaises(LarkError) as caught:
                 list(api.lark.history("oc_1", 0, 1))
-            self.assertEqual(explain_lark(caught.exception), "机器人缺少飞书权限（im:message.group_msg）：请管理员在飞书开放平台给应用开通并发布新版本")
-        self.assertRegex(explain_lark(LarkError(230002, "bot not in chat")), "机器人不在这个群里")
+            self.assertEqual(explain_lark(caught.exception), "The bot lacks a Feishu permission (im:message.group_msg): an administrator must grant it to the app on the Feishu open platform and publish a new version")
+        self.assertRegex(explain_lark(LarkError(230002, "bot not in chat")), "not a member of this chat")
 
         with Feishu({}, token_reply=json_reply({"code": 10003, "msg": "invalid app"})) as api:
-            with self.assertRaisesRegex(Blocked, "飞书应用凭证无效（错误码 10003）"):
+            with self.assertRaisesRegex(Blocked, r"credentials are not valid \(code 10003\)"):
                 list(api.lark.history("oc_1", 0, 1))
-            with self.assertRaisesRegex(Blocked, "飞书应用凭证无效"):
+            with self.assertRaisesRegex(Blocked, "credentials are not valid"):
                 api.lark.verify()
 
     def test_pictures_come_back_as_bytes_a_forward_with_what_it_carries_threads_page_like_the_chat(self) -> None:

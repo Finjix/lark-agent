@@ -1,4 +1,4 @@
-"""A scripted model and an in-memory Feishu group, for the rules and review tests (ports of test/helpers/fakes.ts)."""
+"""A scripted model and an in-memory Feishu group, for the rules and review tests."""
 
 from __future__ import annotations
 

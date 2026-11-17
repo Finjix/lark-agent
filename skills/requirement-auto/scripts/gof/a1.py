@@ -1,4 +1,4 @@
-"""A1 references: column letters, coordinates, rectangles, and moving a formula's references when it is filled down (a1.ts)."""
+"""A1 references: column letters, coordinates, rectangles, and moving a formula's references when it is filled down."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from .util import need
 
 @functools.lru_cache(maxsize=4096)
 def column_letter(index: int) -> str:
-    need(isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= 16384, "列号超出范围")
+    need(isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= 16384, "column number out of range")
     n = index
     out = ""
     while n > 0:
@@ -22,11 +22,11 @@ def column_letter(index: int) -> str:
 
 @functools.lru_cache(maxsize=4096)
 def column_index(letters: str) -> int:
-    need(re.fullmatch(r"[A-Za-z]{1,3}", letters or ""), f"不是列名：{letters}")
+    need(re.fullmatch(r"[A-Za-z]{1,3}", letters or ""), f"not a column name: {letters}")
     n = 0
     for ch in letters.upper():
         n = n * 26 + (ord(ch) - 64)
-    need(1 <= n <= 16384, f"列超出范围：{letters}")
+    need(1 <= n <= 16384, f"column out of range: {letters}")
     return n
 
 
@@ -36,9 +36,9 @@ _COORD = re.compile(r"\$?([A-Za-z]{1,3})\$?([0-9]{1,7})")
 def parse_coord(coord: str) -> tuple[int, int]:
     """(col, row) of a coordinate like B12 or $B$12."""
     m = _COORD.fullmatch(coord) if isinstance(coord, str) else None
-    need(m, f"不是单元格坐标：{coord}")
+    need(m, f"not a cell reference: {coord}")
     row = int(m.group(2))
-    need(1 <= row <= 1048576, f"行超出范围：{coord}")
+    need(1 <= row <= 1048576, f"row out of range: {coord}")
     return column_index(m.group(1)), row
 
 
@@ -54,7 +54,7 @@ class CellRange:
     def __init__(self, spec: "str | dict[str, int] | None" = None, *, min_col: int = 0, max_col: int = 0, min_row: int = 0, max_row: int = 0) -> None:
         if isinstance(spec, str):
             parts = spec.split(":")
-            need(len(parts) <= 2, f"不是单元格范围：{spec}")
+            need(len(parts) <= 2, f"not a cell range: {spec}")
             a = parse_coord(parts[0])
             b = a if len(parts) == 1 else parse_coord(parts[1])
             self.min_col, self.max_col = min(a[0], b[0]), max(a[0], b[0])
@@ -124,7 +124,7 @@ def translate_formula(formula: str, origin: str, dest: str) -> str:
             abs_col, letters, abs_row, digits = m.group(1), m.group(2), m.group(3), m.group(4)
             col = column_index(letters) if abs_col else column_index(letters) + d_col
             row = int(digits) if abs_row else int(digits) + d_row
-            need(1 <= col <= 16384 and 1 <= row <= 1048576, "公式平移后引用越界")
+            need(1 <= col <= 16384 and 1 <= row <= 1048576, "a formula reference moves out of the sheet when shifted")
             out.append(f"{abs_col}{column_letter(col)}{abs_row}{row}")
             i = after
             continue

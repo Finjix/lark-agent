@@ -1,4 +1,4 @@
-"""Reading a review group as the bot (port of lark.ts).
+"""Reading a review group as the bot.
 
 The app's tenant token; the bot is a member of the group. That needs the app permission to read all messages of the groups it is in
 (im:message.group_msg), not only the ones that @-mention it, plus im:message:readonly for pictures and contact:user.base:readonly for
@@ -81,12 +81,12 @@ def explain_lark(error: BaseException) -> str:
         return error.message
     if isinstance(error, LarkError):
         if error.code in NO_SCOPE:
-            scopes = f"（{' / '.join(error.scopes)}）" if error.scopes else ""
-            return f"机器人缺少飞书权限{scopes}：请管理员在飞书开放平台给应用开通并发布新版本"
+            scopes = f" ({' / '.join(error.scopes)})" if error.scopes else ""
+            return f"The bot lacks a Feishu permission{scopes}: an administrator must grant it to the app on the Feishu open platform and publish a new version"
         if error.code in NOT_IN_CHAT:
-            return "机器人不在这个群里（可能已被移出群），读不到群消息"
-        return f"读取飞书消息失败（错误码 {error.code}）：{error.message[:200]}"
-    return f"读取群消息失败：{message_of(error)[:200]}"
+            return "The bot is not a member of this chat (it may have been removed): it cannot read the messages"
+        return f"Reading Feishu messages failed (code {error.code}): {error.message[:200]}"
+    return f"Reading the group's messages failed: {message_of(error)[:200]}"
 
 
 def _quote(value: str) -> str:
@@ -140,7 +140,7 @@ class BotLark:
         body = body if isinstance(body, dict) else {}
         if body.get("code") != 0 or not body.get("tenant_access_token"):
             code = body.get("code") if body.get("code") is not None else reply.status
-            raise Blocked(f"飞书应用凭证无效（错误码 {code}），请联系管理员")
+            raise Blocked(f"The Feishu app's credentials are not valid (code {code}): ask the administrator")
         expire = body.get("expire") or 3600
         self._token = (body["tenant_access_token"], now_ms() + max(60, expire - 300) * 1000)
         return self._token[0]
@@ -221,6 +221,3 @@ class BotLark:
         except Exception:  # noqa: BLE001 - a name that cannot be looked up is just not known
             return None
 
-
-def bot_lark(app: App, sleep: Callable[[float], None] = time.sleep) -> BotLark:
-    return BotLark(app, sleep)
