@@ -493,3 +493,15 @@ def open_session(profile_dir: Optional[str] = None, wait_ms: Optional[int] = Non
     if result["state"] != "ok":
         raise Blocked("CLS is not logged in or the login has expired: run gof cls login --qr <file.png> and give the QR image to the user to scan with the Feishu mobile app")
     return {"authorization": result["authorization"], "account": result["account"], "origin": origin}
+
+
+_capture_untimed = capture_authorization
+
+
+def capture_authorization(*args: Any, **kwargs: Any) -> dict:
+    """Timed as `cls:token_via_browser`: the browser opened, the page loaded and the token checked."""
+    from . import timing
+
+    with timing.phase("cls:token_via_browser"):
+        return _capture_untimed(*args, **kwargs)
+

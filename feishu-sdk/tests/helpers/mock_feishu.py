@@ -71,6 +71,8 @@ class MockFeishu:
         self.reject_token_once = False
         #: How many Open API calls in a row are turned down for too many requests.
         self.rate_limited = 0
+        #: Answer those as the Sheets service does (HTTP 200, code 90217) instead of the platform's 429.
+        self.rate_limited_as_sheets = False
         #: More Open API answers for a test: the `data` for a path, or None to fall through to the routes below.
         self.more: Callable[[str, dict[str, str]], Any] = lambda pathname, query: None
         #: Takes over a request before anything else when it returns True.
@@ -191,6 +193,8 @@ class MockFeishu:
             return req.json(200, {"code": 99991677, "msg": "token expired"})
         if self.rate_limited > 0:
             self.rate_limited -= 1
+            if self.rate_limited_as_sheets:
+                return req.json(200, {"code": 90217, "msg": "too many request"})
             return req.json(429, {"code": 99991400, "msg": "request trigger frequency limit"})
         if pathname == "/open-apis/authen/v1/user_info":
             return req.json(200, {"code": 0, "data": {"open_id": self.open_id, "name": self.name}})

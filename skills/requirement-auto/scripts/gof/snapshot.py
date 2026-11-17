@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any, Optional
 
-from . import js
+from . import js, timing
 from .a1 import CellRange, column_letter
 from .util import Blocked, digest, need
 from .xlsx import CellData, RuleData, SheetData, WorkbookData, read_workbook
@@ -41,8 +42,25 @@ def holds(cell: Optional[CellData], expected: Any) -> bool:
 
 class Snapshot:
     def __init__(self, file: str) -> None:
+        from . import snapshot_cache
+
+        began = time.perf_counter()
         self.path = os.path.abspath(file)
         need(self.path.lower().endswith(".xlsx"), "the checks need the XLSX export (with formulas), not a CSV")
+        directory = snapshot_cache.cache_dir(self.path) if os.path.isfile(self.path) else None
+        key = snapshot_cache.key_of(self.path) if directory else None
+        state = snapshot_cache.load(directory, key) if directory and key else None
+        if state is not None:
+            self.__dict__.update(state)
+            self.path = os.path.abspath(file)
+            timing.add("xlsx:cached", time.perf_counter() - began)
+            return
+        self._parse()
+        if directory and key:
+            snapshot_cache.save(directory, key, {k: v for k, v in self.__dict__.items() if k != "path"})
+        timing.add("xlsx:parse", time.perf_counter() - began)
+
+    def _parse(self) -> None:
         self.book: WorkbookData = read_workbook(self.path)
         self.sheet_names: list[str] = [s.name for s in self.book.sheets]
         self.last: dict[str, int] = {}

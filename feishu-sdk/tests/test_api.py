@@ -127,11 +127,20 @@ class ApiTest(unittest.TestCase):
         self.mock.rate_limited = 2
         self.assertEqual(self.api.revision(TOKEN), 7)
         self.assertEqual(len(self.mock.requests("/open-apis/sheets/v2")), 3)
+        self.mock.rate_limited = 4
+        self.assertEqual(self.api.revision(TOKEN), 7)
         self.mock.rate_limited = 5
         self.refused("api", lambda: self.api.revision(TOKEN))
         self.mock.rate_limited = 1
         self.refused("api", lambda: self.api.cells_set(TOKEN, [write()]))
         self.assertEqual(len(self.mock.requests("/open-apis/sheet_ai")), 1)
+
+    def test_the_sheets_services_own_too_many_requests_is_asked_again_too(self) -> None:
+        self.mock.rate_limited_as_sheets = True
+        self.mock.rate_limited = 3
+        self.assertEqual(self.api.revision(TOKEN), 7)
+        self.mock.rate_limited = 1
+        self.refused("api", lambda: self.api.cells_set(TOKEN, [write()]))
 
     def test_the_workbook_is_exported_to_a_new_xlsx_and_an_existing_file_is_never_replaced(self) -> None:
         out = os.path.join(self.dir, "snap", "one.xlsx")

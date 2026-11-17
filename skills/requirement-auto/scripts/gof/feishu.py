@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import shutil
 import tempfile
 import time
@@ -36,6 +37,14 @@ UNKNOWN_WRITE = "write result unknown: read back first, never retry"
 
 
 # Bridge failures whose message is ours (fixed text, already scrubbed of credentials) and may be shown as is.
+#: Feishu's "too many requests" codes (the platform's and the Sheets service's own).
+RATE_CODES = {99991400, 90217}
+
+
+class RateLimited(Blocked):
+    """A read Feishu turned down for too many requests, after the Feishu module's own retries."""
+
+
 SHOWN_KINDS = {"auth_required", "config", "identity_mismatch", "scope_missing", "invalid_request", "login_denied", "login_expired"}
 
 BridgeRunner = Callable[[str, Any], dict]
@@ -71,7 +80,8 @@ class Bridge:
             code = error.get("code", js.UNDEFINED)
             reason = js.u16slice(js.trim(js.to_str(message if message is not None else "")), 0, 300)
             code_text = f", code {js.to_str(code)}" if code is not js.UNDEFINED else ""
-            raise Blocked(f"Feishu API call failed ({js.to_str(kind)}{code_text}){': ' + reason if reason else ''}{'; read the write back to check it' if write else ''}")
+            refusal = RateLimited if not write and code in RATE_CODES else Blocked
+            raise refusal(f"Feishu API call failed ({js.to_str(kind)}{code_text}){': ' + reason if reason else ''}{'; read the write back to check it' if write else ''}")
         data = reply.get("data")
         Bridge.complete(data)
         return data
@@ -240,8 +250,19 @@ def _lower_colors(colors: dict) -> dict[str, str]:
     return {option: js.to_str(color).lower() for option, color in colors.items()}
 
 
+#: Rule reads in flight at once. Feishu's Sheets service takes about one dataValidation read per document at a time and turns the rest
+#: down (90217): measured on the progress sheet on 2026-11-17, one at a time read its rules in 10 s, two at a time in 13 s, three in 20 s.
+#: Kept as a knob; what is still turned down after the Feishu module's retries is read one at a time below.
+RULE_READS_AT_ONCE = 1
+#: Reading one at a time what came back rate-limited: tries, and the first pause (doubled each time).
+RATE_TRIES = 4
+RATE_PAUSE_S = 2.0
+
+
 def read_rules(bridge: Bridge, token: str, metadata: list[dict]) -> list[dict]:
-    result: list[dict] = []
+    from concurrent.futures import ThreadPoolExecutor
+
+    chunks: list[tuple[str, str]] = []
     for sheet in metadata:
         sid = sheet["sheet_id"]
         grid = sheet.get("grid_properties") or {}
@@ -251,8 +272,44 @@ def read_rules(bridge: Bridge, token: str, metadata: list[dict]) -> list[dict]:
         rows, cols = int(rows), int(cols)
         for r in range(1, rows + 1, 5000):
             for c in range(1, cols + 1, 100):
-                rect = f"{column_letter(c)}{r}:{column_letter(min(c + 99, cols))}{min(r + 4999, rows)}"
-                data = bridge.api_read(f"/open-apis/sheets/v2/spreadsheets/{token}/dataValidation", {"range": f"{sid}!{rect}", "dataValidationType": "list"})
+                chunks.append((sid, f"{column_letter(c)}{r}:{column_letter(min(c + 99, cols))}{min(r + 4999, rows)}"))
+
+    def read_one(chunk: tuple[str, str]) -> Any:
+        sid, rect = chunk
+        return bridge.api_read(f"/open-apis/sheets/v2/spreadsheets/{token}/dataValidation", {"range": f"{sid}!{rect}", "dataValidationType": "list"})
+
+    paused = [False]
+    slow = threading.Lock()
+
+    def one_at_a_time(chunk: tuple[str, str]) -> Any:
+        # Reads already under way on other threads may still collide with this one: a few more tries, each after a longer pause.
+        with slow:
+            for attempt in range(RATE_TRIES):
+                try:
+                    return read_one(chunk)
+                except RateLimited:
+                    if attempt == RATE_TRIES - 1:
+                        raise
+                    time.sleep(RATE_PAUSE_S * 2 ** attempt)
+
+    def fetch(chunk: tuple[str, str]) -> Any:
+        if paused[0]:
+            return one_at_a_time(chunk)
+        try:
+            return read_one(chunk)
+        except RateLimited:
+            # Still too many after the module's retries: from here on one at a time.
+            paused[0] = True
+            return one_at_a_time(chunk)
+
+    # Read side by side and checked in the original order, so the result and the first refusal are those of reading one after another;
+    # once one is refused, the reads not started yet are dropped.
+    result: list[dict] = []
+    with ThreadPoolExecutor(max_workers=RULE_READS_AT_ONCE, thread_name_prefix="rules") as pool:
+        futures = [pool.submit(fetch, chunk) for chunk in chunks]
+        try:
+            for (sid, _rect), future in zip(chunks, futures):
+                data = future.result()
                 # Feishu omits `dataValidations` when the range holds no dropdown (the docs say an empty array), so absent means none. The reply
                 # must still be this sheet's own and carry the workbook's revision, so a reply of some other shape never reads as "no rules".
                 none = (isinstance(data, dict) and "dataValidations" not in data and js.is_num(data.get("revision"))
@@ -278,6 +335,10 @@ def read_rules(bridge: Bridge, token: str, metadata: list[dict]) -> list[dict]:
                     need(len(ranges) > 0, "empty dropdown range")
                     result.append({"sheet_id": sid, "ranges": ranges, "type": "list", "options": values, "multiple": multiple,
                                    "highlight": highlight, "colors": _lower_colors(colors)})
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
     return result
 
 

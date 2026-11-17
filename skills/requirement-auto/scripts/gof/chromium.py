@@ -12,6 +12,7 @@ in it, so those two must stay the same in both: change them together or not at a
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import os
 import queue
@@ -752,3 +753,15 @@ def open_browser(exe: str, profile_dir: str, detach: bool = False, env: Optional
     except BaseException:
         release()
         raise
+
+
+_open_browser_untimed = open_browser
+
+
+@functools.wraps(_open_browser_untimed)
+def open_browser(*args: Any, **kwargs: Any) -> BrowserHandle:
+    """Timed as `browser:open`, which includes waiting for another command on the same profile."""
+    from . import timing
+
+    with timing.phase("browser:open"):
+        return _open_browser_untimed(*args, **kwargs)

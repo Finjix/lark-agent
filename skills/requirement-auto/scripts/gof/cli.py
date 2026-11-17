@@ -410,6 +410,27 @@ def _node_style(error: OSError) -> str:
     return str(error)
 
 
+def _timing(args: list[str]) -> dict:
+    """`timing [--minutes N] [--last N]`: where the time of this user's recent commands went (gof/timing.py)."""
+    import time
+
+    from . import timing
+    from .paths import resolve_data_paths
+
+    values, _ = _parse(args, {"minutes": "string", "last": "string"})
+
+    def count(flag: str) -> Optional[int]:
+        raw = values.get(flag)
+        if raw is None:
+            return None
+        need(re.fullmatch(r"\d+", raw) is not None, f"--{flag} must be a whole number")
+        return int(raw)
+
+    minutes, last = count("minutes"), count("last")
+    since = time.time() - minutes * 60 if minutes is not None else None
+    return timing.report(timing.read(resolve_data_paths().root), since=since, last=last if last is not None else (None if since else 40))
+
+
 def main(argv: list[str], bridge: Any = None, via: Any = None) -> dict:
     """Runs one command; returns {"result": …, "code": 0|2}."""
     from .cls_adapter import ClsError
@@ -438,8 +459,10 @@ def main(argv: list[str], bridge: Any = None, via: Any = None) -> dict:
             result = _creative_command(command, rest, bridge, via)
         elif group == "prune":
             result = _prune(argv[1:])
+        elif group == "timing":
+            result = _timing(argv[1:])
         else:
-            raise Blocked("usage: gof.py <batch|feishu|cls|creative|login|prune> <command> [options]")
+            raise Blocked("usage: gof.py <batch|feishu|cls|creative|login|prune|timing> <command> [options]")
         status = result.get("status") if isinstance(result, dict) else None
         blocked = (status in ("conflict", "not_applied") or (status == "partial" and group != "creative")
                    or (group == "feishu" and status == "blocked") or (group == "login" and status != "ok")

@@ -29,6 +29,7 @@ Both use [references/feishu-commands.md](references/feishu-commands.md) (Feishu 
   - `AGENT_USER_OPEN_ID`, `AGENT_CHAT_ID`, `AGENT_CHAT_TYPE` (`p2p` / `group`), `FEISHU_APP_ID` / `FEISHU_APP_SECRET`: who the user is, where the chat is, the Feishu app; read by the Feishu module (another account is rejected, a QR login is refused in a group chat).
   - `FEISHU_BROWSER`: the browser executable, when Edge or Chrome is not found. `REQUIREMENT_AUTO_USE_ENV_PROXY=1`: use `HTTPS_PROXY` / `NO_PROXY`. `REQUIREMENT_AUTO_RETENTION_DAYS`: days untouched batches and tmp files are kept (default 7).
 - Housekeeping: `gof prune` (run by a host, or by every other command first) removes batches and tmp files untouched for the retention period, never the CLS login, and prints `{"status":"ok","files":<n>,"bytes":<n>}`.
+- Timing: every command adds one line (command name, outcome, time per phase; no arguments, IDs or names) to `<data>/timing.jsonl`. `gof timing [--minutes <n>] [--last <n>]` sums it up: each command's time, the agent's time between commands (`gap_ms`), totals per command and per phase. For maintainers: run it only when asked where the time goes.
 
 ## Logins
 

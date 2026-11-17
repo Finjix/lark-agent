@@ -219,3 +219,14 @@ def with_shot_page(profile_dir: str, origin: str, width: int, height: int, run: 
             browser.close()
         except Exception:
             pass
+
+
+_with_shot_page_untimed = with_shot_page
+
+
+def with_shot_page(*args: Any, **kwargs: Any) -> Any:
+    """Timed as `browser:screenshot`, opening the browser included."""
+    from . import timing
+
+    with timing.phase("browser:screenshot"):
+        return _with_shot_page_untimed(*args, **kwargs)

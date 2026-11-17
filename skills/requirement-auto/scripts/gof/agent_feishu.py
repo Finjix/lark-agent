@@ -16,6 +16,7 @@ import sys
 import threading
 from typing import Any, Mapping, Optional
 
+from . import timing
 from .util import Blocked
 
 #: The bridge protocol this code speaks; the module says its own in `info.bridge`.
@@ -51,7 +52,9 @@ def _child_env(env: Optional[Mapping[str, str]]) -> dict[str, str]:
 class FeishuServe:
     """
     The Feishu module's bridge, one `feishu.py serve` process for the whole of this command: started at the first call, ended by close()
-    (or when this process ends). A call whose process went away before it answered fails, which the caller treats as no answer.
+    (or when this process ends). Calls may come from several threads at once: each request line carries its own id and a reader thread
+    hands every reply to the call waiting for that id (the module answers in the order requests finish). A call whose process went away
+    before it answered fails, which the caller treats as no answer.
     """
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
@@ -59,54 +62,88 @@ class FeishuServe:
         self._child: Optional[subprocess.Popen] = None
         self._next = 1
         self._lock = threading.Lock()
+        #: id -> [event, reply, child]; the reply stays None when the process ended first
+        self._waiting: dict[int, list[Any]] = {}
 
     def _start(self) -> subprocess.Popen:
         if self._child is not None and self._child.poll() is None:
             return self._child
-        self._child = subprocess.Popen([sys.executable, locate_feishu(self._env), "serve"], env=_child_env(self._env), stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE, stderr=None, creationflags=_NO_WINDOW)
-        return self._child
+        timing.add("feishu:bridge_start", 0.0)  # counted here; its start-up time shows in the first call
+        child = subprocess.Popen([sys.executable, locate_feishu(self._env), "serve"], env=_child_env(self._env), stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=None, creationflags=_NO_WINDOW)
+        self._child = child
+        threading.Thread(target=self._read, args=(child,), name="feishu-serve-reader", daemon=True).start()
+        return child
+
+    def _read(self, child: subprocess.Popen) -> None:
+        assert child.stdout is not None
+        while True:
+            try:
+                raw = child.stdout.readline()
+            except (OSError, ValueError):
+                raw = b""
+            if not raw:
+                break
+            try:
+                message = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if isinstance(message, dict) and isinstance(message.get("id"), int) and "reply" in message:
+                with self._lock:
+                    slot = self._waiting.get(message["id"])
+                if slot is not None and slot[2] is child:
+                    slot[1] = message
+                    slot[0].set()
+        # The process has gone: whatever it did not answer gets no answer.
+        with self._lock:
+            if self._child is child:
+                self._child = None
+            for slot in self._waiting.values():
+                if slot[2] is child:
+                    slot[0].set()
+        for pipe in (child.stdin, child.stdout):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except OSError:
+                pass
+        try:
+            child.wait(5)
+        except subprocess.TimeoutExpired:
+            pass
 
     def call(self, command: str, input_: Any) -> dict:
-        with self._lock:
-            child = self._start()
-            ident = self._next
-            self._next += 1
-            line = json.dumps({"id": ident, "command": command, "input": input_}, ensure_ascii=False) + "\n"
-            try:
-                assert child.stdin is not None
-                child.stdin.write(line.encode("utf-8"))
-                child.stdin.flush()
-            except OSError:
-                # A request written to a process that has gone (it crashed, or ended before reading) fails on the pipe: the end of its
-                # output below says it gave no answer, which the caller takes as such.
-                pass
-            assert child.stdout is not None
-            while True:
-                raw = child.stdout.readline()
-                if not raw:
-                    self._child = None
-                    for pipe in (child.stdin, child.stdout):
-                        try:
-                            pipe.close()
-                        except OSError:
-                            pass
-                    try:
-                        child.wait(5)
-                    except subprocess.TimeoutExpired:
-                        pass
-                    raise ConnectionError("the Feishu module's process ended")
+        with timing.phase(f"feishu:{command}"):
+            event = threading.Event()
+            with self._lock:
+                child = self._start()
+                ident = self._next
+                self._next += 1
+                slot: list[Any] = [event, None, child]
+                self._waiting[ident] = slot
+                line = json.dumps({"id": ident, "command": command, "input": input_}, ensure_ascii=False) + "\n"
                 try:
-                    message = json.loads(raw.decode("utf-8", "replace"))
-                except ValueError:
-                    continue
-                if isinstance(message, dict) and message.get("id") == ident and isinstance(message.get("id"), int) and "reply" in message:
-                    return message["reply"]
+                    assert child.stdin is not None
+                    child.stdin.write(line.encode("utf-8"))
+                    child.stdin.flush()
+                except (OSError, ValueError):
+                    # A request written to a process that has gone (it crashed, or ended before reading) fails on the pipe: the reader
+                    # sees the end of its output and this call gets no answer, which the caller takes as such.
+                    pass
+            try:
+                event.wait()
+            finally:
+                with self._lock:
+                    self._waiting.pop(ident, None)
+            if slot[1] is None:
+                raise ConnectionError("the Feishu module's process ended")
+            return slot[1]["reply"]
 
     def close(self) -> None:
         """Lets the Feishu module's process finish what it has and end."""
-        child = self._child
-        self._child = None
+        with self._lock:
+            child = self._child
+            self._child = None
         if child is None:
             return
         try:
@@ -119,8 +156,6 @@ class FeishuServe:
         except subprocess.TimeoutExpired:
             child.kill()
             child.wait()
-        if child.stdout is not None:
-            child.stdout.close()
 
 
 _shared: Optional[FeishuServe] = None

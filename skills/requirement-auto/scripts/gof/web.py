@@ -13,9 +13,12 @@ import os
 import secrets
 import socket
 import urllib.error
+import functools
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Union
+
+from . import timing
 
 
 class FetchError(Exception):
@@ -140,3 +143,12 @@ def fetch(url: str, method: str = "GET", headers: Optional[dict[str, str]] = Non
         raise FetchError(str(reason), timeout=isinstance(reason, (socket.timeout, TimeoutError))) from None
     except (OSError, ValueError) as error:
         raise FetchError(str(error)) from None
+
+
+_fetch_untimed = fetch
+
+
+@functools.wraps(_fetch_untimed)
+def fetch(url: str, method: str = "GET", *args: Any, **kwargs: Any) -> Response:
+    with timing.phase(timing.http_name(method, url)):
+        return _fetch_untimed(url, method, *args, **kwargs)

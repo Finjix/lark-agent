@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import re
 import shutil
 import time
@@ -22,9 +23,10 @@ OCCUPIED = re.compile(r"non[- ]?empty|occupied|cannot overwrite|not allowed to o
 #: Feishu codes: the user token is invalid or expired (a renewal may fix it), the permission is missing, too many requests.
 TOKEN_REJECTED = {99991668, 99991677}
 SCOPE_MISSING = {99991679, 99991672}
-RATE_LIMITED = 99991400
-#: A read turned down for too many requests is asked again this many times, a little later each time.
-READ_TRIES = 3
+#: Too many requests: the platform's code, and the Sheets service's own (90217, "too many request").
+RATE_LIMITED = {99991400, 90217}
+#: A read turned down for too many requests is asked again until this many tries, waiting 1, 2, 4, 8 s (plus a little jitter) between them.
+READ_TRIES = 5
 MAX_WRITES = 100
 #: A document read whole: larger ones are not edited here.
 MAX_DOC_BLOCKS = 50_000
@@ -103,8 +105,8 @@ class FeishuApi:
                 self.auth.refresh(True, token)
                 return self._send(call, False)
             raise BridgeError("auth_required", "The Feishu login is no longer valid: log in again", code)
-        if not call.write and (status == 429 or code == RATE_LIMITED) and attempt < READ_TRIES:
-            self.sleep(1000 * attempt)
+        if not call.write and (status == 429 or code in RATE_LIMITED) and attempt < READ_TRIES:
+            self.sleep(1000 * 2 ** (attempt - 1) + random.randint(0, 250))
             return self._send(call, again, attempt + 1)
         if code is not None and code in SCOPE_MISSING:
             raise BridgeError("scope_missing", f"The Feishu login lacks a permission this call needs: enable it in the Feishu app and log in again ({message})", code)

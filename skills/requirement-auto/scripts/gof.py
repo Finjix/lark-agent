@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from gof import timing  # noqa: E402  (first: its clock starts at import, so the other imports are timed too)
 from gof.cli import main  # noqa: E402
 from gof.agent_feishu import close_feishu  # noqa: E402
 from gof.js import canonical  # noqa: E402
@@ -24,11 +25,22 @@ def run() -> int:
             from gof.paths import resolve_data_paths
             from gof.retention import prune_expired
 
-            prune_expired(resolve_data_paths())
+            with timing.phase("prune"):
+                prune_expired(resolve_data_paths())
         except Exception:
             pass  # a bad data directory is reported by the command itself
     answer = main(argv)
-    close_feishu()
+    with timing.phase("feishu:bridge_close"):
+        close_feishu()
+    if argv[:1] != ["timing"]:
+        try:
+            from gof.paths import resolve_data_paths
+
+            result = answer["result"]
+            timing.write(resolve_data_paths().root, timing.snapshot(timing.command_name(argv), result.get("status") if isinstance(result, dict) else None,
+                                                                    int(answer["code"])))
+        except Exception:
+            pass  # timing never stops a command
     out = canonical(answer["result"]) + "\n"
     sys.stdout.buffer.write(out.encode("utf-8", "surrogatepass"))
     sys.stdout.flush()

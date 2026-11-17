@@ -1,12 +1,16 @@
 """A small non-validating XML reader for the parts of an .xlsx.
 
-No DOCTYPE handling, so no entity expansion beyond the five predefined ones and character references. Kept as a hand-written reader
-rather than xml.etree so that it reads exactly what the TypeScript one read: the same text, the same attributes, the same refusals.
+No DOCTYPE handling, so no entity expansion beyond the five predefined ones and character references. The hand-written reader
+(parse_xml_exact) reads exactly what the TypeScript one read: the same text, the same attributes, the same refusals. parse_xml first tries
+Python's expat, which is many times faster on a large sheet, and only where expat is certain to give the very same tree: a part with a
+DOCTYPE or a carriage return, an attribute value with a tab or line break (which expat would normalize), anything expat refuses, or a tag
+or depth past the limits goes to the hand-written reader, which then reads it or refuses it as before.
 """
 
 from __future__ import annotations
 
 import re
+import xml.parsers.expat
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,7 +58,7 @@ _SPACE = re.compile(r"\s")
 _TAG_END = re.compile(r"""[^"'>]*(?:(?:"[^"]*"|'[^']*')[^"'>]*)*>""")
 
 
-def parse_xml(source: str) -> XmlNode:
+def parse_xml_exact(source: str) -> XmlNode:
     root = XmlNode("#document")
     stack: list[XmlNode] = [root]
     pos = 0
@@ -128,6 +132,72 @@ def parse_xml(source: str) -> XmlNode:
     doc = root.children[0] if root.children else None
     need(doc is not None and len(root.children) == 1, "XML has no root element")
     return doc  # type: ignore[return-value]
+
+
+class _NotSure(Exception):
+    """expat might read this part differently from parse_xml_exact."""
+
+
+#: An attribute value holding a tab, line feed or carriage return, which expat turns into spaces.
+_SPACED_ATTRIBUTE = re.compile(r"""=\s*(?:"[^"<]*[\t\n\r][^"<]*"|'[^'<]*[\t\n\r][^'<]*')""")
+
+
+def _parse_expat(source: str) -> XmlNode:
+    if "\r" in source or "<!DOCTYPE" in source or _SPACED_ATTRIBUTE.search(source):
+        raise _NotSure()
+    root = XmlNode("#document")
+    stack: list[XmlNode] = [root]
+    texts: list[list[str]] = [[]]
+
+    def start(name: str, attributes: dict[str, str]) -> None:
+        # The common case (no prefixes, no namespace declarations) keeps expat's own dict; the rest is renamed key by key.
+        attrs = attributes
+        if attributes:
+            keys = " ".join(attributes)
+            if len(keys) + sum(map(len, attributes.values())) > 90_000:
+                raise _NotSure()
+            if ":" in keys or "xmlns" in keys:
+                attrs = {}
+                for key, value in attributes.items():
+                    if key == "xmlns" or key.startswith("xmlns:"):
+                        continue
+                    attrs[_local(key)] = value
+        if len(stack) > MAX_DEPTH:
+            raise _NotSure()
+        node = XmlNode(name if ":" not in name else _local(name), attrs)
+        stack[-1].children.append(node)
+        stack.append(node)
+        texts.append([])
+
+    def end(name: str) -> None:
+        node = stack.pop()
+        node.text = "".join(texts.pop())
+
+    def data(text: str) -> None:
+        texts[-1].append(text)
+
+    parser = xml.parsers.expat.ParserCreate()
+    parser.buffer_text = True
+    parser.ordered_attributes = False
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = data
+    # A declared entity or an external one is never read: a DOCTYPE already went to the exact reader, this is belt and braces.
+    parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    parser.EntityDeclHandler = lambda *args: (_ for _ in ()).throw(_NotSure())
+    try:
+        parser.Parse(source, True)
+    except xml.parsers.expat.ExpatError:
+        raise _NotSure() from None
+    need(len(stack) == 1 and len(root.children) == 1, "XML has no root element")
+    return root.children[0]
+
+
+def parse_xml(source: str) -> XmlNode:
+    try:
+        return _parse_expat(source)
+    except _NotSure:
+        return parse_xml_exact(source)
 
 
 def child(node: XmlNode | None, name: str) -> XmlNode | None:
