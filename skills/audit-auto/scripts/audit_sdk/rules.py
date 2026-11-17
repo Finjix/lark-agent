@@ -1,7 +1,7 @@
 """The dynamic spec: review rules that come out of a project's review groups (port of rules.ts).
 
 Someone @-mentions the bot in a group with 「监听本群更新审片规范」 (watch); from then on the group's messages are read (the last year
-once, then once a day what is new, see references/scheduled-sync.md) and Gemini turns the rulings in them into changes of the
+once, then every three days what is new, see references/scheduled-sync.md) and Gemini turns the rulings in them into changes of the
 project's dynamic spec: add, update or remove a rule. Each rule keeps the messages it rests on. The reviews of the project apply it
 together with the fixed spec.
 
@@ -10,7 +10,8 @@ wrote (both read each other's files):
   groups.json      the groups listened to: project, from when, how far they have been read
   rules/<P>.json   the dynamic spec of project P, and rules/<P>.md, the same for people
   names.json       members' display names, looked up once
-  lock             one writer at a time (a user's watch and the daily sync)
+  lock             one writer at a time (a user's watch and the sync every three days)
+  jobs.json        the reading every three days, for lark-agent to run, while a group is listened to
 
 A rule is {id, category, rule, fix?, example?, sources: [{chat, message, at, by?, text?}], created, updated}; a removed one adds
 {removed, reason, by: 'chat'|'user'}; a book is {version: 1, project, next, rules, removed, updated}. A group is {chat, project, since,
@@ -145,8 +146,30 @@ def load_groups(shared: str) -> dict[str, Any]:
     return read_json(groups_file(shared), {"version": 1, "groups": []})
 
 
+def jobs_file(shared: str) -> str:
+    return os.path.join(shared, "jobs.json")
+
+
+#: The reading of the groups listened to every three days (references/scheduled-sync.md), for lark-agent to run: it reads jobs.json in this skill's
+#: shared folder and runs the job in the skill's folder.
+SYNC_JOB = {"jobs": [{"name": "audit-rules-sync", "everyMinutes": 4320, "timeoutMinutes": 30, "command": "python",
+                      "args": ["scripts/audit.py", "rules", "sync"]}]}
+
+
 def save_groups(shared: str, groups: dict[str, Any]) -> None:
     write_atomic(groups_file(shared), f"{dump(groups)}\n")
+    keep_sync_job(shared, bool(groups["groups"]))
+
+
+def keep_sync_job(shared: str, listening: bool) -> None:
+    """The reading every three days is wanted while a group is listened to: jobs.json is there exactly then (written as SYNC_JOB is now)."""
+    file = jobs_file(shared)
+    if not listening:
+        _remove(file)
+        return
+    wanted = f"{dump(SYNC_JOB)}\n"
+    if _read_text(file) != wanted:
+        write_atomic(file, wanted)
 
 
 class Busy(Blocked):
@@ -782,10 +805,11 @@ def _summary(r: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-#: How long a user's watch reads before answering (the rest is read by the daily sync), and how long the daily sync reads: the job is
-#: ended at 30 minutes, and a call started just before the time is up can take 10.
-WATCH_MINUTES = 15
-SYNC_MINUTES = 15
+#: How long a user's watch reads before answering (the rest is read by the next sync), and how long the sync every three days reads: the job is
+#: ended at 30 minutes too, so a call started just before the time is up (one can take 10) may be cut off: what was read before it is kept,
+#: and that part is read again at the next sync.
+WATCH_MINUTES = 30
+SYNC_MINUTES = 30
 
 
 def watch(project: Project, since: int | None, turn: Turn, ctx: RulesContext) -> dict[str, Any]:
@@ -846,7 +870,7 @@ def _rule_counts(shared: str) -> dict[str, int]:
 
 
 def sync_all(ctx: RulesContext, chat: str | None = None, wait_ms: int = 0) -> dict[str, Any]:
-    """Reads what is new in every group listened to (or in one), the daily job. `wait_ms` 0: give up at once when another holds the lock."""
+    """Reads what is new in every group listened to (or in one), the job every three days. `wait_ms` 0: give up at once when another holds the lock."""
     def locked() -> dict[str, Any]:
         groups = load_groups(ctx.shared)
         # The group read longest ago goes first: when time runs out, the others are first the next time.

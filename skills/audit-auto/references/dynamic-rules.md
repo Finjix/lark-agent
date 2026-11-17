@@ -2,7 +2,7 @@
 
 `audit` = `python "<skill-dir>/scripts/audit.py"` (see SKILL.md). It prints progress lines while it works and ends with one line of JSON. Exit code 2 means refused (`{"status":"blocked","reason":…}`): tell the user `reason`.
 
-How it works: once the bot listens to a group, it reads the group's chat (the last year at once, then once a day what is new) and turns the review rulings in it into rules of the project's dynamic spec. Rulings are platform rejections and their reasons (screenshots included), reviewers' 「X 不能用」「Y 可以用了」, and corrections; talk about how one material is made or how it performs (镜头、节奏、模型、3 秒数据) sets no rule. Every review of that project applies the dynamic spec together with the fixed spec; where they disagree, the dynamic one wins, being newer. A rule changes where it came from: a new ruling in the group updates or withdraws it at the next daily reading. The daily reading runs in the background and posts nothing in the group: the bot speaks there only when someone @-mentions it.
+How it works: once the bot listens to a group, it reads the group's chat (the last year at once, then every three days what is new) and turns the review rulings in it into rules of the project's dynamic spec. Rulings are platform rejections and their reasons (screenshots included), reviewers' 「X 不能用」「Y 可以用了」, and corrections; talk about how one material is made or how it performs (镜头、节奏、模型、3 秒数据) sets no rule. Every review of that project applies the dynamic spec together with the fixed spec; where they disagree, the dynamic one wins, being newer. A rule changes where it came from: a new ruling in the group updates or withdraws it at the next daily reading. The daily reading runs in the background and posts nothing in the group: the bot speaks there only when someone @-mentions it.
 
 The host tells the command line which chat the message came from (`LARK_AGENT_CHAT_ID` / `LARK_AGENT_CHAT_TYPE`); there is no chat argument.
 
@@ -12,13 +12,13 @@ The host tells the command line which chat the message came from (`LARK_AGENT_CH
 2. A group's rules are for one project. Go on only when the user has said which (GOF / 无尽冬日, or GOT); otherwise ask 「这个群是 GOF 还是 GOT 的审核群？」 and stop.
 3. `audit rules watch --project GOF|GOT [--since YYYY-MM-DD]` reads the last year of the group's chat. Pass `--since` when the user says where to start (「从 9 月 1 号开始」, 「最近一个月」: work out the date). A busy group can take several minutes; say nothing while it runs and wait until it ends.
 4. Reply once, in a few sentences, with no file and no link: do not run `rules show` here (the user asks for the spec when they want to see it).
-   - the bot listens to this group for <P> from now on and reads what is new in it once a day, in the background, without posting in the group;
+   - the bot listens to this group for <P> from now on and reads what is new in it every three days, in the background, without posting in the group;
    - how many messages it read (`read`) and how many rules the dynamic spec has (`rules`, of which `added` are new);
-   - `added` 0 although messages were read: there were no review rulings in them (no rejections, no 「X 不能用」); rulings posted in the group from now on are picked up at the daily reading;
+   - `added` 0 although messages were read: there were no review rulings in them (no rejections, no 「X 不能用」); rulings posted in the group from now on are picked up at the next reading (every three days);
    - reviews of <P> use it from now on.
    - `already: true`: the group was already being listened to; say so, with the same facts.
-   - `pending: true`: the history was too long to finish now (a reading stops after about 15 minutes); the rest is read at the next daily readings.
-   - `error`: the group is registered but reading it failed: tell the user `error` (a missing permission is for an administrator to fix). It is tried again at the next daily reading.
+   - `pending: true`: the history was too long to finish now (a reading stops after about 30 minutes); the rest is read at the next readings (every three days).
+   - `error`: the group is registered but reading it failed: tell the user `error` (a missing permission is for an administrator to fix). It is tried again at the next reading (every three days).
 
 ## Other requests
 

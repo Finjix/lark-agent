@@ -17,7 +17,7 @@ from tests.helpers.tmp import temp_dir
 
 SCRIPT = os.path.join(SKILL, "scripts", "audit.py")
 #: lark-agent's own shared folder, when this skill sits in lark-agent/skills/: read (copied), never written.
-REAL_SHARED = os.path.normpath(os.path.join(SKILL, "..", "..", "shared", "audit-auto"))
+REAL_SHARED = os.path.normpath(os.path.join(SKILL, "..", "..", "data", "shared", "audit-auto"))
 
 
 def run_script(args: list[str], env: dict[str, str], cwd: str | None = None) -> tuple[dict, int, str]:
@@ -91,7 +91,7 @@ class CliTest(unittest.TestCase):
         with open(os.path.join(shared, "lock"), encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["token"], "watch", "the holder's lock is left alone")
 
-    @unittest.skipUnless(os.path.isdir(REAL_SHARED), "no lark-agent shared/audit-auto next to this skill")
+    @unittest.skipUnless(os.path.isdir(REAL_SHARED), "no lark-agent data/shared/audit-auto next to this skill")
     def test_the_data_lark_agent_already_has_reads_and_renders_exactly_as_the_typescript_version_wrote_it(self) -> None:
         copy = os.path.join(temp_dir("real-"), "audit-auto")
         shutil.copytree(REAL_SHARED, copy, ignore=shutil.ignore_patterns("lock", "*.tmp", "*.stale"))

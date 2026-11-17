@@ -6,6 +6,9 @@ import path from 'node:path';
 import {config} from '../dist/config.js';
 config.user=fs.mkdtempSync(path.join(os.tmpdir(),'lark-user-'));
 config.data=fs.mkdtempSync(path.join(os.tmpdir(),'lark-data-'));
+// The console shows the service starting and the tasks users submit; tests submit hundreds, so it stays quiet here (imported only now: the log
+// folder is taken from config.data).
+const {log}=await import('../dist/log.js');log.console=()=>{};
 process.on('exit',()=>{
   for(const directory of [config.user,config.data]){
     // The log file may still be open; what cannot be removed now stays in the temp folder.

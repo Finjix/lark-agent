@@ -2,6 +2,8 @@ import {config} from '../config.js';
 import {TaskService} from './service.js';
 import type {Task} from '../types.js';
 import {log,safeError} from '../log.js';
+/** How often the queue is looked at for tasks that can start. */
+const TICK_MS=3000;
 export function canSchedule(task:Task,active:Task[]){
   // Each user's messages share one conversation and must retain their order.
   if(active.some(t=>t.tenant_key===task.tenant_key&&t.user_id===task.user_id))return false;
@@ -13,7 +15,8 @@ export class Scheduler {
   private timer?:NodeJS.Timeout; private starts=new Set<Promise<void>>();
   private stopped=false;
   constructor(private service:TaskService){}
-  start(){this.timer=setInterval(()=>this.tick(),500);this.tick();}
+  /** Queued tasks are looked at every TICK_MS (and once at the start). */
+  start(){this.timer=setInterval(()=>this.tick(),TICK_MS);this.tick();}
   tick(){
     if(this.stopped||!this.service.agent.ready)return;
     // A database hiccup must cost one round, not the whole process: this runs inside a timer callback.

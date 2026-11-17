@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import {config} from '../dist/config.js';
 import {Store} from '../dist/storage/database.js';
-import {userDirectory,userWorkspace,workspaceIn,sessionInputs} from '../dist/layout.js';
+import {userDirectory,userWorkspace,workspaceIn,sessionInputs} from '../dist/users/layout.js';
 
 const input=(user,tenant='t')=>({tenant_key:tenant,user_id:user,chat_id:'c',source_message_id:`m-${tenant}-${user}`,instruction:'x'});
 /** A session for `user`, named like the Feishu display name once it is known. */

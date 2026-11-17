@@ -44,11 +44,17 @@ const write=(level:number,first:unknown,second?:string)=>{
   let line:string;
   try{line=JSON.stringify({level,time:Date.now(),pid:process.pid,...fields,msg},(key,value)=>secret.has(key)?'[REDACTED]':value);}
   catch{line=JSON.stringify({level,time:Date.now(),pid:process.pid,msg});}
-  file.write(line+'\n');screen.write(line+'\n');
+  file.write(line+'\n');
 };
+const clock=()=>{const now=new Date(),two=(n:number)=>String(n).padStart(2,'0');return `${two(now.getHours())}:${two(now.getMinutes())}:${two(now.getSeconds())}`;};
+/**
+ * Log lines go to the log file only. The console shows what someone watching the window needs: that the service has started (or why it
+ * cannot yet), and each task users submit, one plain line each with the local time. `console` also writes its line to the log file.
+ */
 export const log = {
   debug:(first:unknown,msg?:string)=>write(levels.debug,first,msg), info:(first:unknown,msg?:string)=>write(levels.info,first,msg),
   warn:(first:unknown,msg?:string)=>write(levels.warn,first,msg), error:(first:unknown,msg?:string)=>write(levels.error,first,msg),
+  console:(text:string,level:keyof typeof levels='info')=>{write(levels[level],text);screen.write(`[${clock()}] ${text}\n`);},
 };
 export const safeError = (error:unknown) => {
   let text=error instanceof Error?error.message:'未知错误';text=text.replace(/(Bearer\s+)[^\s]+/gi,'$1[REDACTED]');

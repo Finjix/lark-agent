@@ -8,6 +8,7 @@ import type {Model} from '@earendil-works/pi-ai';
 import {authFile,config} from '../config.js';
 import {log} from '../log.js';
 import {skillEnv,type SkillUser} from './environment.js';
+import {FEISHU_TOOLS,feishuTools} from './feishu.js';
 import {agentInstructions} from './instructions.js';
 import type {AgentInput} from './input.js';
 import type {TurnEvent} from './turn.js';
@@ -33,6 +34,8 @@ export interface RunnerOptions {
   runtime?:()=>Promise<ModelRuntime>;
   provider?:string;model?:string;thinking?:typeof config.AGENT_THINKING;
   skillsDir?:string;sessionsDir?:string;
+  /** The Feishu module's feishu.py the Feishu tools run (tests pass a stand-in). */
+  feishu?:string;
 }
 
 const textOf=(content:unknown)=>Array.isArray(content)?content.flatMap((c:any)=>c?.type==='text'&&typeof c.text==='string'?[c.text]:[]).join('\n'):typeof content==='string'?content:'';
@@ -52,8 +55,9 @@ class Channel<T> {
 
 /**
  * Runs the users' turns with the pi coding agent, in this process: one pi session per turn, made for that turn's workspace and user and
- * disposed of at its end, continuing the user's chat (a JSONL file in <project>/.pi/sessions). Every turn gets the skills in <project>/skills,
- * pi's read, bash, edit and write tools (bash with the user's environment, see skillEnv) and the instructions of agentInstructions; nothing of
+ * disposed of at its end, continuing the user's chat (a JSONL file in <project>/data/pi/sessions). Every turn gets the skills in <project>/skills,
+ * pi's read, bash, edit and write tools (bash with the user's environment, see skillEnv), the agent's own Feishu tools (see feishu.ts) and the
+ * instructions of agentInstructions; nothing of
  * the machine's own pi (~/.pi) is read. The model is the configured one, reached with the ChatGPT login of `start.cmd login`.
  */
 export class AgentRunner {
@@ -66,7 +70,7 @@ export class AgentRunner {
     this.provider=options.provider??config.AGENT_PROVIDER;this.modelId=options.model??config.AGENT_MODEL;this.thinking=options.thinking??config.AGENT_THINKING;
     this.skillsDir=options.skillsDir??config.skills;this.sessionsDir=options.sessionsDir??path.join(config.agentHome,'sessions');
   }
-  /** pi's models and credentials, made once: the ChatGPT login is read from (and refreshed tokens are written to) <project>/.pi/auth.json. */
+  /** pi's models and credentials, made once: the ChatGPT login is read from (and refreshed tokens are written to) <project>/data/pi/auth.json. */
   models():Promise<ModelRuntime>{
     return this.runtime??=(this.options.runtime??(()=>ModelRuntime.create({authPath:authFile(),modelsPath:null,refreshOnCreate:false})))()
       .catch(e=>{this.runtime=undefined;throw e;});
@@ -113,9 +117,10 @@ export class AgentRunner {
     const [model,modelRuntime]=await Promise.all([this.model(),this.models()]);
     const {session}=await createAgentSession({
       cwd:job.cwd,agentDir:config.agentHome,model,thinkingLevel:this.thinking,modelRuntime,resourceLoader:this.resources(this.loadSkills()),
-      tools:['read','bash','edit','write'],
-      // pi's own bash, in place of the default one, so that every command has the user's environment.
-      customTools:[createBashToolDefinition(job.cwd,{spawnHook:context=>({...context,env:skillEnv(job.user,context.env)})}) as unknown as ToolDefinition],
+      tools:['read','bash','edit','write',...FEISHU_TOOLS],
+      // pi's own bash, in place of the default one, so that every command has the user's environment; and Feishu as this user.
+      customTools:[createBashToolDefinition(job.cwd,{spawnHook:context=>({...context,env:skillEnv(job.user,context.env)})}) as unknown as ToolDefinition,
+        ...feishuTools({cwd:job.cwd,user:job.user,entry:this.options.feishu})],
       sessionManager:this.sessionManager(job),
       // Steered messages go in together; nothing warms the cache in the background (every request counts against the subscription).
       settingsManager:SettingsManager.inMemory({compaction:{enabled:true},retry:{enabled:true,maxRetries:3},steeringMode:'all',cacheWarming:'off',enableSkillCommands:false}),

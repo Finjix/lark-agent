@@ -1,28 +1,19 @@
 # Feishu bridge
 
-Everything Feishu goes through `gof feishu …` (`gof` = `python <skill>/scripts/gof.py`), which calls the **feishu skill**'s bridge (`feishu.py serve`, run with the same Python). The feishu skill must be installed next to this one (`skills/feishu/scripts/feishu.py`), or `FEISHU_SKILL` names the absolute path of its `feishu.py`; without it every Feishu command says so. The Feishu login is that skill's and is shared with the user's other skills.
+Everything Feishu goes through `gof feishu …` (`gof` = `python <skill>/scripts/gof.py`), which calls the bridge of lark-agent's own Feishu module (`feishu.py serve`, run with the same Python). The host names that `feishu.py` in `LARK_AGENT_FEISHU`; without it every Feishu command says so. The Feishu login is the agent's (its Feishu tools) and is shared with the user's other skills; this skill never logs in.
 
 ## Runtime
 
-- Python 3.11+ (standard library only). The host sets `LARK_AGENT_USER_DIR` (absolute user dir), optionally `LARK_AGENT_USER_OPEN_ID`, and `FEISHU_APP_ID` / `FEISHU_APP_SECRET`; the feishu skill runs with the same environment. requirement-auto's data is under `<user dir>/requirement-auto/{batches,cls,tmp}`; the Feishu login and the hidden browser under `<user dir>/feishu/`.
-- Standalone: requirement-auto's data goes to `~/.requirement-auto/default`; the Feishu login wherever the feishu skill keeps it when run on its own.
+- Python 3.11+ (standard library only). The host sets `LARK_AGENT_USER_DIR` (absolute user dir), optionally `LARK_AGENT_USER_OPEN_ID`, `LARK_AGENT_FEISHU` and `FEISHU_APP_ID` / `FEISHU_APP_SECRET`; the Feishu module runs with the same environment. requirement-auto's data is under `<user dir>/requirement-auto/{batches,cls,tmp}`; the Feishu login and the hidden browser under `<user dir>/feishu/`.
+- Outside lark-agent (no `LARK_AGENT_FEISHU`) the Feishu commands refuse; the offline `gof batch …` commands keep their data in `~/.requirement-auto/default`.
 
 ```text
 gof feishu doctor      # bridge, current user's login and required scopes
 ```
 
-## Login (device authorization)
+## Login
 
-```text
-gof feishu login start [--probe-scope]   # link and code; the same request while an unexpired one exists
-gof feishu login poll [--wait 40]        # after the user confirms: authorized / pending / denied / expired
-gof feishu login status                  # local record only, no network
-gof feishu login logout                  # log out or switch accounts
-```
-
-These and `gof feishu authorize [--qr]` are the feishu skill's `login …` and `authorize …`, run as they are (same output). No output contains a token. The QR path is in [gof-requirement.md](gof-requirement.md) section 0.
-
-If the host declares the user's Open ID, another authorized account is rejected.
+The Feishu login is not a `gof` command: it is the agent's, with its Feishu tools (`feishu_login` saves the QR in the working directory; `feishu_login_finish` after the user confirms; `feishu_login_check`; `feishu_logout`). `gof login check` says when it is needed (section 0 of [gof-requirement.md](gof-requirement.md)). No output contains a token. If the host declares the user's Open ID, another authorized account is rejected.
 
 ## Commands
 
@@ -91,4 +82,4 @@ The target is the test Wiki node `GH7cwIxzZi3gVdk2s3tc1dDbnQc`; the bridge resol
 
 ## Overwrite probe (maintainers)
 
-The receipt of the 2026-10-20 probe ships as `assets/overwrite-receipt.json`, bound to `feishu-sdk-bridge/1`. After a bridge version change: `gof feishu login start --probe-scope`, `login poll`, `gof feishu probe --receipt <new>.json` (creates a new `GOFCN_API_SAFETY_*` workbook and tries occupied writes), then replace the shipped file and record the server's "non-empty write refused" code in `OCCUPIED` in the feishu skill's `scripts/feishu_sdk/api.py`.
+The receipt of the 2026-10-20 probe ships as `assets/overwrite-receipt.json`, bound to `feishu-sdk-bridge/1`. After a bridge version change: log in once more with `feishu_login` and `extra_scopes: ["sheets:spreadsheet:create"]` (then `feishu_login_finish`), `gof feishu probe --receipt <new>.json` (creates a new `GOFCN_API_SAFETY_*` workbook and tries occupied writes), then replace the shipped file and record the server's "non-empty write refused" code in `OCCUPIED` in lark-agent's `feishu-sdk/feishu_sdk/api.py`.

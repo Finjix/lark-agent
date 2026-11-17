@@ -13,7 +13,7 @@ function open(url:string){
 /**
  * `start.cmd login [device]`: signs the bot in with a ChatGPT subscription (Plus/Pro) through pi's OAuth flow, in this console. The default
  * opens the browser of this machine; `device` shows a code to enter on any device instead (for a machine nobody sits at). The login is kept
- * in <project>/.pi/auth.json and its token is refreshed by pi as it is used; every Feishu user shares it.
+ * in <project>/data/pi/auth.json and its token is refreshed by pi as it is used; every Feishu user shares it.
  */
 export async function login(runner:AgentRunner,method:'browser'|'device'='browser'){
   const console_=readline.createInterface({input:process.stdin,output:process.stdout});

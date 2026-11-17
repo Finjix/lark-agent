@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {authorized,accessConfigured} from '../dist/access.js';
+import {authorized,accessConfigured} from '../dist/users/access.js';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
 

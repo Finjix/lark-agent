@@ -35,4 +35,4 @@ audit doctor        # self-check: specs, AI gateway, Feishu app, shared folder, 
 audit info          # configuration (never the key)
 ```
 
-The daily background reading is run by lark-agent, not by you: see [references/scheduled-sync.md](references/scheduled-sync.md).
+The background reading every three days is run by lark-agent, not by you: see [references/scheduled-sync.md](references/scheduled-sync.md).

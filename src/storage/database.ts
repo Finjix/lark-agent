@@ -1,7 +1,7 @@
 import {Database} from './sqlite.js';
 import {randomUUID} from 'node:crypto';
 import {terminal,BOT_DOWN,TERMINAL_SQL,WAITING_SQL, type Task, type TaskStatus, type IncomingAttachment,type TaskInput,type UserSession} from '../types.js';
-import {displayName} from '../sessions/naming.js';
+import {displayName} from '../users/naming.js';
 
 /**
  * The version of the schema this program creates. 2 added the task states STEERING and STEERED to the tables of 1; 3 dropped the table of the
@@ -80,6 +80,11 @@ export class Store {
     const normalized=displayName(name);if(!normalized)return session;
     this.db.prepare('UPDATE user_sessions SET display_name=? WHERE id=?').run(normalized,id);
     return this.session(id)!;
+  }
+  /** The name a user's current chat has (from Feishu, when it was last looked up), without opening a chat for them. */
+  knownName(tenant:string,user:string):string|undefined{
+    const row=this.db.prepare('SELECT display_name FROM user_sessions WHERE tenant_key=? AND user_id=? AND retired_at IS NULL').get(tenant,user) as {display_name:string|null}|undefined;
+    return row?.display_name??undefined;
   }
   sessionFor(task:Task):UserSession{
     return this.db.transaction(()=>{

@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gof.cli import main  # noqa: E402
-from gof.feishu_skill import close_feishu  # noqa: E402
+from gof.agent_feishu import close_feishu  # noqa: E402
 from gof.js import canonical  # noqa: E402
 
 

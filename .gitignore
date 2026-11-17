@@ -5,7 +5,4 @@ data/
 .env.*
 !.env.example
 *.log
-user/
-shared/
-.pi/
 __pycache__/

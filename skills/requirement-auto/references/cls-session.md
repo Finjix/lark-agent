@@ -1,8 +1,8 @@
 # CLS login and session
 
-CLS sits behind company SSO (Feishu web QR login), so the user logs in by scanning a QR code with their phone. `gof cls login --qr` opens CLS in the installed Chrome or Edge, headless (override with env `FEISHU_BROWSER` = absolute path, the variable the feishu skill reads too, so both start the same browser), screenshots the Feishu QR page, then takes the `Authorization` header of the page's own CLS API calls and confirms it with `/api/userinfo`. Later work is plain HTTP.
+CLS sits behind company SSO (Feishu web QR login), so the user logs in by scanning a QR code with their phone. `gof cls login --qr` opens CLS in the installed Chrome or Edge, headless (override with env `FEISHU_BROWSER` = absolute path, the variable lark-agent's Feishu module reads too, so both start the same browser), screenshots the Feishu QR page, then takes the `Authorization` header of the page's own CLS API calls and confirms it with `/api/userinfo`. Later work is plain HTTP.
 
-The browser is the feishu skill's (it holds the user's Feishu web session): Feishu is logged in first in it (`gof feishu authorize --qr`, [gof-requirement.md](gof-requirement.md) section 0), and that scan normally covers CLS too.
+The browser is lark-agent's Feishu module's (it holds the user's Feishu web session): Feishu is logged in first in it (the `feishu_login` tool, [gof-requirement.md](gof-requirement.md) section 0), and that scan normally covers CLS too.
 
 ```text
 gof cls login --qr cls-login.png    # QR image into the working directory
@@ -18,7 +18,7 @@ gof cls session                     # check; after the scan, take the login and 
 
 ## Keeping the login
 
-- It lives in the browser profile (`<user dir>/feishu/browser-profile`, the feishu skill's), so later tasks normally pass without a scan. This relies on `--restore-last-session` (SSO cookies are session-only); keep that flag.
+- It lives in the browser profile (`<user dir>/feishu/browser-profile`, lark-agent's Feishu module's), so later tasks normally pass without a scan. This relies on `--restore-last-session` (SSO cookies are session-only); keep that flag.
 - One browser per profile: run one user's `cls` commands one after another. Different users' browsers do not interfere.
 - With `LARK_AGENT_USER_OPEN_ID` but no `LARK_AGENT_USER_DIR`, commands refuse rather than share a dir.
 

@@ -15,7 +15,7 @@ from gof import js
 from gof.cli import main
 from gof.doc import edit_doc, outline
 from gof.feishu import Bridge
-from gof.feishu_skill import BRIDGE_VERSION
+from gof.agent_feishu import BRIDGE_VERSION
 from gof.shots_online import doc_picture
 from gof.util import Blocked, NODE
 

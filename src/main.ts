@@ -8,22 +8,29 @@ import {log,safeError} from './log.js';
 import {Store} from './storage/database.js';
 import {AgentRunner} from './agent/runner.js';
 import {login,logout} from './agent/login.js';
-import {ensurePython,pythonStatus} from './python.js';
-import {Jobs,declaredJobs} from './jobs.js';
+import {ensurePython,pythonStatus} from './service/python.js';
+import {Jobs,declaredJobs} from './service/jobs.js';
 import {FeishuClient} from './feishu/client.js';
 import {TaskService} from './tasks/service.js';
 import {Scheduler} from './tasks/scheduler.js';
 import {Delivery} from './feishu/delivery.js';
-import {housekeeping} from './maintenance.js';
-import {accessConfigured} from './access.js';
+import {housekeeping} from './service/maintenance.js';
+import {accessConfigured} from './users/access.js';
 import {clockOffset} from './feishu/clock.js';
-import {supervise} from './supervisor.js';
 
-/** Not connected for this long, the long connection is built afresh, whatever the SDK's own retries are doing. */
-const FEISHU_STALE_MS=3*60000;
-/** How often the service writes that it is alive, so a silent log can be told apart from a silent service. */
-const HEARTBEAT_MS=30*60000;
-const COMMANDS='start、serve、setup、login [device]、logout、doctor、stop、backup、retry-delivery';
+/**
+ * The routine check (the Feishu long connection, the skills' jobs, the clock, the ChatGPT login, the line in the log that the service is
+ * alive): at the start, then hourly.
+ */
+const ROUTINE_MS=60*60000;
+/**
+ * A long connection the routine check finds not connected is looked at again this often until it is; this many failed looks in a row and it
+ * is built afresh, whatever the SDK's own retries are doing.
+ */
+const FEISHU_RETRY_MS=30000,FEISHU_FAILURES=3;
+/** Housekeeping (see maintenance.ts): at the start, then every 72 hours. */
+const HOUSEKEEPING_MS=72*3600000;
+const COMMANDS='start、setup、login [device]、logout、doctor、stop、backup、retry-delivery';
 
 async function doctor(agent:AgentRunner){
   const store=new Store(config.database);
@@ -35,12 +42,14 @@ async function doctor(agent:AgentRunner){
     sqlite:{ok:true},configuration:{credentials:!!(config.FEISHU_APP_ID&&config.FEISHU_APP_SECRET),allowedUsers:config.users.length,administrators:config.admins.length,allowedTenants:config.tenants.length},
     agent:{ready:agent.ready,pi:agent.version,model:`${agent.provider}/${agent.modelId}`,thinking:agent.thinking,home:config.agentHome,...(agent.error?{error:agent.error}:{})},
     shell,python:await pythonStatus(),
+    // The agent's own Feishu tools (the user's login, documents) and the bridge the skills reach Feishu through.
+    feishuModule:{ok:await fs.stat(config.feishu).then(s=>s.isFile(),()=>false),path:path.relative(config.root,config.feishu)},
     skills:skills.map(s=>({name:s.name,path:path.relative(config.root,s.baseDir)})),
     jobs:[...jobs.map(j=>({name:j.name,everyMinutes:j.everyMinutes})),...invalid.map(reason=>({invalid:reason}))],
   };
   if(checks.configuration.credentials){try{const info=await new FeishuClient().raw('GET','/open-apis/bot/v3/info');checks.feishu={ok:true,botName:info.bot?.app_name??info.bot?.name};}catch(e){checks.feishu={ok:false,error:safeError(e)};}}
   store.close();console.log(JSON.stringify(checks,null,2));
-  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
+  if(!checks.runtime.ok||!agent.ready||!shell.ok||!checks.feishuModule.ok||!checks.python.ok||!checks.python.installed||!checks.configuration.credentials||!accessConfigured()||invalid.length)process.exitCode=1;
 }
 
 async function main(){
@@ -50,10 +59,9 @@ async function main(){
     const response=await fetch(`http://127.0.0.1:${config.HEALTH_PORT}/shutdown`,{method:'POST',headers:{authorization:`Bearer ${token}`}});
     if(!response.ok)throw Error(`停止请求失败：${response.status}`);console.log('已请求安全停止');return;
   }
-  // The skills' Python packages are made ready before the service starts, outside the supervisor's patience for a service that does not answer.
+  // The skills' Python packages are made ready before the service starts (`start`), or on their own (`setup`).
   if(action==='setup'){await ensurePython();console.log(`技能的 Python 依赖已就绪：${config.python}`);return;}
-  // `start` runs the service under a supervisor that restarts it when it stops answering; `serve` is the service itself.
-  if(action==='start'){await ensurePython();process.exitCode=await supervise();return;}
+  if(action==='start')await ensurePython();
   const agent=new AgentRunner();
   if(action==='login'){await login(agent,process.argv[3]==='device'?'device':'browser');agent.close();return;}
   if(action==='logout'){await logout(agent);agent.close();return;}
@@ -68,17 +76,19 @@ async function main(){
   if(action==='backup'){
     const file=path.join(config.data,`backup-${Date.now()}.sqlite`);await store.db.backupTo(file);store.close();console.log(file);return;
   }
-  if(action!=='serve'){store.close();throw Error(`支持命令：${COMMANDS}`);}
+  if(action!=='start'){store.close();throw Error(`支持命令：${COMMANDS}`);}
   // Task state lives in SQLite and is reconciled on every pass, so one stray error should be logged rather than take the service down.
   process.on('unhandledRejection',e=>log.error({error:safeError(e)},'未处理的异步错误'));
   process.on('uncaughtException',e=>log.error({error:safeError(e)},'未捕获的异常'));
-  let stopping=false;let poll:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
+  let stopping=false;let poll:NodeJS.Timeout|undefined,feishuRetry:NodeJS.Timeout|undefined,maintain:NodeJS.Timeout|undefined;
   // Housekeeping is told to stop and awaited on shutdown, so it never meets a closed database.
   const halt=new AbortController();let sweeping:Promise<void>=Promise.resolve();
   const housekeep=()=>{sweeping=housekeeping(store,halt.signal);};
-  let feishuStarted=false,lastFeishuAttempt=0,lastAgentProbe=0,lastAgentError='',lastClockSync=0;
-  // For the supervisor: when the last round of checks finished. A round that never finishes means something in it hangs.
-  let lastPoll=0,feishuState='idle',feishuDownSince=0,lastHeartbeat=Date.now();
+  let feishuStarted=false,lastAgentError='';
+  // For /health: when the last round of checks finished. A round that never finishes means something in it hangs.
+  let lastPoll=0,feishuState='idle',feishuDownSince=0,started=false;
+  // Until the service has started, what it waits for is shown on the console (each reason once), so a quiet window is not taken for a started one.
+  const shown=new Set<string>(),waiting=(text:string)=>{if(!started&&!shown.has(text)){shown.add(text);log.console(`等待：${text}`,'warn');}};
   const token=randomBytes(32).toString('hex'),feishu=new FeishuClient();
   const service=new TaskService(store,agent,feishu),scheduler=new Scheduler(service),delivery=new Delivery(store,feishu),jobs=new Jobs();
   const server=http.createServer((request,response)=>{
@@ -97,7 +107,7 @@ async function main(){
       feishu:{connected:feishu.connected,state:feishu.state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError},...store.stats()}));
   });
   const stop=async()=>{
-    if(stopping)return;stopping=true;clearInterval(poll);clearInterval(maintain);halt.abort();server.close();
+    if(stopping)return;stopping=true;clearInterval(poll);clearTimeout(feishuRetry);clearInterval(maintain);halt.abort();server.close();
     const forced=setTimeout(()=>process.exit(0),15000);forced.unref();
     // The agent runs in this service and ends with it: the tasks are finished as failed, and one last delivery pass finishes their cards.
     service.stop();await jobs.stop();await scheduler.stop();await delivery.flush().catch(()=>{});await delivery.stop();await sweeping;
@@ -107,7 +117,11 @@ async function main(){
     setTimeout(()=>process.exit(),5000).unref();
   };
   try{await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.HEALTH_PORT,'127.0.0.1',resolve);});}
-  catch(e){store.close();throw e;}
+  catch(e){
+    store.close();
+    if((e as NodeJS.ErrnoException).code==='EADDRINUSE')throw Error(`端口 ${config.HEALTH_PORT} 已被占用，可能已有一份服务在运行`);
+    throw e;
+  }
   await fs.writeFile(path.join(config.data,'control.token'),token,{mode:0o600});
   restrictSecret(path.join(config.data,'control.token'));
   process.once('SIGINT',()=>{void stop();});process.once('SIGTERM',()=>{void stop();});
@@ -116,51 +130,75 @@ async function main(){
   // The first round runs before anything can start: no task is running yet, so nothing is skipped.
   housekeep();await sweeping;
   const skills=agent.loadSkills();log.info({skills:skills.map(s=>s.name)},skills.length?'技能已就绪':'skills/ 里没有技能');
-  const declared=await declaredJobs();
-  for(const reason of declared.invalid)log.warn({reason},'定时任务无效，已跳过');
-  jobs.start(declared.jobs);
+  // Skills write their jobs while they are used (data/shared/<skill>/jobs.json), so the files are read again at every routine check.
+  let invalidJobs='';
+  const readJobs=async()=>{
+    const declared=await declaredJobs();
+    const reasons=declared.invalid.join('\n');if(reasons!==invalidJobs){invalidJobs=reasons;for(const reason of declared.invalid)log.warn({reason},'定时任务无效，已跳过');}
+    jobs.update(declared.jobs);
+  };
+  await readJobs();
   scheduler.start();delivery.start();
-  let polling=false;
-  const reconnect=async()=>{
-    if(polling||stopping)return;polling=true;
+  const announceStarted=()=>{
+    if(started||!agent.ready||!feishu.connected)return;
+    started=true;const names=agent.skills.map(s=>s.name);
+    log.console(`启动成功，技能：${names.length?names.join('、'):'无'}${accessConfigured()?'':'（未配置开放的企业或用户，任务不会执行）'}`);
+  };
+  /** The routine check, every ROUTINE_MS: the long connection, the skills' jobs, the clock, the ChatGPT login, and a line in the log that the service is alive. */
+  let checking=false;
+  const routine=async()=>{
+    if(checking||stopping)return;checking=true;
     try{
-      if(Date.now()-lastClockSync>600000){
-        lastClockSync=Date.now();
-        void clockOffset().then(offset=>{service.clockOffsetMs=offset;if(Math.abs(offset)>5000)log.warn({offsetMs:Math.round(offset)},'本机时钟与飞书相差较大，已按飞书时间判断消息是否过期，请校准系统时间');}).catch(e=>log.debug({error:safeError(e)},'读取飞书时间失败'));
-      }
-      // Not ready: look again every few seconds, so a login made meanwhile is noticed. Ready: look now and then, so a lost one is too.
-      if(Date.now()-lastAgentProbe>(agent.ready?60000:10000)){
-        lastAgentProbe=Date.now();const was=agent.ready;await agent.probe();
-        if(agent.ready&&!was){log.info({pi:agent.version,model:`${agent.provider}/${agent.modelId}`},'智能体已就绪');lastAgentError='';}
-        else if(!agent.ready&&agent.error!==lastAgentError){lastAgentError=agent.error;log.warn({error:agent.error},'等待智能体就绪');}
-      }
+      await connection().catch(e=>log.error({error:safeError(e)},'飞书长连接检查失败'));
+      await readJobs().catch(e=>log.warn({error:safeError(e)},'读取定时任务失败'));
+      void clockOffset().then(offset=>{service.clockOffsetMs=offset;if(Math.abs(offset)>5000)log.warn({offsetMs:Math.round(offset)},'本机时钟与飞书相差较大，已按飞书时间判断消息是否过期，请校准系统时间');}).catch(e=>log.debug({error:safeError(e)},'读取飞书时间失败'));
+      const was=agent.ready;await agent.probe();
+      if(agent.ready&&!was){log.info({pi:agent.version,model:`${agent.provider}/${agent.modelId}`},'智能体已就绪');lastAgentError='';}
+      else if(!agent.ready&&agent.error!==lastAgentError){lastAgentError=agent.error;log.warn({error:agent.error},'等待智能体就绪');}
+      if(!agent.ready&&agent.error)waiting(agent.error);
+      log.info({feishu:feishu.state,agent:agent.ready,running:service.running,rssMB:Math.round(process.memoryUsage().rss/1048576)},'服务运行中');
+      announceStarted();
+    }finally{checking=false;lastPoll=Date.now();}
+  };
+  /**
+   * The long connection, at each routine check: not started yet (or rebuilt), it is started; started but not connected, that is a failed
+   * look, and after FEISHU_FAILURES of them in a row (or at once, when the SDK has given up: rejected credentials, say) the client is closed
+   * and built afresh. While it is not connected it is looked at again every FEISHU_RETRY_MS, until it is.
+   */
+  let connecting=false,feishuFailures=0;
+  const connection=async()=>{
+    if(connecting||stopping)return;connecting=true;
+    try{
       const state=feishuStarted?feishu.state:'idle';
       if(feishuStarted&&state!==feishuState){
         if(state==='connected')log.info({downMs:feishuDownSince?Date.now()-feishuDownSince:undefined},'飞书长连接已连通');
         else log.warn({state,reconnectAttempts:feishu.reconnectAttempts,error:feishu.lastError||undefined},'飞书长连接已断开');
       }
       feishuState=state;
-      if(state==='connected')feishuDownSince=0;else if(feishuStarted&&!feishuDownSince)feishuDownSince=Date.now();
-      // The SDK gives up after a non-retryable error (for example rejected credentials); build a fresh client instead of staying deaf.
-      // Its own retries can also stall or wait minutes apart: a connection down for long is rebuilt as well.
-      const stale=feishuStarted&&state!=='connected'&&Date.now()-feishuDownSince>FEISHU_STALE_MS;
-      if(feishuStarted&&(state==='failed'||stale)){
-        log.warn({state,downMs:Date.now()-feishuDownSince,error:feishu.lastError},'飞书长连接已失效，正在重建');
-        feishu.close();feishuStarted=false;lastFeishuAttempt=0;feishuDownSince=Date.now();feishuState='idle';
+      if(state==='connected'){feishuDownSince=0;feishuFailures=0;}
+      else if(feishuStarted){
+        if(!feishuDownSince)feishuDownSince=Date.now();
+        feishuFailures++;
+        if(state==='failed'||feishuFailures>=FEISHU_FAILURES){
+          log.warn({state,failures:feishuFailures,downMs:Date.now()-feishuDownSince,error:feishu.lastError},'飞书长连接已失效，正在重建');
+          feishu.close();feishuStarted=false;feishuState='idle';feishuFailures=0;
+        }
       }
-      if(Date.now()-lastHeartbeat>=HEARTBEAT_MS){
-        lastHeartbeat=Date.now();
-        log.info({feishu:state,agent:agent.ready,running:service.running,rssMB:Math.round(process.memoryUsage().rss/1048576)},'服务运行中');
-      }
-      if(!feishuStarted&&Date.now()-lastFeishuAttempt>15000){lastFeishuAttempt=Date.now();
+      if(!feishuStarted){
         try{await feishu.start(message=>service.receive(message));feishuStarted=true;feishuDownSince=feishu.connected?0:Date.now();log.info('飞书长连接已启动');}
-        catch(e){feishu.close();feishu.lastError=safeError(e);log.warn({error:feishu.lastError},'等待飞书配置或连接');}}
-    }finally{polling=false;lastPoll=Date.now();}
+        catch(e){feishu.close();feishu.lastError=safeError(e);log.warn({error:feishu.lastError},'等待飞书配置或连接');waiting(`飞书长连接：${feishu.lastError}`);}
+      }
+      announceStarted();
+    }finally{
+      connecting=false;
+      if(feishu.connected||stopping){clearTimeout(feishuRetry);feishuRetry=undefined;}
+      else if(!feishuRetry)feishuRetry=setTimeout(()=>{feishuRetry=undefined;void connection().catch(e=>log.error({error:safeError(e)},'飞书长连接检查失败'));},FEISHU_RETRY_MS);
+    }
   };
-  poll=setInterval(()=>{void reconnect().catch(e=>log.error({error:safeError(e)},'恢复检查失败'));},5000);
-  maintain=setInterval(housekeep,86400000);
+  poll=setInterval(()=>{void routine().catch(e=>log.error({error:safeError(e)},'例行检查失败'));},ROUTINE_MS);
+  maintain=setInterval(housekeep,HOUSEKEEPING_MS);
   log.info({root:config.root,health:`http://127.0.0.1:${config.HEALTH_PORT}/health`},'飞书机器人已启动');
   if(!accessConfigured())log.warn('未配置开放企业或用户；任务执行关闭；未获授权的人发消息时，机器人会回复他的 Open ID 和租户');
-  await reconnect();
+  await routine();
 }
-main().catch(e=>{log.error({error:safeError(e)},'启动失败');process.exitCode=1;});
+main().catch(e=>{log.console(`启动失败：${safeError(e)}`,'error');process.exitCode=1;});

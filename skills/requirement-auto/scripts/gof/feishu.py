@@ -1,6 +1,6 @@
 """The allowlisted Feishu transport (feishu.ts).
 
-It calls the feishu skill's bridge (see feishu_skill.py) and orchestrates validate → write → read back → verify. No generic write, no v2
+It calls the bridge of lark-agent's Feishu module (see agent_feishu.py) and orchestrates validate → write → read back → verify. No generic write, no v2
 values write, no implicit retry, no target override.
 """
 
@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 
 from . import js
 from .a1 import CellRange, column_letter
-from .feishu_skill import BRIDGE_VERSION, feishu_serve, run_feishu
+from .agent_feishu import BRIDGE_VERSION, feishu_serve
 from .seal import check_seal, seal
 from .snapshot import FIELD_HEADERS, Snapshot, header_matches
 from .util import Blocked, NODE, TARGET, WriteSent, canonical, digest, need, read_json, write_json_new
@@ -44,7 +44,7 @@ class Bridge:
         try:
             reply = self._run(name, {} if payload is None else payload)
         except Blocked:
-            # A refusal before anything went out (the feishu skill is not installed, FEISHU_SKILL is wrong) says what is to be done about it.
+            # A refusal before anything went out (LARK_AGENT_FEISHU is not set or wrong) says what is to be done about it.
             raise
         except Exception:
             raise Blocked("接口写入结果未知，必须回读，不可重试" if write else "飞书桥调用失败") from None
@@ -93,7 +93,7 @@ class Bridge:
         try:
             reply = self._run("auth-verify", {})
         except Blocked as error:
-            # A feishu skill that cannot be found is not a moment's outage: checking again later does not help.
+            # A Feishu module that cannot be found is not a moment's outage: checking again later does not help.
             return {"status": "blocked", "reason": error.message}
         except Exception:
             return {"status": "unreachable", "reason": "飞书桥调用失败"}
@@ -126,7 +126,7 @@ class Bridge:
         need(isinstance(info, dict) and info.get("bridge") == BRIDGE_VERSION, "飞书桥版本与技能不匹配")
         need(info.get("app_configured") is True, "未配置飞书应用（FEISHU_APP_ID / FEISHU_APP_SECRET），由宿主或管理员配置")
         auth = self.call("auth-status")
-        need(isinstance(auth, dict) and auth.get("logged_in") is True, "飞书尚未授权：用 gof feishu login start 和 gof feishu authorize --qr 让用户扫码登录")
+        need(isinstance(auth, dict) and auth.get("logged_in") is True, "飞书尚未授权：用 feishu_login 让用户扫码登录")
         self.check_scopes(SCOPES)
         return {"version": BRIDGE_VERSION, "node": info.get("node", js.UNDEFINED), "logged_in": True, "identity": "user",
                 "user_name": auth.get("name", js.UNDEFINED), "open_id": auth.get("open_id", js.UNDEFINED), "storage": auth.get("storage", js.UNDEFINED),
@@ -450,25 +450,6 @@ def reconcile(bridge: Bridge, directory: str) -> dict:
         out["validation_evidence"] = evidence
     out["report"] = os.path.join(output, "readback-report.json")
     return out
-
-
-def login(action: str, wait: Optional[float] = None, probe_scope: bool = False) -> dict:
-    """
-    `gof feishu login …` and `gof feishu authorize …` are the feishu skill's `login …` and `authorize …`, run as they are: the Feishu login is
-    that skill's, shared with the other skills. `--probe-scope` asks for the permission the isolated overwrite probe needs on top.
-    """
-    need(action in ("start", "poll", "status", "logout"), f"未知登录动作：{action}")
-    args = ["login", action]
-    if action == "start" and probe_scope:
-        args += ["--extra-scope", "sheets:spreadsheet:create"]
-    if action == "poll" and wait is not None:
-        need(js.is_int(wait) and 0 <= wait <= 50, "--wait 必须在 0 到 50 秒之间")
-        args += ["--wait", js.to_str(js.as_int(wait))]
-    return run_feishu(args)
-
-
-def authorize_feishu(qr: Optional[str]) -> dict:
-    return run_feishu(["authorize", *(["--qr", qr] if qr is not None else [])])
 
 
 #: The progress columns whose dropdown may gain an option, by the name `dropdown-add --field` takes (the plan's field names work too).

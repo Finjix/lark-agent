@@ -181,6 +181,11 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(watched["since"], "2026-10-29")
         self.assertEqual(watched["read"], 4, "from the date given, not the last year")
+        with open(os.path.join(shared, "jobs.json"), encoding="utf-8") as handle:
+            job = json.load(handle)["jobs"][0]
+        self.assertEqual((job["name"], job["everyMinutes"], job["command"], job["args"][1:]), ("audit-rules-sync", 4320, "python", ["rules", "sync"]),
+                         "listening to a group asks the host for the daily reading")
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, job["args"][0])), "run in the skill's folder, the script is there")
 
         listed = run("rules", "status")
         self.assertEqual(listed["here"], "GOF")
@@ -197,6 +202,7 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(load_book(shared, "GOF")["removed"][0]["reason"], "用户删除（ou_bob）")
 
         self.assertEqual(run("rules", "unwatch"), {"status": "stopped", "project": "GOF", "rules": 1})
+        self.assertFalse(os.path.exists(os.path.join(shared, "jobs.json")), "with no group left, there is nothing to read every day")
         self.assertIn("本群没有在监听", run("rules", "unwatch")["reason"])
         self.assertIn("本群没有在监听", run("rules", "sync", "--here")["reason"])
         nowhere = main(["rules", "sync", "--here"], Context(env={"LARK_AGENT_SHARED_DIR": os.path.dirname(shared)}, lark=lark, model=model, now=lambda: NOW, log=lambda _l: None))[0]

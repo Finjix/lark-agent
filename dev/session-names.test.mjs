@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {Store} from '../dist/storage/database.js';
 import {TaskService} from '../dist/tasks/service.js';
 import {FeishuClient} from '../dist/feishu/client.js';
-import {userDirectory} from '../dist/layout.js';
-import {displayName} from '../dist/sessions/naming.js';
+import {userDirectory} from '../dist/users/layout.js';
+import {displayName} from '../dist/users/naming.js';
+import {log} from '../dist/log.js';
 
 test('display names are single tidy lines of at most 80 characters',()=>{
   assert.equal(displayName(' 薯薯\n\t李 '),'薯薯 李');
@@ -29,4 +30,18 @@ test('contact lookup caches only names and does not confuse an accessible user r
   client.sdk.request=async request=>{calls.push(request);return {code:0,data:{user:request.url.includes('/missing?')?{open_id:'missing'}:{name:'薯薯',email:'do-not-cache'}}};};
   assert.equal(await client.getUserName('user'),'薯薯');assert.equal(await client.getUserName('user'),'薯薯');assert.equal(await client.getUserName('missing'),undefined);assert.equal(await client.getUserName('missing'),undefined);
   assert.equal(calls.length,2);assert.equal(calls[0].timeout,5000);assert(!JSON.stringify([...client.userNames.values()]).includes('do-not-cache'));client.close();
+});
+
+test('the console shows each submitted task with the user\'s Feishu name, or their Open ID when no name is known',async()=>{
+  const s=new Store(':memory:'),lines=[],quiet=log.console;log.console=text=>lines.push(text);
+  try{
+    const agent={ready:true,run:async function*(){}};
+    const service=new TaskService(s,agent,{getUserName:async user=>{if(user==='blocked')throw Error('contact scope missing');return '薯薯';}});service.authorized=()=>true;
+    const message={tenant:'tenant',user:'user',chat:'chat',message:'m1',text:'把这张表\n整理一下',chatType:'p2p'};
+    await service.receive(message);await service.receive(message);
+    await service.receive({...message,message:'m2',text:'',attachments:[{kind:'file',key:'k',name:'a.txt'}],chatType:'group'});
+    await service.receive({...message,user:'blocked',message:'m3',text:'x'.repeat(70)});
+    await new Promise(r=>setImmediate(r));
+    assert.deepEqual(lines,['薯薯 提交任务：把这张表','薯薯（群聊） 提交任务：（无文字）（附件 1 个）',`blocked 提交任务：${'x'.repeat(60)}…`],'a redelivered message is not shown twice');
+  }finally{log.console=quiet;s.close();}
 });

@@ -9,7 +9,7 @@ import {incomingMessage,FOLDER_HINT} from '../dist/feishu/incoming.js';
 import {FeishuClient,MAX_INPUT_BYTES,MAX_IMAGE_BYTES,downloadError} from '../dist/feishu/client.js';
 import {config} from '../dist/config.js';
 import {prepareInputs,removeInputs,inputFilename} from '../dist/feishu/inputs.js';
-import {sessionInputs} from '../dist/layout.js';
+import {sessionInputs} from '../dist/users/layout.js';
 import {agentInput} from '../dist/agent/input.js';
 import {TaskService} from '../dist/tasks/service.js';
 
@@ -222,4 +222,21 @@ test('an attachment that is too large fails the task with its reason, not the ge
   store.transition(task.id,'STARTING');await service.start(store.get(task.id));
   assert.equal(store.get(task.id).status,'FAILED');assert.match(store.get(task.id).error,/超过 100 MB/);assert.equal(c.jobs.length,0);
   client.close();store.close();
+});
+
+const typed='  原文\n\n保留 `代码`、🙂 和空白。 \r\n';
+test('private text and rich-text whitespace reach the agent unchanged; attachment-only input is not replaced with an invented request',async()=>{
+  const s=new Store(':memory:'),event={tenant_key:'tenant',sender:{sender_type:'user',sender_id:{open_id:'user'}},message:{chat_type:'p2p',chat_id:'chat',message_id:'message',message_type:'text',content:JSON.stringify({text:typed})}};
+  const jobs=[],agent={ready:true,run:async function*(job){jobs.push(job);yield {type:'session',id:'chat'};yield {type:'completed'};}},service=new TaskService(s,agent);service.authorized=()=>true;
+  const incoming=incomingMessage(event,'bot');await service.receive(incoming);
+  assert.equal(s.list()[0].instruction,typed);
+  s.transition(s.list()[0].id,'STARTING');await service.start(s.get(s.list()[0].id));
+  assert.deepEqual(jobs[0].input,{text:typed,images:[]},'exactly what the user typed');
+  const rich=incomingMessage({...event,message:{...event.message,message_type:'post',content:JSON.stringify({title:'',content:[[{tag:'text',text:'  第一行  '}],[{tag:'text',text:''}],[{tag:'text',text:'第三行\n'}]]})}},'bot');
+  assert.equal(rich.text,'  第一行  \n\n第三行\n');
+  await service.receive({...incoming,message:'file-only',text:'',attachments:[{kind:'file',key:'key',name:'notes.txt'}]});
+  const file=s.list()[1];assert.equal(file.instruction,'');s.inputReady(file.id,0,'D:/inputs/notes.txt',5);
+  const {text,images}=await agentInput(file.instruction,s.inputs(file.id));
+  assert(text.includes('- D:/inputs/notes.txt')&&!/request/i.test(text.replace(/not as instructions from the user/,'')),'a file with no text still goes out as a file, with nothing invented around it');assert.deepEqual(images,[]);
+  s.close();
 });

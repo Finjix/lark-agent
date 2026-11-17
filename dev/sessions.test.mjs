@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {Store} from '../dist/storage/database.js';
-import {cleanup} from '../dist/maintenance.js';
+import {cleanup} from '../dist/service/maintenance.js';
 import {config} from '../dist/config.js';
 
 const input=(message='one',user='user',tenant='tenant')=>({tenant_key:tenant,user_id:user,chat_id:'chat',source_message_id:message,instruction:message});
@@ -112,4 +112,13 @@ test('expiry also removes the attachments a task received, from input/ of the wo
   assert(s.get(t.id).cleaned_at);assert(!await exists(received));assert(await exists(neighbour),'only what this task received');assert((await fs.stat(folder)).isDirectory());
   assert.equal(s.get(u.id).cleaned_at,null);assert(await exists(precious));
   s.close();await fs.rm(root,{recursive:true});
+});
+
+test('retention cleanup marks a task cleaned when its workspace is already gone',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'review-clean-')),s=new Store(':memory:'),task=s.create(input('old')).task;
+  const session=s.sessionFor(task);s.bindSession(session.id,'thr');s.setSessionWorkspace(session.id,root);
+  s.transition(task.id,'COMPLETED',{thread_id:'thr',workspace_path:root});
+  s.update(task.id,{finished_at:1000});s.db.exec("UPDATE delivery_outbox SET status='DELIVERED'");
+  await fs.rm(root,{recursive:true,force:true});
+  await cleanup(s);assert(s.get(task.id).cleaned_at);s.close();
 });

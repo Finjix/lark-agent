@@ -18,9 +18,9 @@ from gof.batch import prepare, record, report, status
 from gof.brief import read_brief
 from gof.cli import main
 from gof.context import context
-from gof.feishu import (Bridge, OccupiedRefusal, SCOPES, add_option, authorize_feishu, execute, login, plan_with_api, probe, read_rules, reconcile,
+from gof.feishu import (Bridge, OccupiedRefusal, SCOPES, add_option, execute, plan_with_api, probe, read_rules, reconcile,
                         recompute_api_plan, recompute_plan)
-from gof.feishu_skill import BRIDGE_VERSION, MISSING, FeishuServe, locate_feishu
+from gof.agent_feishu import BRIDGE_VERSION, MISSING, FeishuServe, locate_feishu
 from gof.rules import acceptance, dropdowns
 from gof.seal import seal
 from gof.snapshot import Snapshot
@@ -119,35 +119,8 @@ class BridgeTests(unittest.TestCase):
                                    ({"auth-check-scopes": reply({"complete": False, "granted": [], "missing": ["x"]})}, "缺少本流程必要权限")):
             self.fails(bridge_with(handler(overrides))[0].doctor, pattern)
 
-    def test_login_forwarded(self) -> None:
-        """login and authorize are the feishu skill's commands, run with this user's environment, bounded waits checked first."""
-        # A stand-in for feishu.py that answers with what it was asked and for whom.
-        fake = py_script(tmp(), "feishu.py", "import json, os, sys\n"
-                         "print(json.dumps({'argv': sys.argv[1:], 'user': os.environ.get('LARK_AGENT_USER_DIR')}))\n"
-                         "sys.exit(2 if 'poll' in sys.argv else 0)\n")
-        alice = os.path.join(tmp(), "alice")
-        before = {k: os.environ.get(k) for k in ("FEISHU_SKILL", "LARK_AGENT_USER_DIR")}
-        os.environ.update({"FEISHU_SKILL": fake, "LARK_AGENT_USER_DIR": alice})
-        try:
-            self.assertEqual(login("start", probe_scope=True), {"result": {"argv": ["login", "start", "--extra-scope", "sheets:spreadsheet:create"], "user": alice}, "code": 0})
-            self.assertEqual(login("poll", wait=7), {"result": {"argv": ["login", "poll", "--wait", "7"], "user": alice}, "code": 2}, "its exit code comes along")
-            self.assertEqual(authorize_feishu("q.png")["result"]["argv"], ["authorize", "--qr", "q.png"])
-
-            def unused(name, payload):
-                raise RuntimeError("the bridge is not used")
-
-            self.assertEqual(main(["feishu", "login", "status"], Bridge(unused)), {"result": {"argv": ["login", "status"], "user": alice}, "code": 0})
-            self.fails(lambda: login("poll", wait=51), "0 到 50")
-            self.fails(lambda: login("nope"), "未知登录动作")
-        finally:
-            for key, value in before.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-
     def test_serve_protocol(self) -> None:
-        """The feishu skill's `serve` line protocol: requests by id, replies by id, this user's environment."""
+        """The Feishu module's `serve` line protocol: requests by id, replies by id, this user's environment."""
         fake = py_script(tmp(), "feishu.py", "import json, os, sys\n"
                          "assert sys.argv[1:] == ['serve']\n"
                          "for line in sys.stdin:\n"
@@ -162,7 +135,7 @@ class BridgeTests(unittest.TestCase):
                          "        answer = {'ok': False, 'error': {'kind': 'invalid_request', 'message': '路径不在白名单内'}}\n"
                          "    print(json.dumps({'id': request['id'], 'reply': answer}), flush=True)\n")
         user = tmp()
-        serve = FeishuServe({**os.environ, "LARK_AGENT_USER_DIR": user, "FEISHU_SKILL": fake})
+        serve = FeishuServe({**os.environ, "LARK_AGENT_USER_DIR": user, "LARK_AGENT_FEISHU": fake})
         try:
             bridge = Bridge(serve.call)
             info = bridge.call("info")
@@ -173,11 +146,12 @@ class BridgeTests(unittest.TestCase):
         finally:
             serve.close()
 
-    @unittest.skipUnless(os.environ.get("GOF_TEST_REAL_FEISHU") == "1", "set GOF_TEST_REAL_FEISHU=1 to run against the feishu skill next to this one")
-    def test_real_feishu_skill(self) -> None:
-        """The feishu skill's bridge (the real one, next to this one) answers for this user and enforces its own allowlist."""
+    @unittest.skipUnless(os.environ.get("GOF_TEST_REAL_FEISHU") == "1", "set GOF_TEST_REAL_FEISHU=1 to run against lark-agent's own feishu-sdk/feishu.py")
+    def test_real_agent_feishu(self) -> None:
+        """lark-agent's Feishu module (the real one, in this project) answers for this user and enforces its own allowlist."""
         user = tmp()
-        env = {k: v for k, v in os.environ.items() if k != "FEISHU_SKILL"}
+        real = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "feishu-sdk", "feishu.py")
+        env = {**os.environ, "LARK_AGENT_FEISHU": real}
         serve = FeishuServe({**env, "LARK_AGENT_USER_DIR": user, "FEISHU_APP_ID": "cli_x", "FEISHU_APP_SECRET": "secret-000000"})
         try:
             bridge = Bridge(serve.call)
@@ -193,31 +167,27 @@ class BridgeTests(unittest.TestCase):
         """A bridge process that ends before it reads a request fails the call: the command does not crash on the broken pipe."""
         # A feishu.py that does not serve (an old or broken copy): it ends at once and never reads its input.
         fake = py_script(tmp(), "feishu.py", "import sys\nsys.exit(2)\n")
-        serve = FeishuServe({**os.environ, "FEISHU_SKILL": fake})
+        serve = FeishuServe({**os.environ, "LARK_AGENT_FEISHU": fake})
         # Far more than a pipe holds, so it is still being written when the process ends.
-        self.assertRaisesRegex(ConnectionError, "feishu 技能进程已结束", serve.call, "sheets-cells-set", {"writes": "x" * (4 << 20)})
+        self.assertRaisesRegex(ConnectionError, "飞书模块进程已结束", serve.call, "sheets-cells-set", {"writes": "x" * (4 << 20)})
         serve.close()
         # As the bridge sees it: no answer, which a write takes as an unknown result.
-        bridge = Bridge(FeishuServe({**os.environ, "FEISHU_SKILL": fake}).call)
+        bridge = Bridge(FeishuServe({**os.environ, "LARK_AGENT_FEISHU": fake}).call)
         self.fails(lambda: bridge.call("sheets-cells-set", {}, write=True), "结果未知")
 
     def test_not_found(self) -> None:
-        """A feishu skill that cannot be found is said as such, not as a failed bridge call."""
-        serve = FeishuServe({**os.environ, "FEISHU_SKILL": os.path.join(tmp(), "nowhere", "feishu.py")})
+        """A Feishu module that cannot be found is said as such, not as a failed bridge call."""
+        serve = FeishuServe({**os.environ, "LARK_AGENT_FEISHU": os.path.join(tmp(), "nowhere", "feishu.py")})
         bridge = Bridge(serve.call)
-        self.fails(bridge.doctor, r"^FEISHU_SKILL 不是 feishu\.py 的绝对路径$")
-        self.fails(lambda: bridge.cells_set("shtABCDEFGH", [{"sheet_id": "s", "range": "A1:A1", "cells": [[{"value": 1}]], "allow_overwrite": False}]), "^FEISHU_SKILL")
-        self.assertEqual(bridge.check_login(), {"status": "blocked", "reason": "FEISHU_SKILL 不是 feishu.py 的绝对路径"})
-        # Not installed anywhere: the message tells the user what to do.
+        self.fails(bridge.doctor, r"^LARK_AGENT_FEISHU 不是 feishu\.py 的绝对路径$")
+        self.fails(lambda: bridge.cells_set("shtABCDEFGH", [{"sheet_id": "s", "range": "A1:A1", "cells": [[{"value": 1}]], "allow_overwrite": False}]), "^LARK_AGENT_FEISHU")
+        self.assertEqual(bridge.check_login(), {"status": "blocked", "reason": "LARK_AGENT_FEISHU 不是 feishu.py 的绝对路径"})
+        # Run outside lark-agent (nothing names the module): the message says so.
         with self.assertRaises(Blocked) as caught:
-            locate_feishu({}, os.path.join(tmp(), "skills", "requirement-auto"))
+            locate_feishu({})
         self.assertEqual(caught.exception.message, MISSING)
-
-    def test_found_beside(self) -> None:
-        """The feishu skill is found next to this one, as skills/feishu/scripts/feishu.py."""
-        skills = os.path.join(tmp(), "skills")
-        entry = write_file(os.path.join(skills, "feishu", "scripts", "feishu.py"), "")
-        self.assertEqual(locate_feishu({}, os.path.join(skills, "requirement-auto")), entry)
+        entry = write_file(os.path.join(tmp(), "feishu-sdk", "feishu.py"), "")
+        self.assertEqual(locate_feishu({"LARK_AGENT_FEISHU": entry}), entry)
 
     def test_dropdown_keeps_rule(self) -> None:
         """A dropdown keeps the options of the rule it follows and adds only what the request asks for."""

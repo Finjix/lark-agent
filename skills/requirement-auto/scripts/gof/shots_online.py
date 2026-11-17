@@ -16,7 +16,7 @@ from .util import Blocked, NODE, check_target, feishu_doc_path, need
 
 
 def _with_profile(options: dict) -> dict:
-    """The picture's options with this user's browser profile, unless a test names another (asking the feishu skill only when needed)."""
+    """The picture's options with this user's browser profile, unless a test names another (asking the Feishu module only when needed)."""
     from .cls_session import cls_profile_dir
 
     return options if options.get("profile_dir") else {**options, "profile_dir": cls_profile_dir()}

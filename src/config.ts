@@ -19,24 +19,24 @@ if(!locks||typeof locks!=='object'||Array.isArray(locks)||Object.values(locks).s
 export const THINKING_LEVELS=['off','minimal','low','medium','high','xhigh','max'] as const;
 export const config = {
   FEISHU_APP_ID:text('FEISHU_APP_ID'), FEISHU_APP_SECRET:text('FEISHU_APP_SECRET'),
-  CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',1000,250),
+  CARD_UPDATE_INTERVAL_MS:int('CARD_UPDATE_INTERVAL_MS',5000,250),
   TASK_TIMEOUT_MS:int('TASK_TIMEOUT_MS',0), HEALTH_PORT:int('HEALTH_PORT',8765,1,65535),
   // Logs, workspace files and the agent's chats untouched for this long are deleted (see maintenance.ts).
-  RETENTION_DAYS:int('RETENTION_DAYS',7,1),
+  RETENTION_DAYS:int('RETENTION_DAYS',14,1),
   // The model every turn runs on. The account is the ChatGPT subscription signed in with `start.cmd login` (openai-codex).
   AGENT_PROVIDER:text('AGENT_PROVIDER','openai-codex'), AGENT_MODEL:text('AGENT_MODEL','gpt-6.1-sol'),
   AGENT_THINKING:oneOf('AGENT_THINKING',THINKING_LEVELS,'medium'),
   root, database: path.resolve(root,text('DATABASE_PATH','./data/agent.sqlite')),
-  data:path.join(root,'data'), user:path.join(root,'user'),
-  // pi's own state (the ChatGPT login, the chats): inside the project, never the system's ~/.pi.
-  agentHome:path.join(root,'.pi'),
+  data:path.join(root,'data'), user:path.join(root,'data','user'),
+  // pi's own state (the ChatGPT login, the chats): inside the project's data/, never the system's ~/.pi.
+  agentHome:path.join(root,'data','pi'),
   // The skills every turn has (standard Agent Skills: a folder with SKILL.md) and the machine's Python their scripts run with (`PYTHON`, or
   // whatever `python` is on PATH).
   skills:path.join(root,'skills'), python:text('PYTHON','python'),
-  // Commands run on a timer, outside any user's turn (see jobs.ts).
-  jobs:path.join(root,'jobs.json'),
+  // The agent's own Feishu module (the user's Feishu login, documents as Markdown, and the bridge skills reach Feishu through), run with that Python.
+  feishu:path.join(root,'feishu-sdk','feishu.py'),
   // What skills keep for every user alike (audit-auto's review-group rules, say), in a folder of each skill's own; never cleaned up, never sent.
-  shared:path.join(root,'shared'),
+  shared:path.join(root,'data','shared'),
   users:list(text('ALLOWED_USERS')), admins:list(text('ADMIN_USERS')), chats:list(text('ALLOWED_CHATS')), tenants:list(text('ALLOWED_TENANTS')),
   resources:Object.entries(locks).map(([key,pattern])=>({key,regex:new RegExp(pattern,'i')})),
 };

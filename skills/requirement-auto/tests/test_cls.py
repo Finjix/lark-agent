@@ -455,7 +455,7 @@ def scripted(*answers: dict) -> ScriptedOnline:
 
 
 def fake_feishu_info(directory: str) -> str:
-    """A stand-in for the feishu skill's feishu.py that answers `bridge info` with the user's browser profile."""
+    """A stand-in for lark-agent's feishu.py that answers `bridge info` with the user's browser profile."""
     return py_script(directory, "feishu.py", "import json, os, sys\n"
                      "sys.stdin.read()\n"
                      "user = os.environ.get('LARK_AGENT_USER_DIR', '')\n"
@@ -467,11 +467,11 @@ PNG = bytes.fromhex("89504e470d0a1a0a")
 
 class GuardTests(unittest.TestCase):
     def test_profiles_per_user(self) -> None:
-        """Each user has their own CLS profile and account file under their own directory; the browser is the feishu skill's."""
+        """Each user has their own CLS profile and account file under their own directory; the browser is the Feishu module's."""
         fake = fake_feishu_info(temp_dir("ra-feishu-"))
         a, b = temp_dir("ra-cls-a-"), temp_dir("ra-cls-b-")
-        env_a = {**os.environ, "LARK_AGENT_USER_DIR": a, "FEISHU_SKILL": fake}
-        env_b = {**os.environ, "LARK_AGENT_USER_DIR": b, "FEISHU_SKILL": fake}
+        env_a = {**os.environ, "LARK_AGENT_USER_DIR": a, "LARK_AGENT_FEISHU": fake}
+        env_b = {**os.environ, "LARK_AGENT_USER_DIR": b, "LARK_AGENT_FEISHU": fake}
         self.assertEqual(cls_profile_dir(env_a), os.path.join(a, "feishu", "browser-profile"))
         self.assertEqual(cls_profile_dir(env_b), os.path.join(b, "feishu", "browser-profile"))
         self.assertEqual(cls_account_file(env_a), os.path.join(a, "requirement-auto", "cls", "account.json"))
@@ -657,7 +657,7 @@ class LoginCheckTests(unittest.TestCase):
         feishu_gone = main(["login", "check"], bridge_saying(fail("auth_required", "飞书登录已失效")), not_looked)
         self.assertEqual([feishu_gone["code"], feishu_gone["result"]["status"], feishu_gone["result"]["feishu"]["status"]], [2, "login_required", "login_required"])
         self.assertEqual(len(feishu_gone["result"]["todo"]), 1)
-        self.assertRegex(feishu_gone["result"]["todo"][0], "feishu login start")
+        self.assertRegex(feishu_gone["result"]["todo"][0], "feishu_login")
         self.assertEqual(feishu_gone["result"]["cls"]["status"], "not_checked", "CLS waits for Feishu")
         self.assertEqual(not_looked.looked, 0, "no browser is started while Feishu is not logged in")
         cls_gone = main(["login", "check"], bridge_saying(GOOD_FEISHU), ClsSaying("login_required"))
@@ -666,7 +666,7 @@ class LoginCheckTests(unittest.TestCase):
         neither_cls = ClsSaying("login_required")
         neither = main(["login", "check"], bridge_saying(fail("auth_required")), neither_cls)
         self.assertEqual(len(neither["result"]["todo"]), 1, "one login at a time: Feishu first")
-        self.assertRegex(neither["result"]["todo"][0], "feishu login start")
+        self.assertRegex(neither["result"]["todo"][0], "feishu_login")
         self.assertEqual(neither_cls.looked, 0)
         missing = main(["login", "check"], bridge_saying({"ok": True, "data": {"logged_in": True, "name": "李小明", "missing_scopes": ["wiki:wiki:readonly"]}}), ClsSaying("ok"))
         self.assertEqual([missing["result"]["status"], missing["result"]["feishu"]["status"], missing["result"]["feishu"]["missing_scopes"]],

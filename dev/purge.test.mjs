@@ -6,11 +6,13 @@ import path from 'node:path';
 import {Store} from '../dist/storage/database.js';
 import {Delivery} from '../dist/feishu/delivery.js';
 import {config} from '../dist/config.js';
-import {purge,housekeeping} from '../dist/maintenance.js';
+import {purge,housekeeping} from '../dist/service/maintenance.js';
 
 const DAY=86400000;
 /** The moment `days` from now. purge judges files by the `now` it is given, and a file made just now cannot be backdated, so time moves instead. */
 const after=days=>Date.now()+days*DAY;
+/** The retention period, in days (RETENTION_DAYS). */
+const KEEP=config.RETENTION_DAYS;
 const write=async(file,text='x')=>{await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,text);return file;};
 const exists=file=>fs.access(file).then(()=>true,()=>false);
 const input=(user,message=`m-${user}`)=>({tenant_key:'t',user_id:user,chat_id:'c',source_message_id:message,instruction:'x'});
@@ -24,7 +26,7 @@ async function project(...names){
   return {base,store,roots,workspace,done:async()=>{store.close();await fs.rm(base,{recursive:true,force:true});}};
 }
 
-test('what nobody touched for seven days goes from the logs, the workspaces and pi\'s home; everything else stays',async()=>{
+test('what nobody touched for the retention period goes from the logs, the workspaces and pi\'s home; everything else stays',async()=>{
   const p=await project('李小明','小红');
   const gone=[
     await write(path.join(p.roots.data,'logs','2026-10-01-1.jsonl')),
@@ -39,11 +41,11 @@ test('what nobody touched for seven days goes from the logs, the workspaces and 
   ];
   for(const file of kept)await write(file);
   try{
-    const young=await purge(p.store,{roots:p.roots,now:after(6)});
+    const young=await purge(p.store,{roots:p.roots,now:after(KEEP-1)});
     assert.deepEqual([young.logs.files,young.workspaces.files,young.agent.files],[0,0,0],'not yet seven days');
     for(const file of [...gone,...kept])assert(await exists(file),file);
 
-    const old=await purge(p.store,{roots:p.roots,now:after(8)});
+    const old=await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert.deepEqual([old.logs.files,old.workspaces.files,old.agent.files],[1,5,2]);
     assert(old.workspaces.bytes>0);
     for(const file of gone)assert(!await exists(file),`${file} should be gone`);
@@ -51,7 +53,7 @@ test('what nobody touched for seven days goes from the logs, the workspaces and 
     // The folders that held them are gone too, but the roots of what was swept are not.
     assert(!await exists(path.join(p.workspace('李小明'),'a')));assert(await exists(path.join(p.roots.agentHome,'other')),'only the files directly in pi\'s home are looked at');
     for(const root of [p.workspace('李小明'),p.workspace('小红'),path.join(p.roots.data,'logs'),path.join(p.roots.agentHome,'sessions')])assert(await exists(root),root);
-    assert.deepEqual(await purge(p.store,{roots:p.roots,now:after(8)}),{logs:{files:0,bytes:0},workspaces:{files:0,bytes:0},agent:{files:0,bytes:0}},'nothing left to do');
+    assert.deepEqual(await purge(p.store,{roots:p.roots,now:after(KEEP+1)}),{logs:{files:0,bytes:0},workspaces:{files:0,bytes:0},agent:{files:0,bytes:0}},'nothing left to do');
   }finally{await p.done();}
 });
 
@@ -59,11 +61,11 @@ test('a file in use stays however long ago it was made, and so does the folder a
   const p=await project('用户');
   const worked=await write(path.join(p.workspace('用户'),'project','notes.md')),idle=await write(path.join(p.workspace('用户'),'project','old.md'));
   // Edited again six days from now (the clock of this test): at day 8 it was last touched two days ago.
-  await fs.utimes(worked,new Date(after(6)),new Date(after(6)));
+  await fs.utimes(worked,new Date(after(KEEP-1)),new Date(after(KEEP-1)));
   try{
-    await purge(p.store,{roots:p.roots,now:after(8)});
+    await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert(await exists(worked));assert(!await exists(idle));assert(await exists(path.dirname(worked)));
-    await purge(p.store,{roots:p.roots,now:after(14)});
+    await purge(p.store,{roots:p.roots,now:after(2*KEEP)});
     assert(!await exists(worked)&&!await exists(path.dirname(worked)));
   }finally{await p.done();}
 });
@@ -76,7 +78,7 @@ test('links are removed as links and never followed, and a linked workspace is n
     try{await fs.symlink(outside,path.join(p.workspace('链接'),'link'),'junction');await fs.symlink(outside,p.workspace('外链'),'junction');}
     catch(e){if(e.code==='EPERM')return t.skip('no permission to create links');throw e;}
     await write(path.join(p.workspace('链接'),'plain.txt'));
-    const purged=await purge(p.store,{roots:p.roots,now:after(8)});
+    const purged=await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert(!await exists(path.join(p.workspace('链接'),'link')),'the link itself goes');assert(!await exists(path.join(p.workspace('链接'),'plain.txt')));
     assert.equal(await fs.readFile(secret,'utf8'),'keep me','what it pointed at is untouched');
     assert.equal(purged.workspaces.files,2);
@@ -89,15 +91,15 @@ test('a user with an unfinished task keeps their workspace; pi\'s chats wait unt
   const busyFile=await write(path.join(p.workspace('忙'),'a.txt')),idleFile=await write(path.join(p.workspace('闲'),'b.txt')),log=await write(path.join(p.roots.data,'logs','x.jsonl'));
   try{
     const task=p.store.create(input('u1')).task;
-    await purge(p.store,{roots:p.roots,now:after(8)});
+    await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert(await exists(busyFile),'a queued task counts');assert(!await exists(idleFile),'another user is swept regardless');assert(!await exists(log));
     // pi's chats: untouched while a task runs, swept once none does.
     const session=await write(path.join(p.roots.agentHome,'sessions','chat.jsonl'));
     p.store.transition(task.id,'RUNNING');
-    await purge(p.store,{roots:p.roots,now:after(8)});
+    await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert(await exists(session),'a task is running');assert(await exists(busyFile));
     p.store.transition(task.id,'COMPLETED');
-    await purge(p.store,{roots:p.roots,now:after(8)});
+    await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert(!await exists(session));assert(!await exists(busyFile),'its owner is no longer busy');
   }finally{await p.done();}
 });
@@ -109,8 +111,8 @@ test('an aborted purge stops, and a directory name that is not a plain name is n
   p.store.db.prepare('INSERT INTO user_dirs(tenant_key,user_id,name,created_at) VALUES(?,?,?,?)').run('t','u8','a/b',1);
   try{
     const stop=new AbortController();stop.abort();
-    await purge(p.store,{roots:p.roots,now:after(8),signal:stop.signal});assert(await exists(file));
-    await purge(p.store,{roots:p.roots,now:after(8)});
+    await purge(p.store,{roots:p.roots,now:after(KEEP+1),signal:stop.signal});assert(await exists(file));
+    await purge(p.store,{roots:p.roots,now:after(KEEP+1)});
     assert(!await exists(file));assert(await exists(stray),'user/../workspace is not a user\'s workspace');
   }finally{await p.done();}
 });

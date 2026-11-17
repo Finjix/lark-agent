@@ -3,12 +3,12 @@ import {Store} from '../storage/database.js';
 import {AgentRunner,SessionMissing} from '../agent/runner.js';
 import {Turn,type TurnEvent} from '../agent/turn.js';
 import {agentInput,type AgentInput} from '../agent/input.js';
-import {userWorkspace,userDirectory,sessionInputs} from '../layout.js';
+import {userWorkspace,userDirectory,sessionInputs} from '../users/layout.js';
 import {config} from '../config.js';
 import {terminal,waiting,BOT_DOWN,InputRejected,type Task,type IncomingMessage,type UserSession} from '../types.js';
 import {safeError,log} from '../log.js';
 import {prepareInputs,type ResourceDownloader} from '../feishu/inputs.js';
-import {authorized} from '../access.js';
+import {authorized} from '../users/access.js';
 import {Steering} from './steering.js';
 
 // What the model's provider says when the ChatGPT login is no longer accepted. That is the bot being unavailable, not something for the user to read.
@@ -65,6 +65,7 @@ export class TaskService {
     // A redelivered event of a message that is already a task (queued, running or handed over) changes nothing.
     if(!result.created)return;
     log.info({taskId:result.task.id},'任务已入队');
+    void this.announce(message).catch(()=>{});
     // A message sent while the user's previous one is unfinished goes into that one's turn (steering), instead of waiting for a turn of its own.
     // Not into a task being stopped (/new, its time limit) or while /new is under way: it is then for what comes next. Nor when it needs a resource
     // lock that task does not hold: running on its own, it gets the lock from the scheduler. Nor into a task of another chat (the user writes in
@@ -73,6 +74,17 @@ export class TaskService {
     const holds=(t:Task)=>{const held=JSON.parse(t.resources) as string[];return resources.every(r=>held.includes(r));};
     if(previous&&previous.chat_id===message.chat&&!previous.cancel_requested&&!this.paused(previous)&&holds(previous))
       void this.join(result.task,previous).catch(e=>log.warn({taskId:result.task.id,error:safeError(e)},'消息交给执行中的任务时出错'));
+  }
+  /**
+   * Shows a submitted task on the console: who (their Feishu name, cached by the client, else the one their chat has, else the Open ID),
+   * where, and the start of what they wrote. It never holds up the task.
+   */
+  private async announce(message:IncomingMessage){
+    const looked=await this.downloader?.getUserName?.(message.user).catch(()=>undefined);
+    const who=looked||this.store.knownName(message.tenant,message.user)||message.user;
+    const first=message.text.trim().split(/\r?\n/)[0]??'',text=first.length>60?first.slice(0,60)+'…':first;
+    const files=message.attachments?.length?`（附件 ${message.attachments.length} 个）`:'';
+    log.console(`${who}${message.chatType==='group'?'（群聊）':''} 提交任务：${text||'（无文字）'}${files}`);
   }
   /** True while /new replaces the user's conversation: their messages wait, so that none starts in the conversation being left. */
   paused(task:Task){return this.resetting.has(`${task.tenant_key}:${task.user_id}`);}

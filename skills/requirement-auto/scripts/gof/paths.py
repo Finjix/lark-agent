@@ -1,7 +1,7 @@
 """Where one user's requirement-auto data lives (paths.ts).
 
 Batches, temporary files and the CLS records (the account the CLS login is pinned to, the QR picture waiting to be scanned). The Feishu
-login and the hidden browser are the feishu skill's (see feishu_skill.py). The directory is decided by the host (lark-agent) for the
+login and the hidden browser are lark-agent's (its Feishu module, see agent_feishu.py). The directory is decided by the host (lark-agent) for the
 process it starts, never by a tool argument or by the model: whoever is served by this process can only reach this one directory.
 """
 

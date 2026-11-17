@@ -164,14 +164,6 @@ def _batch_command(command: str, args: list[str]) -> dict:
     raise Blocked(f"未知的 batch 子命令：{command}")
 
 
-class _Forwarded(Exception):
-    """Results of the feishu skill's own commands (login, authorize) come back with its exit code."""
-
-    def __init__(self, answer: dict) -> None:
-        super().__init__("forwarded")
-        self.answer = answer
-
-
 def _feishu_command(command: str, args: list[str], bridge: Any, via: Any) -> dict:
     from . import feishu
     from .brief import read_brief
@@ -185,14 +177,6 @@ def _feishu_command(command: str, args: list[str], bridge: Any, via: Any) -> dic
         return sheet_picture(via, _must(values.get("batch"), "batch"), _must(values.get("output"), "output"))
     if command == "doctor":
         return bridge.doctor()
-    if command == "login":
-        values, positionals = _parse(args, {"wait": "string", "probe-scope": "boolean"}, True)
-        need(len(positionals) == 1 and positionals[0] in ("start", "poll", "status", "logout"), "login 需要 start、poll、status 或 logout")
-        wait = _str(values.get("wait"))
-        raise _Forwarded(feishu.login(positionals[0], wait=js.number(wait) if wait is not None else None, probe_scope=values.get("probe-scope") is True))
-    if command == "authorize":
-        values, _ = _parse(args, {"qr": "string"})
-        raise _Forwarded(feishu.authorize_feishu(_str(values.get("qr"))))
     if command == "probe":
         return feishu.probe(bridge, _must(_parse(args, {"receipt": "string"})[0].get("receipt"), "receipt"))
     if command == "append":
@@ -364,8 +348,8 @@ def _login_check(bridge: Any, via: Any) -> dict:
         return {
             "status": "login_required", "feishu": feishu,
             "cls": {"status": "not_checked", "reason": "Feishu login comes first; CLS is checked after it"},
-            "todo": ["Feishu: run gof feishu login start (keep its link to yourself), then gof feishu authorize --qr feishu-login.png and send the QR image "
-                     "to the user only, to scan with the Feishu phone app. That one scan also covers CLS. Ask for nothing else until Feishu is ok"],
+            "todo": ["Feishu: log the user in with your feishu_login tool (its QR image goes to the user only, to scan with the Feishu phone app), "
+                     "then feishu_login_finish once they have confirmed. That one scan also covers CLS. Ask for nothing else until Feishu is ok"],
         }
     cls = check(via)
     sides = [feishu["status"], cls["status"]]
@@ -413,10 +397,7 @@ def main(argv: list[str], bridge: Any = None, via: Any = None) -> dict:
         if group == "batch":
             result = _batch_command(command, rest)
         elif group == "feishu":
-            try:
-                result = _feishu_command(command, rest, bridge, via)
-            except _Forwarded as forwarded:
-                return forwarded.answer
+            result = _feishu_command(command, rest, bridge, via)
         elif group == "login" and command == "check":
             result = _login_check(bridge, via)
         elif group == "cls":

@@ -99,7 +99,7 @@ export class FeishuClient {
     this.ws=new lark.WSClient({appId:this.appId,appSecret:this.appSecret,domain:lark.Domain.Feishu,logger:this.logger,
       handshakeTimeoutMs:WS_HANDSHAKE_TIMEOUT_MS,wsConfig:{pingTimeout:WS_PONG_TIMEOUT_S},
       onReady:recovered,onReconnected:recovered,onError:error=>{this.lastError=safeError(error);}});
-    await this.ws.start({eventDispatcher:new lark.EventDispatcher({}).register({'im.message.receive_v1':async(event:any)=>{
+    await this.ws.start({eventDispatcher:new lark.EventDispatcher({logger:this.logger}).register({'im.message.receive_v1':async(event:any)=>{
       const message=incomingMessage(event,this.botId);if(!message)return;
       // Let persistence errors reject: SDK may retry, while the unique message key prevents duplicates.
       await receive(message);
